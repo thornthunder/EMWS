@@ -1,0 +1,13 @@
+CM 40 m quarter-wave vertical over a perfectly conducting ground.
+CM 10.3 m of 20 mm diameter tube, fed at the base.
+CM Pattern 1: azimuth cut at 10 degrees elevation. Pattern 2: elevation cut.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 15 0 0 0 0 0 10.3 0.01
+GE 1
+GN 1
+FR 0 1 0 0 7.1 0
+EX 0 1 1 0 1.0 0.0
+RP 0 1 73 1000 80 0 0 5
+RP 0 37 1 1000 -90 0 5 0
+EN

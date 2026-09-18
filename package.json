@@ -1,0 +1,39 @@
+{
+  "name": "emws",
+  "version": "0.1.0",
+  "description": "Electro Magnetic Works Suite - public-domain, in-browser electromagnetic simulation tools for radio amateurs and experimenters.",
+  "private": true,
+  "type": "module",
+  "author": "ZR1JT",
+  "license": "Unlicense",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/thornthunder/EMWS.git"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "smoke": "node scripts/smoke-browser.mjs",
+    "build:engine": "node scripts/build-nec2c.mjs"
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.1",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "vitest": "^5.0.1"
+  }
+}

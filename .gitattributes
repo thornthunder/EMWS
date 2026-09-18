@@ -1,0 +1,21 @@
+# Normalise line endings to LF in the repo, whatever the contributor's OS.
+* text=auto eol=lf
+
+# Windows-native files keep CRLF.
+*.ps1     text eol=crlf
+*.bat     text eol=crlf
+*.cmd     text eol=crlf
+web.config text eol=crlf
+
+# Vendored upstream sources are kept byte-for-byte identical to the upstream
+# tarball so the SHA-256 hashes in engines/nec2c/PROVENANCE.md stay verifiable.
+engines/nec2c/upstream/** -text
+
+# Binary artefacts.
+*.wasm binary
+*.png  binary
+*.ico  binary
+*.woff2 binary
+
+# Generated Emscripten glue: don't diff it, don't count it in language stats.
+src/engine/nec2/wasm/nec2c.mjs linguist-generated=true -diff

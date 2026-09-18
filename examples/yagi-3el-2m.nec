@@ -1,0 +1,14 @@
+CM 3-element Yagi for 2 m (146 MHz) in free space.
+CM Boom along +X, elements along Y, 6 mm diameter elements. A generic, unoptimised design.
+CM Pattern 1: E-plane (the plane of the elements). Pattern 2: H-plane.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 11 -0.41 -0.5080 0 -0.41 0.5080 0 0.003
+GW 2 11  0.00 -0.4855 0  0.00 0.4855 0 0.003
+GW 3 11  0.41 -0.4520 0  0.41 0.4520 0 0.003
+GE 0
+FR 0 1 0 0 146 0
+EX 0 2 6 0 1.0 0.0
+RP 0 1 73 1000 90 0 0 5
+RP 0 73 1 1000 0 0 5 0
+EN

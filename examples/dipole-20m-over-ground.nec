@@ -1,0 +1,13 @@
+CM 20 m half-wave dipole (10.26 m of 2 mm wire), 10 m above average ground.
+CM Ground: Sommerfeld-Norton, relative permittivity 13, conductivity 0.005 S/m.
+CM Pattern 1: azimuth cut at 30 degrees elevation. Pattern 2: elevation cut, broadside.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 21 0 -5.13 10 0 5.13 10 0.001
+GE 1
+GN 2 0 0 0 13 0.005
+FR 0 1 0 0 14.2 0
+EX 0 1 11 0 1.0 0.0
+RP 0 1 73 1000 60 0 0 5
+RP 0 37 1 1000 -90 0 5 0
+EN

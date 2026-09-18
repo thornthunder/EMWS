@@ -1,0 +1,32 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+*.tsbuildinfo
+
+# Project-local toolchains (Emscripten SDK lives here; see docs/building-the-engine.md)
+.tools/
+
+# Engine build intermediates (the final .wasm/.mjs in src/engine/nec2/wasm/ IS committed)
+engines/nec2c/build/
+
+# Test / coverage
+coverage/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editors / OS
+.vs/
+.idea/
+*.suo
+*.user
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Local env
+.env
+.env.local

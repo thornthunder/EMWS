@@ -1,0 +1,12 @@
+CM 20 m half-wave dipole in free space.
+CM 10.26 m of 2 mm diameter wire along the Y axis, fed at the centre.
+CM Pattern 1: azimuth cut at the horizon. Pattern 2: the plane containing the wire.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 21 0 -5.13 0 0 5.13 0 0.001
+GE 0
+FR 0 1 0 0 14.2 0
+EX 0 1 11 0 1.0 0.0
+RP 0 1 73 1000 90 0 0 5
+RP 0 73 1 1000 0 90 5 0
+EN

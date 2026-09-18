@@ -1,0 +1,10 @@
+CM 20 m dipole (10.26 m of 2 mm wire): frequency sweep, 13.8 to 14.6 MHz in 50 kHz steps.
+CM Shows where the antenna resonates and how SWR varies. One broadside gain point per step.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 21 0 -5.13 0 0 5.13 0 0.001
+GE 0
+FR 0 17 0 0 13.8 0.05
+EX 0 1 11 0 1.0 0.0
+RP 0 1 1 1000 90 0 0 0
+EN
