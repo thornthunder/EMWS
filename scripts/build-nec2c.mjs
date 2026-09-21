@@ -57,12 +57,24 @@ if (sources.length === 0) {
 
 mkdirSync(outDir, { recursive: true });
 
-const args = [
+// Two builds of the same sources, because WebAssembly SIMD is worth 1.3x on a big model
+// but only exists in browsers from 2021 (2023 on Apple). The page picks at runtime; see
+// src/engine/nec2/run.ts. Both were measured to give byte-identical reports on every
+// deck in examples/, and tests/engine-builds.test.ts keeps it that way.
+const BUILDS = [
+  { name: 'nec2c', extra: [] },
+  { name: 'nec2c-simd', extra: ['-msimd128'] },
+];
+
+const common = [
   ...sources,
-  '-O2',
+  // -O3 over -O2 is worth about 1.34x on a 2000-segment model, and -fcx-limited-range
+  // lets the compiler inline complex multiplication instead of calling out to a helper
+  // that guards against infinities NEC-2's impedance matrix never contains.
+  '-O3',
+  '-fcx-limited-range',
   '-DHAVE_CONFIG_H',
   `-I${shimDir}`,
-  '-o', join(outDir, 'nec2c.mjs'),
 
   // ES module factory: `import createNec2c from './nec2c.mjs'`.
   '-sMODULARIZE=1',
@@ -90,17 +102,24 @@ const args = [
 console.log(`emcc:    ${emcc}`);
 console.log(`sources: ${sources.length} files from ${upstreamDir}`);
 
-const result = spawnSync(emcc, args, { stdio: 'inherit', env });
-if (result.error) {
-  console.error(`\nCould not run emcc: ${result.error.message}`);
-  console.error('Install the Emscripten SDK - see docs/building-the-engine.md');
-  process.exit(1);
+for (const build of BUILDS) {
+  console.log(`\nbuilding ${build.name}${build.extra.length ? ` (${build.extra.join(' ')})` : ''}`);
+  const args = [...common, ...build.extra, '-o', join(outDir, `${build.name}.mjs`)];
+  const result = spawnSync(emcc, args, { stdio: 'inherit', env });
+  if (result.error) {
+    console.error(`\nCould not run emcc: ${result.error.message}`);
+    console.error('Install the Emscripten SDK - see docs/building-the-engine.md');
+    process.exit(1);
+  }
+  if (result.status !== 0) process.exit(result.status ?? 1);
 }
-if (result.status !== 0) process.exit(result.status ?? 1);
 
 console.log('\nBuilt:');
-for (const name of ['nec2c.mjs', 'nec2c.wasm']) {
-  const file = join(outDir, name);
-  const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
-  console.log(`  ${name.padEnd(11)} ${String(statSync(file).size).padStart(8)} bytes  sha256 ${sha}`);
+for (const build of BUILDS) {
+  for (const ext of ['mjs', 'wasm']) {
+    const name = `${build.name}.${ext}`;
+    const file = join(outDir, name);
+    const sha = createHash('sha256').update(readFileSync(file)).digest('hex');
+    console.log(`  ${name.padEnd(16)} ${String(statSync(file).size).padStart(8)} bytes  sha256 ${sha}`);
+  }
 }

@@ -1,3 +1,5 @@
+import { GUIDES } from '../guides/registry';
+
 interface Tool {
   name: string;
   blurb: string;
@@ -13,7 +15,9 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'Smith chart and matching',
-    blurb: 'Plot an impedance, add series and shunt L, C and line sections, and watch the match move.',
+    blurb:
+      'Plot an impedance, add L, C, coax and stubs, and watch the match move. It will also work out the matching network for you.',
+    href: '#/smith',
   },
   {
     name: 'RF toolbox',
@@ -51,6 +55,21 @@ export function Home() {
           ),
         )}
       </div>
+
+      <section className="home-guides">
+        <h2>Field Guides</h2>
+        <p>
+          How to get real work out of each tool, written for radio amateurs. Start here if a tool looks like it
+          wants a manual.
+        </p>
+        <ul>
+          {GUIDES.map((guide) => (
+            <li key={guide.id}>
+              <a href={`#/guides/${guide.id}`}>{guide.title}</a> — {guide.summary}
+            </li>
+          ))}
+        </ul>
+      </section>
     </div>
   );
 }

@@ -26,11 +26,19 @@ worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview
   provenance record like `engines/nec2c/PROVENANCE.md` *before* it goes in. Prefer an
   existing public-domain engine over writing a new one, but verify its licence at the
   source (README, file headers, Debian's copyright file), not from GitHub's label.
+  **EMWS itself links nothing**, and must keep working with no solver service at all -
+  that is what lets `services/emws-solver/` (separate program, separate distribution,
+  HTTP between them) optionally link BSD code without touching EMWS's licence. See its
+  `NOTICE`. Anything permissive-but-not-public-domain belongs on that side of the line.
 - **`engines/nec2c/upstream/` is never edited.** It is byte-identical to the upstream
   archive and hash-recorded. Adapt with build flags, the `wasm/config.h` shim, or a
   separate patch file.
 - **Don't state a number you haven't measured.** Engine regression values in
   `tests/nec2-engine.test.ts` were each checked against antenna theory; keep it that way.
+- **Every tool has a Field Guide, kept in step with it.** Guides live in `src/guides/`
+  (registry + one component per tool), shown at `#/guides`. Change a tool's behaviour -
+  controls, shortcuts, readouts, checks - and update its guide in the same change; a new
+  tool ships with its guide. Write them for radio amateurs, not for developers.
 
 ## Architecture
 
@@ -38,12 +46,76 @@ worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview
   nec2c is run-once (globals, `exit()`), so: compile once, fresh instance per run.
   WebAssembly traps (bad decks) become `{ exitCode: TRAPPED, trap }`, not exceptions.
 - `nec2.worker.ts` / `client.ts` - worker protocol; `cancel()` kills and replaces the worker.
+- `solver.ts` - where a model gets solved: this browser, a service on `127.0.0.1`, or the
+  site's proxy (`public/solver/index.php`, address from `EMWS_SOLVER_URL`). A remote solver
+  returns nec2c's report *text* only; it is parsed here, so it cannot change a result's
+  meaning. **Every job carries a `kind`** (`nec2` today) and `/health` lists the kinds a
+  service can do - the protocol is not NEC-specific on purpose, so a later engine needs no
+  second service. Protocol and hosting: `docs/solver-service.md`. Reference service:
+  `services/emws-solver/` (git-ignored - it will link CUDA, so it stays out of this repo).
 - `parse-output.ts` - nec2c's text report -> `Nec2Report`. Whitespace-tokenised (every
   printf field upstream is space-separated); the pattern table's SENSE column can be blank.
-- `pattern.ts`, `src/lib/rf.ts` - analysis helpers shared by tools.
+- `pattern.ts`, `src/lib/rf.ts` - analysis helpers shared by tools. `mainLobe()` breaks ties
+  towards the horizon and never picks a pole unless strictly maximal (a dipole's broadside
+  plane is all maxima; an azimuth cut through the zenith is meaningless).
+- `cards.ts` - card lexer mirroring nec2c's reader: lines starting with a space or `#` are
+  skipped, integer fields reject decimals, 132-char line buffer.
 - `src/tools/<tool>/` - one folder per tool; `src/ui/` - shared SVG plots (no chart library).
 - Routing is hash-based and `base: './'` on purpose: no IIS URL Rewrite, works in any sub-folder.
-- `src/engine/nec2/wasm/nec2c.{mjs,wasm}` are generated but committed.
+- **Two engine builds, picked at runtime.** `build:engine` emits `nec2c.{mjs,wasm}` and
+  `nec2c-simd.{mjs,wasm}` from the same sources (`-O3 -fcx-limited-range`, plus `-msimd128`
+  for the second); all four are generated but committed. `supportsWasmSimd()` in `run.ts`
+  chooses, the worker fetches only that one, and the glue must always travel with its own
+  `.wasm`. SIMD is ~1.3-1.7x on a big model and needs a browser from 2021 (2023 on Apple).
+  **The two must give byte-identical reports** - `tests/engine-builds.test.ts` asserts it
+  deck by deck, because otherwise a reading would depend on the reader's browser.
+
+### Antenna Modeler editor
+
+- **The `AntennaModel` (`model.ts`) is the source of truth**, not the deck text. Every edit is
+  a pure function; `history.ts` gives undo/redo, and object identity says whether results are
+  current (`solved.model === model`). A drag is one gesture = one undo step.
+- `deck.ts` converts model <-> deck. Anything it can't represent (GA/GH/GM/GC, EX≠0, several
+  runs, GE -1, GE 1 without GN, ...) makes `deckToModel` return `ok: false` with a reason, and
+  the page falls back to running the text verbatim with read-only views. Never approximate.
+  Unknown program cards (LD, TL, NT, EK, NE, NH...) pass through verbatim in `extraCards`.
+- `planRuns()`: a sweep with the automatic whole-sphere pattern runs as `FR n + XQ` plus a
+  separate single-frequency pattern run (measured: full sphere at 17 steps = 1.2 s, 2.8 MB;
+  XQ sweep = 11 ms). Keep that split.
+- **Sweeps are solved one frequency per worker** (`planRuns().perFrequency` + `Nec2Client.simulateAll`
+  + `merge.ts`), above `SPLIT_SWEEP_MS`. Measured in the browser: 601 segments x 17 frequencies,
+  6.2 s in one run vs 2.2 s across 8 workers on a 4-core laptop.
+  The split decks must reach each frequency by **adding the step repeatedly**, as nec2c does
+  (`save.fmhz += delfrq`), and write it with `String(f)` rather than the 10-digit tidy-up, or the
+  last digits drift. `tests/parallel-sweep.test.ts` asserts split == combined, frequency by frequency.
+- Worker count comes from `recommendedWorkers(jobs, segments)`: cores, jobs, and a memory budget,
+  because every worker holds its own copy of the interaction matrix (16 bytes x segments squared).
+- Views: first-angle projection (ISO 128 / SANS). Front looks along +Y (X right, Z up); Left
+  looks along +X from -X (**+Y points left**, drawn right of front); Top looks down (X right,
+  Y up, drawn below front). One shared camera so rows share Z and columns share X.
+- Joined ends follow nec2c: L1 distance <= 1e-3 x segment length. Dragging an end moves its
+  junction; dragging a wire drags joined ends along (Shift detaches, Alt disables snapping).
+- Ids come from `newId()` (session-prefixed counter): `crypto.randomUUID` is unavailable on
+  plain-HTTP origins like http://emws.local.
+- `npm run smoke -- --edit` drives the editor with real mouse/keyboard via CDP (drag, undo,
+  split, draw, element drag, automatic pattern). Run it after any editor change.
+
+### Smith chart (`src/tools/smith-chart/`)
+
+- `model.ts` holds the chain **in load-to-radio order**, which is also the transform order;
+  `network.ts` does the physics, `match.ts` solves L networks, `units.ts` does nH/pF.
+- Transmission lines use cosh/sinh, never tanh: tanh is infinite a quarter wave along a
+  lossless line and quietly returns the wrong answer (a test covers the Z0^2 / ZL case).
+- `lMatchSolutions()` returns both topologies and both roots, plus the one-component case
+  when the load already sits on the right circle. Every solution is exact at the design
+  frequency; a test asserts that.
+- Loads: typed R + jX (reactance follows frequency by default), Touchstone `.s1p`
+  (`src/lib/touchstone.ts`), or the Antenna Modeler's last run via `src/lib/handoff.ts`.
+- Chart series colours are `--series-1..3` + `--series-more`, validated with the dataviz
+  skill's palette checker for both surfaces; assign in fixed order, never cycle. Every step
+  is also numbered, so colour is never the only cue.
+- `npm run smoke -- --smith` builds a match in the browser and checks the numbers, including
+  the Antenna Modeler handoff.
 
 ## Conventions
 

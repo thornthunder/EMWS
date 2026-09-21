@@ -1,20 +1,29 @@
 import { About } from './pages/About';
+import { GuidePage, GuidesIndex } from './pages/Guides';
 import { Home } from './pages/Home';
 import { useHashPath } from './router';
 import { AntennaModeler } from './tools/antenna-modeler/AntennaModeler';
+import { SmithTool } from './tools/smith-chart/SmithTool';
 
 const NAV = [
   { path: '/', label: 'Home' },
   { path: '/antenna', label: 'Antenna Modeler' },
+  { path: '/smith', label: 'Smith Chart' },
+  { path: '/guides', label: 'Field Guides' },
   { path: '/about', label: 'About' },
 ];
 
 function Page({ path }: { path: string }) {
+  if (path === '/guides') return <GuidesIndex />;
+  if (path.startsWith('/guides/')) return <GuidePage id={path.slice('/guides/'.length)} />;
+
   switch (path) {
     case '/':
       return <Home />;
     case '/antenna':
       return <AntennaModeler />;
+    case '/smith':
+      return <SmithTool />;
     case '/about':
       return <About />;
     default:
@@ -29,6 +38,11 @@ function Page({ path }: { path: string }) {
   }
 }
 
+/** Highlights "Field Guides" for every guide page, not just the index. */
+function isCurrent(navPath: string, path: string): boolean {
+  return navPath === path || (navPath !== '/' && path.startsWith(`${navPath}/`));
+}
+
 export function App() {
   const path = useHashPath();
   return (
@@ -40,7 +54,7 @@ export function App() {
         </a>
         <nav aria-label="Main">
           {NAV.map((item) => (
-            <a key={item.path} href={`#${item.path}`} aria-current={item.path === path ? 'page' : undefined}>
+            <a key={item.path} href={`#${item.path}`} aria-current={isCurrent(item.path, path) ? 'page' : undefined}>
               {item.label}
             </a>
           ))}

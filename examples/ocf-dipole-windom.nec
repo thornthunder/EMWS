@@ -1,0 +1,19 @@
+CM Off-centre-fed dipole (Windom): 41.1 m of 2 mm wire, 10 m above average ground.
+CM Fed 13.79 m from one end, about a third along, which is the whole point of the design:
+CM there the feed sits near 130 ohms on 40 m instead of a few thousand, so a 4:1 balun
+CM brings it within reach of the radio on several bands from one wire.
+CM This model gives 131 - j24 ohms at 7.1 MHz: about 1.6 to 1 through a 4:1 balun.
+CM Try 10.1 or 21.2 MHz to see why an OCF skips those bands: the feed lands on a
+CM current minimum there and the impedance runs to thousands of ohms.
+CM The pattern card sweeps the whole upper hemisphere, so the plots cut through the
+CM main lobe: at 7.1 MHz the wire is about a wavelength long and fires off its corners
+CM rather than straight out sideways.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 79 0 -13.7 10 0 27.4 10 0.001
+GE 1
+GN 2 0 0 0 13 0.005
+FR 0 1 0 0 7.1 0
+EX 0 1 27 0 1.0 0.0
+RP 0 19 72 1000 0 0 5 5
+EN

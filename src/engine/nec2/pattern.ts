@@ -35,14 +35,65 @@ export function cutsOf(pattern: RadiationPattern): PatternCut[] {
     return [{ kind: 'elevation', fixedDeg: points[0]?.phiDeg ?? 0, points }];
   }
   if (thetas.size > 1 && phis.size > 1) {
-    const peak = peakOf(points);
-    if (!peak) return [];
-    return [
-      { kind: 'azimuth', fixedDeg: peak.thetaDeg, points: points.filter((p) => p.thetaDeg === peak.thetaDeg) },
-      { kind: 'elevation', fixedDeg: peak.phiDeg, points: points.filter((p) => p.phiDeg === peak.phiDeg) },
-    ];
+    let lobe = mainLobe(points);
+    if (!lobe) return [];
+    // Straight up (a low dipole over ground, say) every azimuth is the same direction, so
+    // cut the azimuth pattern at the strongest ring below the zenith instead.
+    if (isPole(lobe)) lobe = mainLobe(points.filter((p) => !isPole(p))) ?? lobe;
+    return [azimuthCut(points, lobe.thetaDeg), elevationCut(points, lobe.phiDeg)];
   }
   return [];
+}
+
+const same = (a: number, b: number) => Math.abs(a - b) < 1e-6;
+
+/** Straight up or straight down, where azimuth means nothing. */
+function isPole(p: PatternPoint): boolean {
+  return Math.abs(Math.sin((p.thetaDeg * Math.PI) / 180)) < 1e-9;
+}
+
+/**
+ * The direction of maximum gain. Where several directions share the maximum (a dipole
+ * radiates equally all round its broadside plane), the one nearest the horizon wins,
+ * and a pole only when it is strictly the maximum.
+ */
+export function mainLobe(points: readonly PatternPoint[]): PatternPoint | undefined {
+  const peak = peakOf(points);
+  if (!peak) return undefined;
+  let best: PatternPoint | undefined;
+  for (const p of points) {
+    if (p.totalDb !== peak.totalDb || isPole(p)) continue;
+    if (!best || Math.abs(elevationOfTheta(p.thetaDeg)) < Math.abs(elevationOfTheta(best.thetaDeg))) best = p;
+  }
+  return best ?? peak;
+}
+
+/** The ring of a grid at one elevation, closed back to its start when it goes all the way round. */
+function azimuthCut(points: readonly PatternPoint[], thetaDeg: number): PatternCut {
+  const ring = points.filter((p) => same(p.thetaDeg, thetaDeg)).sort((a, b) => a.phiDeg - b.phiDeg);
+  const first = ring[0];
+  const second = ring[1];
+  const last = ring[ring.length - 1];
+  if (first && second && last) {
+    const step = second.phiDeg - first.phiDeg;
+    if (same(last.phiDeg + step, first.phiDeg + 360)) ring.push({ ...first, phiDeg: first.phiDeg + 360 });
+  }
+  return { kind: 'azimuth', fixedDeg: thetaDeg, points: ring };
+}
+
+/**
+ * The vertical plane at one azimuth. A grid stores it as two half-planes, at phi and
+ * phi + 180°; the far half is folded in with negative theta, as an RP card sweeping
+ * theta through negative values would give it.
+ */
+function elevationCut(points: readonly PatternPoint[], phiDeg: number): PatternCut {
+  const opposite = (phiDeg + 180) % 360;
+  const near = points.filter((p) => same(p.phiDeg, phiDeg));
+  const far = points
+    .filter((p) => same(p.phiDeg % 360, opposite) && p.thetaDeg > 0)
+    .map((p) => ({ ...p, thetaDeg: -p.thetaDeg, phiDeg }));
+  const plane = [...far, ...near].sort((a, b) => a.thetaDeg - b.thetaDeg);
+  return { kind: 'elevation', fixedDeg: phiDeg, points: plane };
 }
 
 /** Elevation above the horizon (negative below it) for a NEC theta, which may run past 180. */

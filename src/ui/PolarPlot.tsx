@@ -3,7 +3,7 @@
 // main lobe readable while still showing minor lobes 30 dB down.
 
 import type { PatternCut } from '../engine/nec2/pattern';
-import { elevationOfTheta, peakOf } from '../engine/nec2/pattern';
+import { elevationOfTheta, mainLobe } from '../engine/nec2/pattern';
 import { NO_FIELD_DB } from '../engine/nec2/types';
 
 const SIZE = 340;
@@ -42,7 +42,7 @@ export interface PolarPlotProps {
 }
 
 export function PolarPlot({ cut, title }: PolarPlotProps) {
-  const peak = peakOf(cut.points);
+  const peak = mainLobe(cut.points);
   if (!peak) return <p className="muted">No field in this cut.</p>;
 
   const path = cut.points

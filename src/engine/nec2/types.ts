@@ -1,10 +1,9 @@
 // Structured form of a nec2c report. Angles are in degrees and follow NEC's
 // conventions: theta is measured down from +Z (zenith), phi anticlockwise from +X.
 
-export interface Complex {
-  re: number;
-  im: number;
-}
+import type { Complex } from '../../lib/complex';
+
+export type { Complex };
 
 export interface Vec3 {
   x: number;

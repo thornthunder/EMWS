@@ -12,24 +12,60 @@ and nothing to abuse. Started by **ZR1JT**.
 
 **Antenna Modeler**: wire antennas by the method of moments, on the real NEC2 engine.
 
-- Runs standard NEC2 card decks (`.nec`): open your existing models, save them back.
-- Feed impedance, SWR and return loss against any reference impedance.
-- Peak gain, front-to-back ratio, efficiency.
-- Azimuth and elevation patterns on the ARRL log scale.
-- Rotatable 3-D wire view, coloured by current magnitude.
-- Frequency sweeps with an SWR curve; click a point to inspect that frequency.
+- **Build antennas by drawing them.** Front, left and top views in first-angle
+  projection (the ISO/SANS drawing layout), plus a rotatable 3-D view, all sharing one
+  scale so they line up like an engineering drawing. Drag wire ends or whole wires;
+  joined wires stay joined. Draw new wires with a click at each end. Right-click a wire
+  to feed it, split it, duplicate it or delete it; drag a feed point along its wire.
+  Snap to the grid and to other wire ends. Undo and redo everything.
+- **Or type them in.** Frequency (single, sweep, or one click for any amateur band),
+  ground, and every wire's ends, diameter and segments are plain form fields.
+- **Re-solves as you edit**, and checks the design against NEC-2's rules as you go:
+  segments too long, wires too fat, ends that almost meet, wires that cross, wires
+  below ground, all explained in terms of the drawing.
+- Reads and writes standard NEC-2 card decks (`.nec`). Decks the visual editor can't
+  represent yet (arcs, helices, GM copies, ...) still run, exactly as written.
+- Feed impedance, SWR and return loss against any reference impedance; several feeds
+  for phased arrays.
+- Peak gain, front-to-back ratio, efficiency. Azimuth and elevation patterns on the
+  ARRL log scale, cut automatically through the main lobe of the whole-sphere pattern.
+- Frequency sweeps with an SWR curve; click a point to inspect that frequency. A sweep is
+  shared across your processor's cores - measured 6.2 s down to 2.2 s on a four-core
+  laptop - and counts the frequencies off as they come in.
 - Free space, perfect ground, and real (Sommerfeld-Norton) ground.
 - Solves in a Web Worker, so the page never freezes. A 3-element Yagi solves in well
   under a tenth of a second.
+- **Or solve somewhere else.** Big models can go to a solver service instead: one you run
+  yourself on `127.0.0.1`, or one the site itself provides. The choice is remembered per
+  browser, the service says what engine and precision it is, and if it stops answering
+  the run falls back to your browser rather than failing. The protocol tags every job
+  with its kind, so the same service can take other EMWS work later. See
+  [docs/solver-service.md](docs/solver-service.md).
+
+**Smith chart and matching**: design the network between the radio and the antenna.
+
+- Build the chain component by component - series and shunt L, C and R, coax lines,
+  open and shorted stubs, transformers - and watch each one draw its arc on the chart.
+- Sliders work in ohms of reactance, which is what decides how far round the circle a
+  component moves you. Give an L or C a Q and it gets the loss a real part has.
+- **Match it for me**: every two-component L network that brings the load to your system
+  impedance, with real component values and the bandwidth each one holds.
+- Loads come from typed R + jX, from a NanoVNA `.s1p` file, or straight from the Antenna
+  Modeler: model an antenna, then match it without retyping a thing.
+- SWR across the band, the impedance after each step, and how much power a mismatch
+  turns back.
+
+**Field Guides**: a guide per tool at `#/guides`, written for radio amateurs - what the
+readings mean, worked examples, and the honest limits.
 
 The engine is [nec2c](engines/nec2c/PROVENANCE.md), the public-domain C translation of
 NEC2 by 5B4AZ, compiled unmodified to WebAssembly. Its results are checked against
 antenna theory by the test suite: a resonant half-wave dipole comes out at 72 Ω and
 2.14 dBi, a quarter-wave vertical over perfect ground at 37.6 Ω and 5.16 dBi.
 
-**Planned**: Smith chart and matching networks · RF toolbox (wire lengths, coax loss,
-LC, coils, L and Pi networks) · a 2-D FDTD field sandbox · a wire-table editor, so
-nobody has to learn card decks.
+**Planned**: RF toolbox (wire lengths, coax loss, LC, coils, L and Pi networks) · a 2-D
+FDTD field sandbox · loads and wire materials in the antenna editor · Pi and T networks
+and a tuning optimiser in the Smith chart.
 
 ## Quick start
 
@@ -47,7 +83,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | Runs real antenna models through the real engine and checks the physics |
 | `npm run build` | Type-checks, then writes the deployable site to `dist/` |
 | `npm run preview` | Serves `dist/` locally, exactly as built |
-| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model |
+| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --page "#/guides"` checks any other page |
 | `npm run build:engine` | Recompiles nec2c to WebAssembly ([needs Emscripten](docs/building-the-engine.md)) |
 
 ## Hosting it
@@ -68,31 +104,46 @@ See [docs/deploy-iis.md](docs/deploy-iis.md).
 ## How it fits together
 
 ```
- NEC2 card deck (text)
-        │
-        ▼
- src/engine/nec2/client.ts ──postMessage──▶ nec2.worker.ts          (Web Worker)
-                                                 │
-                                   run.ts: fresh nec2c.wasm instance per run;
-                                   deck in, report out, via an in-memory filesystem
-                                                 │
+ views and forms ──edits──▶ AntennaModel ◀──deck.ts──▶ NEC-2 card deck (.nec)
+ (editor/, ModelPanel)      (model.ts: pure edits,           │
+                             history.ts: undo/redo,          │  planRuns(): a sweep with an
+                             validate.ts: design checks)     │  automatic pattern is a quick
+                                                             ▼  sweep + one far-field run
+ src/engine/nec2/solver.ts ── the user's choice of where to solve ──┐
+        │                                                          │
+        │ "this browser"                      "a solver elsewhere"  │
+        ▼                                                          ▼
+ client.ts ──postMessage──▶ nec2.worker.ts   POST {kind, deck} ──▶ solver service
+                                 │               (site proxy: public/solver/index.php)
+               run.ts: fresh nec2c.wasm instance per run;          │
+               deck in, report out, via an in-memory filesystem    │
+                                 │        nec2c's report text ◀────┘
+                                 ▼
                                    parse-output.ts: text report ─▶ typed Nec2Report
         ┌────────────────────────────────────────┘
         ▼
- src/tools/antenna-modeler/  +  src/ui/ (PolarPlot, WireView, SweepChart)
+ results: src/ui/ (PolarPlot, SweepChart), currents coloured onto the four views
 ```
+
+Whoever solves it, only nec2c's own report comes back and `parse-output.ts` reads it
+here, so a remote solver cannot change how a result is interpreted.
 
 ```
 engines/nec2c/upstream/   nec2c 1.3.1, byte-for-byte as published. Never edited.
 engines/nec2c/            PROVENANCE.md (licence evidence, hashes), build shim
-src/engine/nec2/          the engine's TypeScript API, and the committed .wasm
-src/lib/                  RF maths shared by all tools
+src/engine/nec2/          the engine's TypeScript API, card-deck lexer, and the two
+                          committed .wasm builds (plain and SIMD, chosen at runtime)
+src/lib/                  RF and vector maths shared by all tools
 src/tools/                one folder per tool
+src/tools/antenna-modeler/editor/   the four views, projection maths, context menu
+src/tools/smith-chart/    network maths, the matcher, the chart
+src/guides/               one Field Guide per tool (keep them in step with the tools)
 src/ui/                   shared plotting components
 examples/                 example antenna models (.nec)
 tests/                    engine, parser and maths tests
 scripts/                  engine build, IIS deploy, browser smoke test
 public/web.config         IIS configuration, copied into dist/
+public/solver/index.php   optional proxy to a NEC service (docs/solver-service.md)
 ```
 
 ## Know the limits

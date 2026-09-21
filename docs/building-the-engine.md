@@ -1,7 +1,7 @@
 # Rebuilding the NEC2 engine
 
 You only need this if you are changing how nec2c is compiled, or updating nec2c itself.
-The built engine (`src/engine/nec2/wasm/nec2c.wasm` and `nec2c.mjs`) is committed, so
+The built engines (`src/engine/nec2/wasm/nec2c{,-simd}.{wasm,mjs}`) are committed, so
 everyday work on EMWS needs only Node.js.
 
 ## Install Emscripten
@@ -34,7 +34,7 @@ npm run smoke          # a real browser solves a real model
 
 Then update the hashes and the Emscripten version in
 [engines/nec2c/PROVENANCE.md](../engines/nec2c/PROVENANCE.md), and commit the new
-`nec2c.wasm` and `nec2c.mjs` together with whatever caused them to change.
+engine files together with whatever caused them to change.
 
 ## How the build works
 
@@ -43,6 +43,21 @@ Each flag is explained in the script. The design decisions behind them:
 
 - **Upstream is never patched.** nec2c normally gets a `config.h` from autotools;
   `engines/nec2c/wasm/config.h` stands in for it, and everything else is done with flags.
+- **Two builds from one set of sources.** The script runs `emcc` twice: `nec2c` and
+  `nec2c-simd`, the latter adding `-msimd128`. `run.ts` asks the runtime which it can
+  execute and the worker fetches only that one, so nobody downloads an engine they
+  cannot run and nobody with an older browser is locked out. Each `.wasm` must be paired
+  with the `.mjs` built alongside it — the loaders are not interchangeable.
+- **`-O3 -fcx-limited-range`, and what they are worth.** Measured on a 2001-segment model:
+  `-O3` over `-O2` about 1.34×, and SIMD on top of that about 1.69× in total.
+  `-fcx-limited-range` lets the compiler inline complex multiplication instead of calling
+  a helper that guards against infinities and NaNs; a NEC-2 impedance matrix contains
+  neither. It is worth little in WebAssembly (clang inlines anyway) but 1.8× for a native
+  build, so it stays.
+- **A faster build that changes an answer is a broken build.** All four variants were
+  measured to produce byte-identical reports on every deck in `examples/`, and
+  `tests/engine-builds.test.ts` compares the plain and SIMD engines' output character for
+  character on each one. Run it after touching any compiler flag.
 - **One fresh instance per run.** nec2c is a command-line program: it keeps its state in
   globals and leaves through `exit()`. Rather than patch it into a re-entrant library,
   EMWS compiles the module once and instantiates it anew for each simulation. That is

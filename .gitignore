@@ -30,3 +30,7 @@ Desktop.ini
 # Local env
 .env
 .env.local
+
+# The NEC solver service, while it lives here. It will move to its own project, and it
+# links CUDA, which must stay clear of this repository's public-domain code.
+/services/
