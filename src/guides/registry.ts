@@ -5,6 +5,7 @@
 
 import type { ComponentType } from 'react';
 import { AntennaModelerGuide } from './AntennaModelerGuide';
+import { BalunGuide } from './BalunGuide';
 import { SmithChartGuide } from './SmithChartGuide';
 
 export interface Guide {
@@ -36,6 +37,15 @@ export const GUIDES: Guide[] = [
     toolHref: '#/smith',
     toolName: 'Smith chart and matching',
     Content: SmithChartGuide,
+  },
+  {
+    id: 'baluns',
+    title: 'Winding baluns and ununs',
+    summary:
+      'Choose a ferrite core, wind it turn by turn, and see the match, the loss and the heat: 49:1 ununs, current baluns and 1:4 Guanellas. Includes measuring your own core with a NanoVNA.',
+    toolHref: '#/balun',
+    toolName: 'Baluns and ununs',
+    Content: BalunGuide,
   },
 ];
 

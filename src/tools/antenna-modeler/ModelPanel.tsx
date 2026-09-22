@@ -48,7 +48,16 @@ const BANDS: { name: string; from: number; to: number }[] = [
   { name: '70 cm', from: 430.0, to: 440.0 },
 ];
 
+/** Points a sweep starts with when you switch one on, or pick a band. */
 const SWEEP_POINTS = 21;
+/**
+ * A guard against a mistyped number, not a judgement about what is sensible.
+ *
+ * NEC-2 itself has no limit: nec2c's FR card count is a plain loop counter. What a long
+ * sweep actually costs is time and memory, and the design checks estimate both and say
+ * so by name before you press Run.
+ */
+const MAX_SWEEP_POINTS = 10_000;
 
 function sweepPlan(from: number, to: number, points: number): FrequencyPlan {
   const steps = Math.max(2, Math.round(points));
@@ -151,7 +160,17 @@ function FrequencySection({ plan, onChange }: { plan: FrequencyPlan; onChange: (
         <div className="field-row">
           <NumberField label="From" value={plan.startMHz} above={0} unit="MHz" onCommit={(v) => onChange(sweepPlan(v, Math.max(end, v * 1.0001), plan.steps))} />
           <NumberField label="To" value={end} above={0} unit="MHz" onCommit={(v) => onChange(sweepPlan(Math.min(plan.startMHz, v * 0.9999), v, plan.steps))} />
-          <NumberField label="Points" value={plan.steps} min={2} integer onCommit={(v) => onChange(sweepPlan(plan.startMHz, end, Math.min(401, v)))} />
+          {/* NEC-2 puts no limit on the number of frequencies - nec2c's FR card is just a
+              loop counter. What a long sweep costs is time and memory, both of which the
+              design checks estimate and warn about by name, so the ceiling here is only
+              a guard against a typo turning into an unkillable run. */}
+          <NumberField
+            label="Points"
+            value={plan.steps}
+            min={2}
+            integer
+            onCommit={(v) => onChange(sweepPlan(plan.startMHz, end, Math.min(MAX_SWEEP_POINTS, v)))}
+          />
         </div>
       ) : (
         <div className="field-row">

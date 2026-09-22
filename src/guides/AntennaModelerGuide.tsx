@@ -136,6 +136,26 @@ export function AntennaModelerGuide() {
         bands where an OCF gives up: the feed lands on a current minimum and the impedance runs to thousands of
         ohms.
       </p>
+      <h3>Baluns, ununs and anything else between the wire and the radio</h3>
+      <p>
+        <strong>NEC-2 models the antenna, and nothing bolted to it.</strong> It reports the impedance at the
+        feed point itself — no balun, no coax, no tuner. The Windom example above is fed straight from the
+        source; its 4:1 balun exists in the description, not in the calculation.
+      </p>
+      <p>
+        The honest way to account for one is the <em>reference impedance</em> box beside the SWR. A 4:1 balun
+        makes the radio see a quarter of the antenna's impedance, so asking for SWR against 4 × 50 = 200 Ω
+        gives exactly the figure the radio sees. That is why the Windom example loads with 200 Ω already set,
+        and reads 1.6:1 rather than the 2.7:1 the bare antenna gives on 50 Ω. Put it back to 50 and you see the
+        antenna alone.
+      </p>
+      <p>
+        For anything more involved — a balun <em>and</em> a length of coax, or a matching network — send the
+        impedance to the <a href="#/smith">Smith chart</a> with the button under the results. It has a
+        transformer component, so you can build the real chain piece by piece. Both it and the reference-impedance
+        trick assume an <strong>ideal, lossless</strong> transformer; a real 4:1 current balun costs you a
+        little, and will not hold exactly 4:1 on every band an OCF is used on.
+      </p>
       <p>
         You can add several feed points, each with its own voltage and phase, which is how you model a phased
         array. With more than one feed, a table appears under the results showing what each one sees.
@@ -147,6 +167,15 @@ export function AntennaModelerGuide() {
         Either a single frequency, or a sweep. The band list sets a sweep across an amateur band in one click
         (IARU Region 1 edges — check your own licence conditions). A sweep gives you the SWR curve, and
         clicking any point on that curve shows the full results at that frequency.
+      </p>
+      <p>
+        <strong>Points</strong> is how many frequencies to solve, and there is no meaningful ceiling: NEC-2
+        does not care, so neither does EMWS. What a long sweep costs is time and memory, and both are checked
+        before you run. Every point is a complete solve, so the time is the single-frequency time multiplied by
+        the point count — a small antenna will take thousands of points without noticing, while a 2000-segment
+        model at a few hundred is a coffee break. Memory matters too: each frequency keeps a current reading
+        for every segment, so it is <em>segments × points</em> that fills the browser, and EMWS says so in the
+        design checks before it happens rather than losing your model to a crash.
       </p>
       <h3>Ground</h3>
       <p>

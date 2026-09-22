@@ -3,12 +3,14 @@ import { GuidePage, GuidesIndex } from './pages/Guides';
 import { Home } from './pages/Home';
 import { useHashPath } from './router';
 import { AntennaModeler } from './tools/antenna-modeler/AntennaModeler';
+import { BalunTool } from './tools/balun/BalunTool';
 import { SmithTool } from './tools/smith-chart/SmithTool';
 
 const NAV = [
   { path: '/', label: 'Home' },
   { path: '/antenna', label: 'Antenna Modeler' },
   { path: '/smith', label: 'Smith Chart' },
+  { path: '/balun', label: 'Baluns' },
   { path: '/guides', label: 'Field Guides' },
   { path: '/about', label: 'About' },
 ];
@@ -24,6 +26,8 @@ function Page({ path }: { path: string }) {
       return <AntennaModeler />;
     case '/smith':
       return <SmithTool />;
+    case '/balun':
+      return <BalunTool />;
     case '/about':
       return <About />;
     default:

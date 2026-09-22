@@ -117,6 +117,28 @@ worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview
 - `npm run smoke -- --smith` builds a match in the browser and checks the numbers, including
   the Antenna Modeler handoff.
 
+### Baluns and ununs (`src/tools/balun/`, `src/lib/ferrite.ts`)
+
+- **The winding recipe (`Design.steps`: wind / tap / crossover) is the source of truth**, as
+  the `AntennaModel` is in the modeller. The pad (`WindingPad.tsx`) and the form both edit it
+  through pure functions in `model.ts`; a drag is one undo step.
+- `circuit.ts` chains ABCD two-ports and finds losses by **walking back from the load**, so
+  core + copper + load = accepted power by construction. `tests/balun.test.ts` asserts it, plus
+  exact ideal limits and the identity that a single-relaxation core is a fixed R parallel L.
+- **No manufacturer data is copied.** Core constants are calculated from dimensions
+  (`toroidGeometry`, the C1/C2 method). Built-in mixes are `mu_i` + family, with frequency
+  behaviour estimated by a Debye relaxation at the Snoek frequency. Known limit: that gives
+  every mix in a family the SAME loss resistance, so built-ins cannot rank mixes on loss -
+  the UI says so when two are compared. A measured `.s1p` (`measure.ts`) replaces the estimate.
+- `strays.ts` (leakage, winding capacitance, pair-line Z0) are geometry estimates that set
+  the TOP of the range and are overridable. NiZn cores are treated as the dielectric they
+  are (eps ~12), MnZn as conductors - getting that wrong made a compensation capacitor
+  appear to hurt, which is how it was caught. A winding's reactance PEAKING is the ferrite,
+  not resonance; only going capacitive is (`trustworthyUpToMHz`).
+- Nothing in it has been checked against a bench measurement yet. Do not claim otherwise.
+- `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
+  and the refused design.
+
 ## Conventions
 
 - TypeScript strict + `noUncheckedIndexedAccess`. British spelling in prose ("licence", "colour").

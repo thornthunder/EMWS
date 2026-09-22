@@ -2,7 +2,7 @@
 // problems in terms of the drawing, before the engine gets a chance to be cryptic.
 
 import { segmentApproach } from '../../lib/vec3';
-import { estimateSolveMs, formatDuration } from './cost';
+import { estimateResultBytes, estimateSolveMs, formatBytes, formatDuration } from './cost';
 import {
   type AntennaModel,
   type Wire,
@@ -30,6 +30,11 @@ const MIN_SEGMENT_TO_RADIUS = 8;
 const NEAR_MISS = 0.05;
 /** Say something before a run that will keep somebody waiting. */
 const SLOW_RUN_MS = 10_000;
+/**
+ * Where a sweep's results start to threaten the tab. Conservative on purpose: a desktop
+ * browser will often go further, but a phone will not, and a crash loses the model.
+ */
+const HEAVY_RESULT_BYTES = 500 * 1024 * 1024;
 
 function label(w: Wire): string {
   return `Wire ${w.tag}`;
@@ -112,6 +117,19 @@ export function validateModel(model: AntennaModel, options: ValidateOptions = {}
         `${frequencies.length > 1 ? ` at ${frequencies.length} frequencies` : ''}. ` +
         `The work grows with the cube of the segment count, so halving it is eight times quicker. ` +
         `Auto-segment would use ${sensible}.`,
+    );
+  }
+
+  // Time is not the only thing a long sweep spends. Every frequency keeps a current
+  // reading for every segment, so the results themselves can outgrow the browser tab -
+  // and running out of memory loses the model, where waiting only costs patience.
+  const resultBytes = estimateResultBytes(segments, frequencies.length);
+  if (frequencies.length > 1 && resultBytes > HEAVY_RESULT_BYTES) {
+    warn(
+      `These results would need about ${formatBytes(resultBytes)} of memory: ` +
+        `${segments} segments at ${frequencies.length} frequencies, and every frequency keeps ` +
+        `a current reading for every segment. Fewer points, or fewer segments, will fit better ` +
+        `than the browser will stretch.`,
     );
   }
 

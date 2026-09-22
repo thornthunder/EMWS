@@ -30,6 +30,13 @@ export function stepColour(index: number): string {
   return STEP_COLOURS[index] ?? STEP_COLOUR_MORE;
 }
 
+/**
+ * There is no solve behind this sweep - it is arithmetic along the chain at each
+ * frequency - so the only real cost is drawing the curve. High enough to stay out of
+ * the way, low enough that a mistyped number cannot lock the page up.
+ */
+const MAX_SWEEP_POINTS = 10_000;
+
 const ADD_BUTTONS: { label: string; kind: ElementKind; connection: Connection }[] = [
   { label: 'Series L', kind: 'inductor', connection: 'series' },
   { label: 'Series C', kind: 'capacitor', connection: 'series' },
@@ -190,7 +197,7 @@ function SystemSection({ network, onChange }: ChainPanelProps) {
           value={network.sweep.points}
           min={2}
           integer
-          onCommit={(v) => onChange({ ...network, sweep: { ...network.sweep, points: Math.min(401, v) } })}
+          onCommit={(v) => onChange({ ...network, sweep: { ...network.sweep, points: Math.min(MAX_SWEEP_POINTS, v) } })}
         />
       </div>
     </section>

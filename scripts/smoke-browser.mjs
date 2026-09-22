@@ -36,12 +36,14 @@ const viewportWidth = Number(flag('--width') ?? 1400);
 const dark = args.includes('--dark');
 /** Drive the Smith chart tool: add a component, use an automatic match, check the numbers. */
 const smithTest = args.includes('--smith');
+/** Wind a transformer in the balun tool with real mouse input, and check what it reports. */
+const balunTest = args.includes('--balun');
 /** Send the model to this site's own solver and check it comes back the same. */
 const solverTest = args.includes('--solver');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : undefined);
+const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -134,6 +136,134 @@ async function runSmithTest({ evaluate, send, log }) {
     `[...document.querySelectorAll('.button-row button')].map((b) => b.textContent).find((t) => t.startsWith('Use ')) ?? null`,
   );
   check(handoff !== null, `and its impedance is offered here: "${handoff}"`);
+}
+
+/**
+ * Winds a transformer in the balun tool the way a person would: clicks a core, drags the
+ * free end of the wire round the ring with a real mouse, undoes it, compares two mixes,
+ * and walks into the one design the tool must refuse.
+ */
+async function runBalunTest({ evaluate, send, log, screenshot }) {
+  /** With --screenshot out.png, also saves out-compare.png and out-guanella.png along the way. */
+  const snap = async (suffix) => {
+    if (!screenshot) return;
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(screenshot.replace(/.png$/i, `-${suffix}.png`), Buffer.from(data, 'base64'));
+  };
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`Balun test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const state = async () =>
+    JSON.parse(
+      await evaluate(`JSON.stringify({
+        title: document.querySelector('.results-title')?.textContent ?? null,
+        summary: Object.fromEntries([...document.querySelectorAll('.summary > div')].map((d) =>
+          [(d.querySelector('dt')?.textContent ?? '').trim(), (d.querySelector('dd')?.textContent ?? '').trim()])),
+        caption: document.querySelector('.pad-caption')?.textContent ?? '',
+        turnsDrawn: document.querySelectorAll('.pad polyline.pad-wire').length,
+        charts: document.querySelectorAll('figure.chart').length,
+        legends: document.querySelectorAll('.chart-legend').length,
+        issues: [...document.querySelectorAll('.issue-text')].map((e) => e.textContent),
+        bands: document.querySelectorAll('.band-table tbody tr').length,
+        note: document.querySelector('.results-title + p')?.textContent ?? '',
+      })`),
+    );
+  const click = async (selector, text) => {
+    const done = await evaluate(`(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => ${text === undefined ? 'true' : `e.textContent.trim().startsWith(${JSON.stringify(text)})`});
+      if (!el) return false;
+      el.click();
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  const choose = async (label, value) => {
+    const done = await evaluate(`(() => {
+      const select = [...document.querySelectorAll('select')].find((s) => s.closest('label')?.textContent.includes(${JSON.stringify(label)}) || s.getAttribute('aria-label') === ${JSON.stringify(label)});
+      if (!select) return false;
+      const option = [...select.options].find((o) => o.textContent.includes(${JSON.stringify(value)}));
+      if (!option) return false;
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+
+  // Start from the shipped design whatever an earlier visit left behind.
+  await evaluate(`(localStorage.removeItem('emws.balun.v1'), location.reload())`);
+  await sleep(1500);
+
+  let now = await state();
+  check(now.title === '49:1 · 2 : 14 turns', `opens on the end-fed transformer: ${now.title}`);
+  check(now.turnsDrawn === 14, `and draws its ${now.turnsDrawn} turns on the core`);
+  check(now.charts >= 4 && now.bands === 9, `with ${now.charts} charts and ${now.bands} bands in the table`);
+  check(/built-in estimate/.test(now.note), 'and says plainly that the ferrite is an estimate');
+  const lossOn43 = now.summary['Lost inside'];
+  check(lossOn43?.endsWith('dB'), `80 m on #43 loses ${lossOn43}, ${now.summary['Heat in the core']} in the core`);
+
+  check(await click('.core-chip[aria-label="FT240 in #61"]'), 'a click puts the same winding on #61');
+  now = await state();
+  check(now.summary['Lost inside'] !== lossOn43, `and the loss changes with the ferrite: ${now.summary['Lost inside']}`);
+  check(await click('.core-chip[aria-label="FT240 in #43"]'), 'back to #43');
+
+  // Wind more turns by dragging the free end of the wire round the ring, with a real mouse.
+  const geometry = JSON.parse(
+    await evaluate(`(() => {
+      const handle = document.querySelector('.pad-handle').getBoundingClientRect();
+      const core = document.querySelector('.pad-core').getBoundingClientRect();
+      return JSON.stringify({ hx: handle.x + handle.width / 2, hy: handle.y + handle.height / 2,
+        cx: core.x + core.width / 2, cy: core.y + core.height / 2, r: core.width / 2 });
+    })()`),
+  );
+  const mouse = (type, x, y, buttons) =>
+    send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1 });
+  await mouse('mousePressed', geometry.hx, geometry.hy, 1);
+  // The second half of this winding runs anticlockwise from the bottom right; take the
+  // end up to about one o'clock, in steps, as a hand would.
+  const radius = geometry.r * 0.8;
+  for (let degrees = 0; degrees >= -60; degrees -= 6) {
+    const a = (degrees * Math.PI) / 180;
+    await mouse('mouseMoved', geometry.cx + radius * Math.cos(a), geometry.cy + radius * Math.sin(a), 1);
+    await sleep(30);
+  }
+  await mouse('mouseReleased', geometry.cx + radius * Math.cos(-Math.PI / 3), geometry.cy + radius * Math.sin(-Math.PI / 3), 0);
+  await sleep(400);
+  now = await state();
+  check(now.turnsDrawn > 14, `dragging the wire round the core winds it: ${now.turnsDrawn} turns, ${now.title}`);
+  const wound = now.turnsDrawn;
+
+  check(await click('.button-row button', 'Undo'), 'Undo');
+  now = await state();
+  check(now.turnsDrawn === 14, `takes the whole drag back in one step, not turn by turn: ${now.turnsDrawn} turns`);
+  check(wound !== 14, 'so the drag really was one gesture');
+
+  check(await choose('Compare with', '#52'), 'comparing with the same winding on #52');
+  now = await state();
+  check(now.legends >= 3, `puts both on every chart, with a legend (${now.legends} legends)`);
+  await snap('compare');
+  await choose('Compare with', 'nothing');
+
+  // The trap: a 1:4 Guanella on one core, into a load with one side earthed.
+  check(await click('.segmented button', '1:4 Guanella'), 'switching to a 1:4 Guanella');
+  now = await state();
+  check(now.title?.startsWith('1:4 Guanella') && now.issues.length === 0, `gives a working two-core design: ${now.title}`);
+  await snap('guanella');
+  await choose('Cores', 'One');
+  await click('label.check input');
+  now = await state();
+  check(now.issues.some((i) => i.includes('ONE core')), 'one core with an earthed load is refused, and the reason given');
+  check(now.title === null, 'and nothing is analysed while the design cannot work');
+
+  check(await click('.segmented button', '1:1 current'), 'switching to a 1:1 current balun');
+  now = await state();
+  check('Chokes with' in now.summary, `reports what matters for a choke: ${now.summary['Chokes with']}`);
+
+  // Leave the next visitor the shipped design, not this test's leftovers.
+  await evaluate(`localStorage.removeItem('emws.balun.v1')`);
 }
 
 /**
@@ -623,9 +753,15 @@ try {
     throw new Error(`Timed out after ${TIMEOUT_MS / 1000} s waiting for the simulation to finish.`);
   };
   if (pagePath) {
-    // A plain page: give it a moment to render, then report what it shows.
-    await sleep(1200);
-      if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l) });
+    // Wait for the page itself rather than for a guess at how long it takes: straight
+    // after a build, on a busy machine, a fixed pause is sometimes not enough and the tool
+    // tests then start on an empty page. A tool is ready when its readout has figures in it.
+    const ready = smithTest || balunTest ? `document.querySelectorAll('.summary > div').length > 0` : `document.querySelector('h1') !== null`;
+    const pageDeadline = Date.now() + 20_000;
+    while (Date.now() < pageDeadline && !(await evaluate(ready))) await sleep(150);
+    await sleep(300); // let the first paint settle
+    if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     const info = JSON.parse(
       await evaluate(
         `JSON.stringify({ title: document.querySelector('h1')?.textContent ?? null, headings: [...document.querySelectorAll('h2')].map((h) => h.textContent), links: document.querySelectorAll('a').length })`,
@@ -704,7 +840,10 @@ try {
 
   // EMWS ships a plain and a SIMD engine and picks one at runtime. Fetching both would
   // mean the detection is broken and every visitor pays for an engine they never run.
+  // A sweep starts a worker per core and each asks for the engine, so count distinct
+  // engines rather than requests - several requests for the same one are expected.
   const wasmFetched = responses.filter((r) => r.url.endsWith('.wasm'));
+  const wasmEngines = [...new Set(wasmFetched.map((r) => r.url))];
   const wasm = wasmFetched[0];
   const page = responses.find((r) => r.url.split('#')[0] === new URL(baseUrl).href);
   const header = (r, name) => Object.entries(r?.headers ?? {}).find(([k]) => k.toLowerCase() === name)?.[1];
@@ -719,7 +858,8 @@ try {
   const wasmName = wasm ? wasm.url.split('/').pop() : '';
   console.log(
     `WASM:     ${wasm ? `${wasmName} — HTTP ${wasm.status}, Content-Type ${wasm.mime}` : 'never requested'}` +
-      `${wasmFetched.length > 1 ? `  ** ${wasmFetched.length} engines fetched, expected 1 **` : ''}`,
+      `${wasmEngines.length > 1 ? `  ** ${wasmEngines.length} different engines fetched, expected 1: ${wasmEngines.map((u) => u.split('/').pop()).join(', ')} **` : ''}` +
+      `${wasmFetched.length > 1 ? `  (${wasmFetched.length} requests, one per worker)` : ''}`,
   );
   console.log(`CSP:      ${header(page, 'content-security-policy') ?? '(no Content-Security-Policy header - expected on the dev/preview server, not on IIS)'}`);
   if (state?.alert) console.log(`Alert:    ${state.alert}`);
@@ -739,7 +879,7 @@ try {
     !state?.alert &&
     problems.length === 0 &&
     wasm?.mime === 'application/wasm' &&
-    wasmFetched.length === 1;
+    wasmEngines.length === 1;
   console.log(ok ? '\nPASS' : '\nFAIL');
   exitCode = ok ? 0 : 1;
   ws.close();

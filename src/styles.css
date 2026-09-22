@@ -1498,3 +1498,298 @@ button.icon:hover:not(:disabled) {
 .chain-table tr.bypassed {
   opacity: 0.55;
 }
+
+/* ---- baluns and ununs ---- */
+
+.page-header {
+  margin-bottom: 16px;
+}
+.page-header h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+}
+.page-header p {
+  margin: 0;
+}
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent-strong);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+/* the design pad */
+.pad {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px 10px;
+  transition: border-color 0.12s;
+}
+.pad-over {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgb(181 97 10 / 0.18);
+}
+.pad svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 460px;
+  touch-action: none; /* dragging round the core must not scroll the page */
+}
+.pad-core {
+  fill: var(--grid-minor);
+  stroke: var(--wire);
+  stroke-width: 1.5;
+}
+.pad-core-name {
+  fill: var(--text);
+  font: 600 15px var(--sans);
+}
+.pad-label {
+  fill: var(--muted);
+  font: 12px var(--sans);
+}
+.pad-wire {
+  fill: none;
+  stroke-linecap: round;
+}
+.pad-lead {
+  fill: none;
+  stroke: var(--wire);
+  stroke-width: 2;
+  stroke-linecap: round;
+}
+.pad-handle {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 3;
+  cursor: grab;
+}
+.pad-handle:hover,
+.pad-handle-active {
+  fill: var(--accent);
+  cursor: grabbing;
+}
+.pad-caption {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* the core list: sizes down, mixes across */
+.core-table {
+  border-collapse: collapse;
+  margin: 6px 0 10px;
+}
+.core-table th {
+  padding: 2px 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+.core-table th[scope='row'] {
+  text-align: right;
+}
+.core-table td {
+  padding: 1px;
+  text-align: center;
+}
+.core-chip {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: grab;
+}
+.core-chip:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+.core-chip-on {
+  border-color: var(--accent);
+  background: rgb(181 97 10 / 0.1);
+  color: var(--accent-strong);
+}
+.measured-tag {
+  margin-right: 10px;
+  white-space: nowrap;
+}
+
+/* the winding, as a list of steps */
+.recipe {
+  margin: 0 0 8px;
+  padding-left: 22px;
+}
+.recipe li {
+  margin-bottom: 4px;
+}
+.recipe li > * {
+  vertical-align: middle;
+}
+.recipe .field {
+  display: inline-flex;
+  width: 190px;
+  margin-right: 6px;
+}
+.recipe-text {
+  display: inline-block;
+  min-width: 190px;
+  margin-right: 6px;
+  font-size: 14px;
+}
+
+.stray {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+.stray .field {
+  flex: 0 0 200px;
+}
+.stray-tag {
+  padding-bottom: 8px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: italic;
+}
+.stray .link {
+  padding-bottom: 8px;
+  font-size: 12px;
+}
+
+/* results */
+.results-title {
+  margin: 0 0 4px;
+  font-size: 18px;
+}
+.band-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 8px 0;
+}
+.band-buttons button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent-strong);
+}
+.readout-frequency {
+  margin: 6px 0;
+}
+.rival-value {
+  display: block;
+  color: var(--muted);
+  font-weight: 400;
+}
+
+.chart {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+.chart svg {
+  display: block;
+  width: 100%;
+  height: auto;
+  touch-action: pan-y;
+}
+.chart figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 14px;
+  font-size: 13px;
+}
+.chart-title {
+  font-weight: 600;
+}
+.chart-legend {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--muted);
+}
+.chart-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.chart-readout {
+  margin-left: auto;
+  color: var(--muted);
+}
+.chart-readout strong {
+  color: var(--text);
+}
+.plot-grid {
+  stroke: var(--plot-grid);
+  stroke-width: 1;
+  opacity: 0.6;
+}
+.plot-label {
+  fill: var(--muted);
+  font: 11px var(--sans);
+}
+.plot-guide {
+  stroke: var(--accent);
+  stroke-width: 1;
+  stroke-dasharray: 3 4;
+  opacity: 0.55;
+}
+.chart-line {
+  fill: none;
+  stroke-width: 2;
+  stroke-linejoin: round;
+  stroke-linecap: round;
+}
+.chart-crosshair {
+  stroke: var(--muted);
+  stroke-width: 1;
+}
+.chart-dot {
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+
+.band-table {
+  width: 100%;
+  margin-top: 8px;
+  border-collapse: collapse;
+  font-size: 14px;
+  font-variant-numeric: tabular-nums;
+}
+.band-table th,
+.band-table td {
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  text-align: right;
+}
+.band-table th:first-child {
+  text-align: left;
+}
+.band-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.summary small {
+  display: block;
+}
+.chart figcaption {
+  margin-bottom: 4px;
+}
+.chart-key {
+  white-space: nowrap;
+}

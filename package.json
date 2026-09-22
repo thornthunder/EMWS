@@ -18,7 +18,7 @@
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b",
-    "test": "vitest run",
+    "test": "node scripts/test.mjs",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke-browser.mjs",
     "build:engine": "node scripts/build-nec2c.mjs"

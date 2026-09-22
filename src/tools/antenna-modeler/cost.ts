@@ -41,6 +41,28 @@ function effectiveWorkers(workers: number): number {
   return Math.max(1, 1 + (Math.max(1, workers) - 1) * parallelEfficiency);
 }
 
+/**
+ * Roughly how much memory a sweep's results will occupy.
+ *
+ * EMWS keeps the parsed report for every frequency, and each one carries a current entry
+ * per segment - so the cost is segments x frequencies, not frequencies alone. Measured
+ * under Node at 601 segments: 50 frequencies retained 8 MB and 200 retained 31 MB, both
+ * about 275 bytes per entry once the fixed overhead stops dominating. Rounded up,
+ * because a browser's object overhead is not smaller than Node's.
+ */
+const RESULT_BYTES_PER_ENTRY = 300;
+
+export function estimateResultBytes(segments: number, frequencies: number): number {
+  if (segments <= 0 || frequencies <= 0) return 0;
+  return segments * frequencies * RESULT_BYTES_PER_ENTRY;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024 ** 2) return `${Math.round(bytes / 1024)} kB`;
+  if (bytes < 1024 ** 3) return `${Math.round(bytes / 1024 ** 2)} MB`;
+  return `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+}
+
 export function estimateSolveMs(segments: number, frequencies: number, workers = 1): number {
   if (segments <= 0 || frequencies <= 0) return 0;
   const perFrequency = rate * segments ** 3 + PER_FREQUENCY_MS;
@@ -78,6 +100,7 @@ export function recordParallelSolve(segments: number, frequencies: number, worke
 
 export function formatDuration(ms: number): string {
   if (ms < 1000) return 'well under a second';
+  if (ms < 1500) return 'about a second';
   if (ms < 90_000) return `about ${Math.round(ms / 1000)} seconds`;
   const minutes = ms / 60_000;
   return `about ${minutes < 10 ? minutes.toFixed(1) : Math.round(minutes)} minutes`;

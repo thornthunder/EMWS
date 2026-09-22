@@ -55,6 +55,22 @@ and nothing to abuse. Started by **ZR1JT**.
 - SWR across the band, the impedance after each step, and how much power a mismatch
   turns back.
 
+**Baluns and ununs**: choose a ferrite core, wind it, and see what it does.
+
+- Wind it the way you would describe it - *two turns, tap, five more, cross over, seven
+  more* - by dragging the wire round the core on the design pad, or as a list of steps.
+  Drop a core from the list to change it; drop the same one again to stack it.
+- Tapped transformers (the 49:1 and 9:1 ununs), 1:1 current baluns and 1:4 Guanellas, on
+  one engine. It refuses the one design that cannot work - a 1:4 Guanella on a single core
+  into an earthed load - and says why.
+- Match, loss, **watts of heat in the core**, temperature rise, flux density and choking
+  impedance, band by band from 160 m to 10 m. Compare the same winding on two mixes.
+- What a core is worth is *calculated* from its dimensions, not looked up. The ferrite's
+  behaviour with frequency is an honest estimate from Snoek's law - no manufacturer's
+  curves are copied - and **a NanoVNA sweep of your own core replaces it**.
+- Takes its load from the Antenna Modeler, and passes what the radio sees on to the Smith
+  chart.
+
 **Field Guides**: a guide per tool at `#/guides`, written for radio amateurs - what the
 readings mean, worked examples, and the honest limits.
 
@@ -63,7 +79,7 @@ NEC2 by 5B4AZ, compiled unmodified to WebAssembly. Its results are checked again
 antenna theory by the test suite: a resonant half-wave dipole comes out at 72 Ω and
 2.14 dBi, a quarter-wave vertical over perfect ground at 37.6 Ω and 5.16 dBi.
 
-**Planned**: RF toolbox (wire lengths, coax loss, LC, coils, L and Pi networks) · a 2-D
+**Planned**: Ruthroff transformers and measured ferrite data in the balun tool · RF toolbox (wire lengths, coax loss, LC, coils, L and Pi networks) · a 2-D
 FDTD field sandbox · loads and wire materials in the antenna editor · Pi and T networks
 and a tuning optimiser in the Smith chart.
 
@@ -83,7 +99,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | Runs real antenna models through the real engine and checks the physics |
 | `npm run build` | Type-checks, then writes the deployable site to `dist/` |
 | `npm run preview` | Serves `dist/` locally, exactly as built |
-| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --page "#/guides"` checks any other page |
+| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --page "#/guides"` checks any other page |
 | `npm run build:engine` | Recompiles nec2c to WebAssembly ([needs Emscripten](docs/building-the-engine.md)) |
 
 ## Hosting it
@@ -137,6 +153,8 @@ src/lib/                  RF and vector maths shared by all tools
 src/tools/                one folder per tool
 src/tools/antenna-modeler/editor/   the four views, projection maths, context menu
 src/tools/smith-chart/    network maths, the matcher, the chart
+src/tools/balun/          transformer engine, winding recipe, design pad, core and wire lists
+src/lib/ferrite.ts        toroid geometry and complex permeability
 src/guides/               one Field Guide per tool (keep them in step with the tools)
 src/ui/                   shared plotting components
 examples/                 example antenna models (.nec)

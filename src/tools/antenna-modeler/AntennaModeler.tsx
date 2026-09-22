@@ -453,7 +453,12 @@ export function AntennaModeler() {
   const loadExample = (e: ChangeEvent<HTMLSelectElement>) => {
     const example = EXAMPLES.find((x) => x.id === e.target.value);
     e.target.value = '';
-    if (example) loadDeck(example.deck);
+    if (!example) return;
+    // An antenna meant to be fed through a transformer is read against the impedance
+    // that transformer wants, not against 50 Ω. The box stays editable: put it back to
+    // 50 to see what the antenna itself presents.
+    setZ0(example.z0 ?? DEFAULT_Z0);
+    loadDeck(example.deck);
   };
 
   const openFile = async (e: ChangeEvent<HTMLInputElement>) => {
