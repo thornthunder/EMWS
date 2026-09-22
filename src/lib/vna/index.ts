@@ -29,8 +29,17 @@ export function serialUnavailableReason(): string | undefined {
 
 /** Works out what is on a link, or throws with the reason. */
 export async function identify(link: Link): Promise<Instrument> {
-  await link.write(text('\r'));
-  const reply = await readUntil(link, (b) => decoder.decode(b).includes('ch> ') || b.includes(0x32), { totalMs: 2000, idleMs: 400 });
+  const probe = async () => {
+    await link.write(text('\r'));
+    return readUntil(link, (b) => decoder.decode(b).includes('ch> ') || b.includes(0x32), { totalMs: 2000, idleMs: 400 });
+  };
+  let reply = await probe();
+  if (reply.length === 0) {
+    // A V2 left mid-command by the last program to have the port says nothing until the
+    // command is finished. Finish it with NOPs and ask once more.
+    await NanoVnaV2.sync(link);
+    reply = await probe();
+  }
   const asText = decoder.decode(reply);
   let instrument: Instrument;
   if (asText.includes('ch> ')) instrument = new NanoVna(link);

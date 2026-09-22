@@ -384,10 +384,34 @@ async function runVnaTest({ evaluate, send, log }) {
   const seventyFive = (t) => t.includes('74.') || t.includes('75.');
   check(seventyFive(z), `the readout shows the 75-ohm load the instrument was fed: ${z.replace(/\s+/g, ' ').slice(0, 80)}`);
 
+  // ---- The same load on a NanoVNA-V2: raw readings, calibrated in the page ----
+  check(await clickText('.vna button', 'Disconnect'), 'disconnect the NanoVNA-H');
+  await evaluate(`window.__emwsVnaPick = 'v2'`);
+  check(await clickText('.vna button', 'Connect a NanoVNA'), 'connect again, to the simulated NanoVNA-V2 on the other port');
+  check(await until(`document.querySelector('.vna-status')?.textContent.includes('NanoVNA-V2')`), `connected: ${await evaluate(`document.querySelector('.vna-status strong')?.textContent`)}`);
+  check(await evaluate(`document.querySelector('.vna-calibration') !== null`), 'it asks for a short-open-load calibration');
+  check(await evaluate(`[...document.querySelectorAll('.vna button')].find((b) => b.textContent.startsWith('Measure the load'))?.disabled === true`), 'and will not measure until it has one');
+  for (const standard of ['short', 'open', 'load']) {
+    const label = standard[0].toUpperCase() + standard.slice(1);
+    await evaluate(`window.__emwsVnaAttach(${JSON.stringify(standard)})`);
+    check(await clickText('.vna-calibration button', label), `${label} on the connector: measured`);
+    check(await until(`[...document.querySelectorAll('.vna-calibration button')].some((b) => b.textContent.trim() === '✓ ${label}')`), 'ticked');
+  }
+  check(await until(`(document.querySelector('.vna-calibration')?.textContent ?? '').includes('Calibrated')`), 'calibrated from the three');
+  check(await evaluate(`[...document.querySelectorAll('.vna button')].find((b) => b.textContent.startsWith('Measure the load'))?.disabled === false`), 'and now it will measure');
+  await evaluate(`window.__emwsVnaAttach('antenna')`);
+  const beforeV2 = await evaluate(`document.querySelector('.form-section p.muted strong')?.textContent ?? ''`);
+  check(await clickText('.vna button', 'Measure the load'), 'Measure the load');
+  check(await until(`(document.querySelector('.form-section p.muted strong')?.textContent ?? '') !== ${JSON.stringify(beforeV2)}`), 'taken as the load');
+  const zV2 = await evaluate(`[...document.querySelectorAll('.summary > div')].map((d) => d.textContent).find((t) => /Load|impedance/i.test(t)) ?? document.querySelector('.summary')?.textContent ?? ''`);
+  check(zV2 === z, `the error terms are corrected away: the V2 reads the same 75 ohms as the H did (${zV2.replace(/\s+/g, ' ').slice(0, 60)})`);
+
   // ---- Antenna Modeler: modelled against measured ----
   await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
   check(await until(`document.querySelectorAll('.summary > div').length > 2`, 30_000), 'Antenna Modeler solves its example');
   await evaluate(`[...document.querySelectorAll('details.compare')].forEach((d) => d.setAttribute('open', ''))`);
+  // A hash change is not a new document, so the V2 would still be the port picked: back to the H.
+  await evaluate("window.__emwsVnaPick = 'h'");
   check(await clickText('.compare .vna button', 'Connect a NanoVNA'), 'Compare with the real antenna: connect');
   check(await until(`document.querySelector('.compare .vna-status')?.textContent.includes('connected')`), 'connected');
   check(await clickText('.compare .vna button', 'Measure the antenna'), 'Measure the antenna');
@@ -864,9 +888,14 @@ try {
   await send('Network.enable');
   await send('Page.enable');
   if (vnaTest) {
-    // A NanoVNA-H with DiSlord firmware, as a Web Serial port. It answers the text shell
-    // the way the instrument does, and its "antenna" is 75 ohms with half a microhenry in
-    // series - so the tools should read 75 + j(2 pi f L) back.
+    // Two NanoVNAs, as Web Serial ports. A NanoVNA-H with DiSlord firmware answers the
+    // text shell the way the instrument does; a NanoVNA-V2 answers the binary registers,
+    // and sends RAW readings with known error terms, as the real one does, so that only a
+    // working short-open-load calibration in the page gets the right answer out of it.
+    // Both are connected to the same "antenna": 75 ohms with half a microhenry in series,
+    // so the tools should read 75 + j(2 pi f L) back from either. The page picks the port
+    // with window.__emwsVnaPick ('v2' for the V2), and what is on the V2's connector with
+    // window.__emwsVnaAttach('short' | 'open' | 'load' | 'antenna').
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: `(() => { try {
         if (!window.isSecureContext) return;
@@ -899,7 +928,48 @@ try {
           async close() { this.readable = null; this.writable = null; },
           async forget() {}, getInfo() { return { usbVendorId: 0x0483, usbProductId: 0x5740 }; },
         };
-        Object.defineProperty(navigator, 'serial', { value: { requestPort: async () => port, getPorts: async () => [port] }, configurable: true });
+        const v2 = (() => {
+          const regs = new Map([[0xf0, 2], [0xf3, 1], [0xf4, 9]]);
+          const LEN = { 0x00: 1, 0x0d: 1, 0x10: 2, 0x11: 2, 0x12: 2, 0x18: 3, 0x20: 3, 0x21: 4, 0x22: 6, 0x23: 10 };
+          const E = { e00: [0.05, -0.02], e11: [-0.1, 0.03], e10e01: [0.9, -0.05] };
+          const mul = (a, b) => [a[0] * b[0] - a[1] * b[1], a[0] * b[1] + a[1] * b[0]];
+          const div = (a, b) => { const d = b[0] * b[0] + b[1] * b[1]; return [(a[0] * b[0] + a[1] * b[1]) / d, (a[1] * b[0] - a[0] * b[1]) / d]; };
+          let attached = 'load';
+          window.__emwsVnaAttach = (what) => { attached = what; };
+          const actual = (fMHz) => attached === 'short' ? [-1, 0] : attached === 'open' ? [1, 0] : attached === 'load' ? [0, 0] : gamma(fMHz);
+          // Gm = e00 + e10e01 * Ga / (1 - e11 * Ga): what an uncorrected instrument reads.
+          const raw = (fMHz) => { const g = actual(fMHz); const eg = mul(E.e11, g); const q = div(mul(E.e10e01, g), [1 - eg[0], -eg[1]]); return [E.e00[0] + q[0], E.e00[1] + q[1]]; };
+          const entry = (index) => {
+            const [re, im] = raw(((regs.get(0x00) ?? 0) + index * (regs.get(0x10) ?? 0)) / 1e6);
+            const b = new Uint8Array(32), v = new DataView(b.buffer);
+            v.setInt32(0, 1000000, true); v.setInt32(8, Math.round(re * 1e6), true); v.setInt32(12, Math.round(im * 1e6), true); v.setInt32(16, 10000, true); v.setUint16(24, index, true);
+            return b;
+          };
+          let buffered = [], cursor = 17, push;
+          const handle = (cmd) => {
+            const op = cmd[0], addr = cmd[1] ?? 0;
+            if (op === 0x0d) push(new Uint8Array([0x32]));
+            else if (op === 0x10) push(new Uint8Array([(regs.get(addr) ?? 0) & 0xff]));
+            else if (op >= 0x20 && op <= 0x23) { let v = 0; for (let i = cmd.length - 1; i >= 2; i--) v = v * 256 + cmd[i]; regs.set(addr, v); }
+            else if (op === 0x18) {
+              // The sweep runs continuously, so entries start wherever it has got to; and
+              // the reply comes in two USB packets, cut off an entry boundary.
+              const count = cmd[2], points = regs.get(0x20) ?? 101, all = new Uint8Array(count * 32);
+              for (let n = 0; n < count; n++, cursor = (cursor + 1) % points) all.set(entry(cursor), n * 32);
+              push(all.slice(0, 40)); setTimeout(() => push(all.slice(40)), 3);
+            }
+          };
+          return {
+            readable: null, writable: null,
+            async open() {
+              this.readable = new ReadableStream({ start(c) { push = (b) => { try { c.enqueue(b); } catch {} }; } });
+              this.writable = new WritableStream({ write(chunk) { buffered.push(...chunk); while (buffered.length) { const need = LEN[buffered[0]] ?? 1; if (buffered.length < need) break; handle(buffered.splice(0, need)); } } });
+            },
+            async close() { this.readable = null; this.writable = null; },
+            async forget() {}, getInfo() { return { usbVendorId: 0x04b4, usbProductId: 0x0008 }; },
+          };
+        })();
+        Object.defineProperty(navigator, 'serial', { value: { requestPort: async () => (window.__emwsVnaPick === 'v2' ? v2 : port), getPorts: async () => [port, v2] }, configurable: true });
         window.__emwsSimulatedVna = true;
       } catch (e) { window.__emwsSimError = String(e); } })();`,
     });

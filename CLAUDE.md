@@ -163,7 +163,15 @@ delete them from a normal shell.
   NanoVNA = text shell (`scan start stop pts 3`, older firmware `sweep` + `frequencies` +
   `data 0`, prompt `ch> `); NanoVNA-V2 / SAA-2 = binary registers (op 0x0d INDICATE answers
   `'2'`, WRITE/WRITE2/WRITE8, FIFO at 0x30 in 32-byte entries). `identify(link)` sends one
-  `\r` and tells them apart by the reply; anything else is "not a NanoVNA".
+  `\r` and tells them apart by the reply; if nothing answers it sends ten NOPs (a V2 left
+  mid-command by another program is deaf until the command is finished) and asks once more.
+- **V2 details that were got wrong once:** READFIFO's third byte is a count of *entries*
+  (up to 255), not bytes - the first driver asked for 224 entries and read 7. The instrument
+  sweeps continuously, so after a FIFO clear the first entry out is whatever point it had
+  reached: collect by index until every point is in. Replies can arrive in pieces, so bytes
+  left over from one read are stitched onto the next or the 32-byte frame slips. The test
+  fake and the smoke simulator both do all three, deliberately. ZR1JT's own instrument is a
+  **NanoVNA V2_2, firmware git-20200501-47b2b83** (GD32F303).
 - **Calibration is not the same on the two families.** The classic instrument applies its
   own calibration and sends corrected data; the V2 sends raw readings, so `calibration.ts`
   does one-port SOL (three-term error model) and `MeasureWithVna` refuses to measure on a V2
@@ -179,9 +187,13 @@ delete them from a normal shell.
   curve in `SweepChart`, `measured` prop). Its range follows the tool's range (`useEffect`
   on the props), because a single-frequency model gave a zero-width sweep before that.
 - `tests/vna.test.ts` drives both drivers against scripted links; `npm run smoke -- --vna`
-  injects a simulated NanoVNA-H into the page (`Page.addScriptToEvaluateOnNewDocument`, after
-  `Page.enable`; the fake port hands out fresh streams on every `open()`, as a real one does)
-  and measures from all three tools. **No real instrument has been connected yet**; say so.
+  injects a simulated NanoVNA-H *and* a simulated V2 into the page
+  (`Page.addScriptToEvaluateOnNewDocument`, after `Page.enable`; the fake ports hand out fresh
+  streams on every `open()`, as real ones do; `window.__emwsVnaPick` chooses the port and
+  `window.__emwsVnaAttach` what is on the V2's connector). The V2 sends raw readings through
+  known error terms, so the check that it reads the same 75 Ω as the H is a check that the SOL
+  calibration works. A hash navigation is not a new document: reset the pick between tools.
+  **No real instrument has been connected yet**; say so.
 
 ## Conventions
 

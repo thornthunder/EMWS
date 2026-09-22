@@ -98,40 +98,68 @@ function classicOld(): FakeLink {
   });
 }
 
-/** A V2: registers and a FIFO. */
-function v2(): FakeLink {
+/** How many bytes each V2 command is, opcode included. */
+const V2_COMMAND_BYTES: Record<number, number> = { 0x00: 1, 0x0d: 1, 0x10: 2, 0x11: 2, 0x12: 2, 0x18: 3, 0x20: 3, 0x21: 4, 0x22: 6, 0x23: 10 };
+
+/**
+ * A V2: a byte stream parsed command by command, as the instrument's parser does, with
+ * registers and a FIFO that sweeps continuously - so after a clear the next entry out is
+ * whichever point the sweep had reached, not point 0. Options make it awkward in the
+ * ways the real one can be: `halfSent` leaves a WRITE8 half-received, as a program killed
+ * mid-command leaves it; `pieces` answers READFIFO in chunks cut anywhere but on an
+ * entry boundary.
+ */
+function v2({ halfSent = false, pieces = false } = {}): FakeLink {
   const regs = new Map<number, bigint>([
     [0xf0, 2n],
     [0xf3, 1n],
     [0xf4, 9n],
   ]);
-  let cursor = 0;
+  const buffered: number[] = halfSent ? [0x23, 0x00, 1, 2, 3] : [];
+  let cursor = 17;
+  /** In `pieces` mode the tail of a reply only turns up with the next one, as a late USB packet does. */
+  let late: Uint8Array | undefined;
   return new FakeLink((bytes) => {
-    const op = bytes[0]!;
-    const addr = bytes[1]!;
-    if (op === 0x0d) return new Uint8Array([0x32]);
-    if (op === 0x10) return new Uint8Array([Number(regs.get(addr) ?? 0n) & 0xff]);
-    if (op >= 0x20 && op <= 0x23) {
-      const size = { 0x20: 1, 0x21: 2, 0x22: 4, 0x23: 8 }[op]!;
-      let v = 0n;
-      for (let i = size - 1; i >= 0; i--) v = (v << 8n) | BigInt(bytes[2 + i]!);
-      regs.set(addr, v);
-      if (addr === 0x30) cursor = 0; // clear the FIFO
-      return undefined;
+    buffered.push(...bytes);
+    const replies: Uint8Array[] = [];
+    if (late) {
+      replies.push(late);
+      late = undefined;
     }
-    if (op === 0x18) {
-      const want = bytes[2]!;
-      const points = Number(regs.get(0x20) ?? 101n);
-      const start = Number(regs.get(0x00) ?? 0n);
-      const step = Number(regs.get(0x10) ?? 0n);
-      const entries = [];
-      for (let n = 0; n < Math.floor(want / 32) && cursor < points; n++, cursor++) {
-        const g = gammaOf((start + cursor * step) / 1e6);
-        entries.push(encodeFifoEntry({ index: cursor, s11: g, s21: { re: 0.01, im: 0 } }));
+    while (buffered.length > 0) {
+      const op = buffered[0]!;
+      const need = V2_COMMAND_BYTES[op] ?? 1;
+      if (buffered.length < need) break;
+      const cmd = buffered.splice(0, need);
+      const addr = cmd[1] ?? 0;
+      if (op === 0x0d) replies.push(new Uint8Array([0x32]));
+      else if (op === 0x10) replies.push(new Uint8Array([Number(regs.get(addr) ?? 0n) & 0xff]));
+      else if (op >= 0x20 && op <= 0x23) {
+        let v = 0n;
+        for (let i = need - 1; i >= 2; i--) v = (v << 8n) | BigInt(cmd[i]!);
+        regs.set(addr, v);
+        // A write to the FIFO clears it; the sweep itself carries on regardless.
+      } else if (op === 0x18) {
+        const count = cmd[2]!;
+        const points = Number(regs.get(0x20) ?? 101n);
+        const start = Number(regs.get(0x00) ?? 0n);
+        const step = Number(regs.get(0x10) ?? 0n);
+        const entries = [];
+        for (let n = 0; n < count; n++, cursor = (cursor + 1) % points) {
+          const g = gammaOf((start + cursor * step) / 1e6);
+          entries.push(encodeFifoEntry({ index: cursor, s11: g, s21: { re: 0.01, im: 0 } }));
+        }
+        const all = concat(entries);
+        if (pieces) {
+          // Cut at 40 bytes - never on an entry boundary - and keep the last piece back.
+          const chunks = [];
+          for (let at = 0; at < all.length; at += 40) chunks.push(all.slice(at, at + 40));
+          late = chunks.pop();
+          replies.push(...chunks);
+        } else replies.push(all);
       }
-      return concat(entries);
     }
-    return undefined;
+    return replies;
   });
 }
 
@@ -159,6 +187,16 @@ describe('telling the instruments apart', () => {
     const vna = await identify(link);
     expect(vna.kind).toBe('nanovna-v2');
     expect(vna.name).toBe('NanoVNA-V2 (firmware 1.9)');
+  });
+
+  it('finishes a half-sent command with NOPs when a V2 does not answer at first', async () => {
+    const link = v2({ halfSent: true });
+    const vna = await identify(link);
+    expect(vna.kind).toBe('nanovna-v2');
+    // Two probes, with a run of NOPs between them.
+    const nops = link.written.find((w) => w.length >= 9 && w.every((b) => b === 0));
+    expect(nops).toBeDefined();
+    expect(link.written.filter((w) => w.length === 1 && w[0] === 0x0d)).toHaveLength(2);
   });
 
   it('says so when nothing answers, and when something else does', async () => {
@@ -222,8 +260,22 @@ describe('the NanoVNA-V2', () => {
     const ops = link.written.map((w) => w[0]);
     expect(ops.slice(0, 5)).toEqual([0x23, 0x23, 0x21, 0x21, 0x20]);
     expect(link.written[0]!.slice(2, 10)).toEqual(new Uint8Array([0x40, 0x42, 0x0f, 0, 0, 0, 0, 0])); // 1 000 000 little-endian
-    expect(ops.filter((o) => o === 0x18).length).toBe(Math.ceil(51 / 7));
+    // READFIFO's count is in entries, not bytes, and never more than a byte holds.
+    const reads = link.written.filter((w) => w[0] === 0x18);
+    expect(reads.length).toBeGreaterThan(0);
+    for (const r of reads) expect(r).toEqual(new Uint8Array([0x18, 0x30, 32]));
+    // The sweep was already at point 17 when the FIFO was cleared, so it took more than
+    // one read to see every point, and fewer than one per point.
+    expect(reads.length).toBeGreaterThanOrEqual(2);
+    expect(reads.length).toBeLessThanOrEqual(4);
     expect(progress.at(-1)).toEqual([51, 51]);
+  });
+
+  it('keeps the 32-byte frame when replies arrive in pieces', async () => {
+    const link = v2({ pieces: true });
+    const vna = new NanoVnaV2(link);
+    const points = await vna.sweep({ startMHz: 1, stopMHz: 30, points: 101 });
+    expectPoints(points, 101, 1, 30);
   });
 
   it('encodes and decodes FIFO entries exactly', () => {

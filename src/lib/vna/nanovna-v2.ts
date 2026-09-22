@@ -3,19 +3,26 @@
 // Nothing like the classic's text shell. The V2 is a bag of registers read and written
 // with one-byte opcodes, and a FIFO that streams measurements as it sweeps:
 //
-//     0x0d  INDICATE            -> replies 0x32, the character '2'
+//     0x00  NOP                                       0x0d  INDICATE  -> 0x32, the character '2'
 //     0x10  READ  addr          -> 1 byte      0x20  WRITE  addr, 1 byte
 //     0x11  READ2 addr          -> 2 bytes     0x21  WRITE2 addr, 2 bytes
 //     0x12  READ4 addr          -> 4 bytes     0x22  WRITE4 addr, 4 bytes
-//     0x18  READFIFO addr, n    -> n bytes     0x23  WRITE8 addr, 8 bytes
+//     0x18  READFIFO addr, n    -> n ENTRIES   0x23  WRITE8 addr, 8 bytes
 //
 //     0x00  sweep start, Hz, 8 bytes    0x20  points, 2 bytes      0xf0  device variant
 //     0x10  sweep step, Hz, 8 bytes     0x22  values per point, 2  0xf3  firmware major
-//     0x30  the FIFO: read it for measurements; write anything to it to clear and restart
+//     0x30  the FIFO: read it for measurements; write anything to it to clear it
 //
 // Each FIFO entry is 32 bytes: three complex readings as little-endian int32 pairs -
 // forward, reflected at port 1, received at port 2 - then the point's index as uint16.
-// S11 is reflected / forward; S21 is received / forward.
+// S11 is reflected / forward; S21 is received / forward. READFIFO's count is a number of
+// entries (a byte, so up to 255 of them), and the instrument answers with count x 32 bytes.
+//
+// The instrument sweeps continuously and never stops to be asked, so after the FIFO is
+// cleared the first entry out is whichever point it had reached, not point 0. Entries are
+// therefore collected by their index until every point has arrived, and replies are
+// stitched together across reads so that a reply which arrives in pieces cannot shift the
+// 32-byte frame.
 //
 // WHAT COMES OUT IS RAW. The V2 applies no calibration to what it sends over USB - that
 // is the host's job - so a sweep from this driver must go through calibration.ts before
@@ -32,13 +39,18 @@ import { impedanceFromGamma } from '../touchstone';
 import { type Link, VnaError, concat, readUntil } from './link';
 import type { Instrument, SweepRequest } from './instrument';
 
-const OP = { INDICATE: 0x0d, READ: 0x10, READ2: 0x11, READ4: 0x12, READFIFO: 0x18, WRITE: 0x20, WRITE2: 0x21, WRITE8: 0x23 } as const;
+const OP = { NOP: 0x00, INDICATE: 0x0d, READ: 0x10, READ2: 0x11, READ4: 0x12, READFIFO: 0x18, WRITE: 0x20, WRITE2: 0x21, WRITE8: 0x23 } as const;
 const REG = { START: 0x00, STEP: 0x10, POINTS: 0x20, VALUES_PER_POINT: 0x22, FIFO: 0x30, VARIANT: 0xf0, FW_MAJOR: 0xf3, FW_MINOR: 0xf4 } as const;
 
 const ENTRY_BYTES = 32;
-/** READFIFO takes a one-byte count, so at most seven whole entries per request. */
-const ENTRIES_PER_READ = 7;
+/**
+ * Entries asked for per READFIFO. The count byte allows 255; a kilobyte a time keeps each
+ * reply short enough that waiting for one, or giving up on one, is a matter of moments.
+ */
+const ENTRIES_PER_READ = 32;
 const MAX_POINTS = 1024;
+/** The longest command, WRITE8, is ten bytes: this many NOPs finish anything half-sent. */
+const SYNC_BYTES = 10;
 
 export class NanoVnaV2 implements Instrument {
   readonly kind = 'nanovna-v2' as const;
@@ -51,6 +63,23 @@ export class NanoVnaV2 implements Instrument {
     await link.write(new Uint8Array([OP.INDICATE]));
     const reply = await readUntil(link, (b) => b.includes(0x32), { totalMs: 1500, idleMs: 300 });
     return reply.includes(0x32);
+  }
+
+  /**
+   * Puts the instrument's command parser in a known state. Whoever had the port before
+   * may have left a command half-sent; until it is finished the V2 answers nothing, and
+   * NOPs finish it harmlessly.
+   */
+  static async sync(link: Link): Promise<void> {
+    await link.write(new Uint8Array(SYNC_BYTES).fill(OP.NOP));
+  }
+
+  /** Throws away anything the instrument sent that nobody was waiting for. */
+  private async drain(): Promise<void> {
+    for (let i = 0; i < 20; i++) {
+      const stale = await this.link.read(30);
+      if (stale.length === 0) return;
+    }
   }
 
   private async read(op: number, addr: number, bytes: number): Promise<Uint8Array> {
@@ -73,11 +102,13 @@ export class NanoVnaV2 implements Instrument {
   }
 
   async describe(): Promise<string> {
-    const variant = (await this.read(OP.READ, REG.VARIANT, 1))[0];
-    if (variant !== 2) throw new VnaError(`That is not a NanoVNA-V2 (device variant ${variant}).`);
+    await this.drain();
+    const variant = (await this.read(OP.READ, REG.VARIANT, 1))[0]!;
     const major = (await this.read(OP.READ, REG.FW_MAJOR, 1))[0];
     const minor = (await this.read(OP.READ, REG.FW_MINOR, 1))[0];
-    this.name = `NanoVNA-V2 (firmware ${major}.${minor})`;
+    // Variant 2 is the V2 / SAA-2 itself. Anything else speaking this protocol is a
+    // relative; say which, rather than pretend to know it.
+    this.name = variant === 2 ? `NanoVNA-V2 (firmware ${major}.${minor})` : `NanoVNA-V2 family, variant ${variant} (firmware ${major}.${minor})`;
     return this.name;
   }
 
@@ -88,31 +119,37 @@ export class NanoVnaV2 implements Instrument {
     if (!(stopHz > startHz)) throw new VnaError('The sweep has to go up.');
     const stepHz = Math.round((stopHz - startHz) / (points - 1));
 
+    await this.drain();
     await this.write(OP.WRITE8, REG.START, startHz, 8);
     await this.write(OP.WRITE8, REG.STEP, stepHz, 8);
     await this.write(OP.WRITE2, REG.POINTS, points, 2);
     await this.write(OP.WRITE2, REG.VALUES_PER_POINT, 1, 2);
-    // Clear the FIFO: the next entries out are index 0 of a fresh sweep.
+    // Clear the FIFO, so nothing measured with the old settings is taken for new.
     await this.write(OP.WRITE, REG.FIFO, 0, 1);
 
-    const entries = new Map<number, { s11: { re: number; im: number } }>();
+    const entries = new Map<number, { re: number; im: number }>();
+    /** Bytes of a reply that do not yet make a whole entry; the next reply continues them. */
+    let pending: Uint8Array = new Uint8Array(0);
     request.onProgress?.(0, points);
     const deadline = Date.now() + 10_000 + points * 20;
     while (entries.size < points && Date.now() < deadline) {
-      const want = Math.min(ENTRIES_PER_READ, points - entries.size) * ENTRY_BYTES;
-      await this.link.write(new Uint8Array([OP.READFIFO, REG.FIFO, want]));
-      const chunk = await readUntil(this.link, (b) => b.length >= want, { totalMs: 4000, idleMs: 600 });
-      if (chunk.length < ENTRY_BYTES) continue; // not ready yet; ask again
-      for (const entry of decodeFifo(chunk)) {
-        if (entry.index < points) entries.set(entry.index, { s11: entry.s11 });
+      const count = Math.min(ENTRIES_PER_READ, points);
+      await this.link.write(new Uint8Array([OP.READFIFO, REG.FIFO, count]));
+      const owed = pending.length;
+      const chunk = await readUntil(this.link, (b) => owed + b.length >= count * ENTRY_BYTES, { totalMs: 4000, idleMs: 600 });
+      const bytes = concat([pending, chunk]);
+      const whole = bytes.length - (bytes.length % ENTRY_BYTES);
+      for (const entry of decodeFifo(bytes.subarray(0, whole))) {
+        if (entry.index < points) entries.set(entry.index, entry.s11);
       }
+      pending = bytes.slice(whole);
       request.onProgress?.(entries.size, points);
     }
     if (entries.size < points) throw new VnaError(`The NanoVNA-V2 delivered ${entries.size} of ${points} points before timing out.`);
 
     const out: MeasuredPoint[] = [];
     for (let i = 0; i < points; i++) {
-      const gamma = entries.get(i)!.s11;
+      const gamma = entries.get(i)!;
       out.push({ fMHz: (startHz + i * stepHz) / 1e6, gamma, z: impedanceFromGamma(gamma, 50) });
     }
     return out;
