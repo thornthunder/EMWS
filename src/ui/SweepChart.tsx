@@ -16,16 +16,20 @@ export interface SweepChartProps {
   selected: number;
   onSelect: (index: number) => void;
   z0: number;
+  /** A measurement of the real thing, to lay over the model. Any frequencies; clipped to the plot. */
+  measured?: SweepPoint[];
+  measuredLabel?: string;
 }
 
-export function SweepChart({ points, selected, onSelect, z0 }: SweepChartProps) {
+export function SweepChart({ points, selected, onSelect, z0, measured, measuredLabel }: SweepChartProps) {
   const first = points[0];
   const last = points[points.length - 1];
   if (!first || !last || points.length < 2) return null;
 
   const fMin = first.frequencyMHz;
   const fMax = last.frequencyMHz;
-  const worst = Math.max(...points.map((p) => Math.min(p.swr, SWR_CEILING)));
+  const inRange = (measured ?? []).filter((m) => m.frequencyMHz >= first.frequencyMHz && m.frequencyMHz <= last.frequencyMHz);
+  const worst = Math.max(...[...points, ...inRange].map((p) => Math.min(p.swr, SWR_CEILING)));
   const top = Math.min(SWR_CEILING, Math.max(2, Math.ceil(worst)));
 
   const x = (f: number) => PAD.left + ((f - fMin) / (fMax - fMin || 1)) * (WIDTH - PAD.left - PAD.right);
@@ -36,6 +40,9 @@ export function SweepChart({ points, selected, onSelect, z0 }: SweepChartProps) 
     .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.frequencyMHz).toFixed(1)},${y(p.swr).toFixed(1)}`)
     .join(' ');
 
+  const measuredLine = inRange
+    .map((p, i) => `${i === 0 ? 'M' : 'L'}${x(p.frequencyMHz).toFixed(1)},${y(p.swr).toFixed(1)}`)
+    .join(' ');
   const best = points.reduce((a, b) => (b.swr < a.swr ? b : a), first);
   // Label frequencies that were actually computed, about five of them.
   const stride = Math.max(1, Math.ceil((points.length - 1) / 5));
@@ -47,6 +54,22 @@ export function SweepChart({ points, selected, onSelect, z0 }: SweepChartProps) 
     <figure className="plot plot-wide">
       <figcaption>
         SWR ({z0} Ω) vs frequency. Best {best.swr.toFixed(2)}:1 at {best.frequencyMHz} MHz
+        {inRange.length > 1 && (
+          <span className="chart-legend">
+            <span className="chart-key">
+              <svg width="22" height="8" aria-hidden="true">
+                <line x1="0" x2="22" y1="4" y2="4" className="sweep-line" />
+              </svg>
+              modelled
+            </span>
+            <span className="chart-key">
+              <svg width="22" height="8" aria-hidden="true">
+                <line x1="0" x2="22" y1="4" y2="4" className="sweep-line sweep-measured" />
+              </svg>
+              {measuredLabel ?? 'measured'}
+            </span>
+          </span>
+        )}
       </figcaption>
       <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img" aria-label="SWR against frequency">
         {Array.from({ length: top }, (_, i) => i + 1).map((s) => (
@@ -66,6 +89,7 @@ export function SweepChart({ points, selected, onSelect, z0 }: SweepChartProps) 
           </text>
         ))}
         <path d={line} className="sweep-line" />
+        {inRange.length > 1 && <path d={measuredLine} className="sweep-line sweep-measured" />}
         {chosen && (
           <>
             <line x1={x(chosen.frequencyMHz)} x2={x(chosen.frequencyMHz)} y1={PAD.top} y2={HEIGHT - PAD.bottom} className="cursor" />

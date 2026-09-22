@@ -18,5 +18,5 @@
     "skipLibCheck": true,
     "noEmit": true
   },
-  "include": ["vite.config.ts", "tests"]
+  "include": ["vite.config.ts", "tests", "src/lib/vna/web-serial.d.ts"]
 }

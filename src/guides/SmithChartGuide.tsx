@@ -36,7 +36,30 @@ export function SmithChartGuide() {
           <strong>Take it from the Antenna Modeler.</strong> Model an antenna there, come here, and a button
           appears offering that antenna's impedance across the frequencies you swept.
         </li>
+        <li>
+          <strong>Measure it, live.</strong> Plug a NanoVNA in by USB, press <em>Connect a NanoVNA…</em>, choose its
+          port when the browser asks, and <em>Measure the load</em>. The sweep comes straight in, named after the
+          instrument. Press it again after every adjustment and watch the match move.
+        </li>
       </ul>
+      <h3>Measuring with a NanoVNA</h3>
+      <p>
+        This needs a <strong>secure page</strong> — https://, or localhost — and a Chromium browser on a desktop:
+        Chrome, Edge, Opera. Firefox, Safari and phones cannot open a serial port from a web page, and the tool
+        says so rather than showing a button that does nothing. The <code>.s1p</code> route works everywhere.
+      </p>
+      <p>
+        A <strong>NanoVNA, -H or -H4</strong> sends readings with its own calibration applied, so calibrate it on
+        the instrument first, at the end of the cable you will measure through, and what arrives is what you
+        would see on its screen. A <strong>NanoVNA-V2</strong> (or SAA-2) sends raw readings and leaves the
+        correction to the computer: the tool asks you to put the short, the open and the load from its kit on
+        the port in turn and press a button for each, then corrects every sweep after that. Change the sweep
+        range and it asks you to calibrate again for it. Nothing is handed on uncalibrated.
+      </p>
+      <p>
+        If the port will not open, the usual reason is that another program — the NanoVNA app, a terminal —
+        already has it. Close that first.
+      </p>
 
       <h2>Building the network</h2>
       <p>

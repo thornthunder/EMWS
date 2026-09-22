@@ -5,6 +5,7 @@ import type { ChangeEvent } from 'react';
 import { useRef, useState } from 'react';
 import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
 import { TouchstoneError, parseTouchstone } from '../../lib/touchstone';
+import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
 import { lMatchSolutions } from './match';
 import {
@@ -159,6 +160,14 @@ function LoadSection({ network, onChange }: ChainPanelProps) {
       </div>
       {error && <p className="alert-inline">{error}</p>}
       {!handoff && <p className="muted">Run an antenna in the Antenna Modeler and its impedance appears here.</p>}
+      <MeasureWithVna
+        startMHz={network.sweep.startMHz}
+        stopMHz={network.sweep.stopMHz}
+        action="Measure the load"
+        onMeasured={(points, source) =>
+          useHandoff({ name: source, savedAt: new Date().toISOString(), points: points.map((p) => ({ fMHz: p.fMHz, r: p.z.re, x: p.z.im })) })
+        }
+      />
     </section>
   );
 }

@@ -24,6 +24,7 @@ import { EXAMPLES } from './examples';
 import { historyReducer, initialHistory } from './history';
 import { estimateSolveMs, formatDuration, formatDurationShort, recordParallelSolve, recordSolve } from './cost';
 import { type AntennaModel, DEFAULT_RADIUS, emptyModel } from './model';
+import { ComparePanel, type Measurement } from './ComparePanel';
 import { ModelPanel } from './ModelPanel';
 import { SolverPicker } from './SolverPicker';
 import { type Issue, validateModel } from './validate';
@@ -185,6 +186,8 @@ export function AntennaModeler() {
   const [fitKey, setFitKey] = useState(0);
   const [autoRun, setAutoRun] = useState(() => readStorage(AUTO_RUN_KEY) !== 'off');
   const [z0, setZ0] = useState(DEFAULT_Z0);
+  /** A measurement of the real antenna, to hold the model against. Not kept between visits. */
+  const [measurement, setMeasurement] = useState<Measurement | undefined>();
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [solved, setSolved] = useState<Solved>();
   const [patternSolved, setPatternSolved] = useState<PatternSolved>();
@@ -405,6 +408,16 @@ export function AntennaModeler() {
 
   const report = solved?.run.report;
   const frequencies = report?.frequencies ?? [];
+  /** What to measure by default: the model's sweep, or a band either side of a single frequency. */
+  const compareSweep = useMemo(() => {
+    const f0 = model.frequency.startMHz;
+    const f1 = f0 + model.frequency.stepMHz * Math.max(0, model.frequency.steps - 1);
+    return f1 > f0 * 1.001 ? { startMHz: f0, stopMHz: f1 } : { startMHz: Number((f0 * 0.95).toPrecision(4)), stopMHz: Number((f0 * 1.05).toPrecision(4)) };
+  }, [model.frequency]);
+  const measuredSwr = useMemo(
+    () => measurement?.points.map((p) => ({ frequencyMHz: p.fMHz, swr: swr(p.z, z0) })),
+    [measurement, z0],
+  );
   const index = Math.min(selectedIndex, Math.max(0, frequencies.length - 1));
   const frequency: FrequencyResult | undefined = frequencies[index];
 
@@ -695,7 +708,9 @@ export function AntennaModeler() {
             <>
               <Summary frequency={frequency} segments={report?.segments ?? []} patterns={patterns} cuts={cuts} z0={z0} onZ0={setZ0} />
               {frequency.feeds.length > 1 && <FeedTable frequency={frequency} segments={report?.segments ?? []} z0={z0} />}
-              {frequencies.length > 1 && <SweepChart points={sweep} selected={index} onSelect={setSelectedIndex} z0={z0} />}
+              {frequencies.length > 1 && (
+                <SweepChart points={sweep} selected={index} onSelect={setSelectedIndex} z0={z0} measured={measuredSwr} measuredLabel="measured" />
+              )}
               {cuts.length > 0 ? (
                 <div className="plots">
                   {cuts.map((cut, i) => (
@@ -709,6 +724,15 @@ export function AntennaModeler() {
             </>
           )}
 
+          {isModel && (
+            <ComparePanel
+              measurement={measurement}
+              onMeasurement={setMeasurement}
+              modelled={frequency?.feeds[0] ? { fMHz: frequency.frequencyMHz, z: frequency.feeds[0].impedance } : undefined}
+              z0={z0}
+              sweep={compareSweep}
+            />
+          )}
           {solved && solved.run.raw.output !== '' && <ReportDetails text={solved.run.raw.output} />}
         </section>
       </div>

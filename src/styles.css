@@ -1846,3 +1846,52 @@ button.danger {
   border-color: var(--danger);
   color: var(--danger);
 }
+
+/* a measurement laid over a model */
+.sweep-measured {
+  stroke: var(--series-3);
+  stroke-dasharray: 7 5;
+}
+.plot figcaption .chart-legend {
+  margin-left: 12px;
+  font-weight: 400;
+}
+
+/* the NanoVNA and the comparison */
+.vna {
+  margin-top: 8px;
+}
+.vna-status {
+  margin: 0 0 6px;
+}
+.vna-calibration {
+  margin: 6px 0;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+}
+.vna-unavailable {
+  margin-top: 8px;
+  font-size: 13px;
+}
+.compare-source {
+  margin: 4px 0 8px;
+}
+.compare-table {
+  margin: 4px 0 10px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+}
+.compare-table th,
+.compare-table td {
+  padding: 3px 12px 3px 0;
+  text-align: left;
+}
+.compare-table thead th {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+.compare-table td {
+  font-family: var(--mono);
+}

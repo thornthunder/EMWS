@@ -231,10 +231,15 @@ export function BalunGuide() {
           Wind <strong>a few turns</strong> on it — five to ten on a big core, spread out, short leads. Few turns
           keeps the winding's own resonance out of the way.
         </li>
-        <li>Sweep it with a NanoVNA across the range you care about, and save the <code>.s1p</code>.</li>
         <li>
           Open <em>Measure the core in your hand</em>, enter the turns, say what the core is as far as you know,
-          give it a name, and open the file.
+          and give it a name.
+        </li>
+        <li>
+          Either sweep it with the NanoVNA on its own, save the <code>.s1p</code>, and open that — or, with the
+          NanoVNA plugged in by USB, press <em>Connect a NanoVNA…</em> and then <em>Measure this core</em>, and
+          skip the file altogether. The live route needs a secure page (https:// or localhost) and a desktop
+          Chromium browser; the Smith chart guide has the details, including what a NanoVNA-V2 needs first.
         </li>
       </ol>
       <p>

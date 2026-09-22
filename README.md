@@ -35,6 +35,9 @@ and nothing to abuse. Started by **ZR1JT**.
 - Free space, perfect ground, and real (Sommerfeld-Norton) ground.
 - Solves in a Web Worker, so the page never freezes. A 3-element Yagi solves in well
   under a tenth of a second.
+- **Compare with the real antenna.** Measure the antenna you built - with a NanoVNA
+  plugged in by USB, or from an `.s1p` it saved - and the measured SWR is drawn over the
+  modelled curve, with modelled and measured impedance side by side at any frequency.
 - **Or solve somewhere else.** Big models can go to a solver service instead: one you run
   yourself on `127.0.0.1`, or one the site itself provides. The choice is remembered per
   browser, the service says what engine and precision it is, and if it stops answering
@@ -50,8 +53,9 @@ and nothing to abuse. Started by **ZR1JT**.
   component moves you. Give an L or C a Q and it gets the loss a real part has.
 - **Match it for me**: every two-component L network that brings the load to your system
   impedance, with real component values and the bandwidth each one holds.
-- Loads come from typed R + jX, from a NanoVNA `.s1p` file, or straight from the Antenna
-  Modeler: model an antenna, then match it without retyping a thing.
+- Loads come from typed R + jX, from a NanoVNA `.s1p` file, live from a NanoVNA on USB,
+  or straight from the Antenna Modeler: model an antenna, then match it without retyping
+  a thing.
 - SWR across the band, the impedance after each step, and how much power a mismatch
   turns back.
 
@@ -67,12 +71,29 @@ and nothing to abuse. Started by **ZR1JT**.
   impedance, band by band from 160 m to 10 m. Compare the same winding on two mixes.
 - What a core is worth is *calculated* from its dimensions, not looked up. The ferrite's
   behaviour with frequency is an honest estimate from Snoek's law - no manufacturer's
-  curves are copied - and **a NanoVNA sweep of your own core replaces it**. Measured cores
+  curves are copied - and **a NanoVNA sweep of your own core replaces it**, from a file or
+  straight off the instrument. Measured cores
   are kept as profiles in the browser, sit in the core bin beside the catalogue ones, can be
   corrected after the fact (the sweep is what is stored, the curve is re-derived), and
   export to a small JSON file to back up, move or share.
 - Takes its load from the Antenna Modeler, and passes what the radio sees on to the Smith
   chart.
+
+**Measure it with a NanoVNA**: every tool that takes a measurement can take it straight
+from the instrument, over USB, using the browser's Web Serial API - no driver, no
+program in between.
+
+- Both families: the **NanoVNA, -H and -H4** (the text shell) and the **NanoVNA-V2 /
+  SAA-2** (the binary protocol). The tool works out which it is talking to.
+- The classic NanoVNA applies its own calibration, so what arrives is what its screen
+  shows. The V2 sends raw readings; the tool walks you through short, open and load
+  from its kit, and corrects every sweep after that. Nothing is handed on uncalibrated.
+- Needs a **secure page** - `https://` or `localhost` - and a desktop Chromium browser
+  (Chrome, Edge, Opera). Elsewhere the tool says so, and the `.s1p` route still works.
+  For a site on your own network, `scripts/enable-https.ps1` gives an IIS site a
+  certificate this machine trusts.
+- Written from the published protocols, not from any other program's source: the
+  NanoVNA firmware and the desktop apps are GPL, and none of their code is here.
 
 **Field Guides**: a guide per tool at `#/guides`, written for radio amateurs - what the
 readings mean, worked examples, and the honest limits.
@@ -102,7 +123,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | Runs real antenna models through the real engine and checks the physics |
 | `npm run build` | Type-checks, then writes the deployable site to `dist/` |
 | `npm run preview` | Serves `dist/` locally, exactly as built |
-| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --page "#/guides"` checks any other page |
+| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --page "#/guides"` checks any other page |
 | `npm run build:engine` | Recompiles nec2c to WebAssembly ([needs Emscripten](docs/building-the-engine.md)) |
 
 ## Hosting it
@@ -118,7 +139,9 @@ security headers), and there is a deploy script:
 node scripts/smoke-browser.mjs https://your-server/emws/    # check the live site
 ```
 
-See [docs/deploy-iis.md](docs/deploy-iis.md).
+See [docs/deploy-iis.md](docs/deploy-iis.md). Talking to a NanoVNA needs the site on
+`https://`; on a private network, `.\scripts\enable-https.ps1 -SiteName emws.local`
+makes a certificate for the site's name, trusts it on that machine, and binds it.
 
 ## How it fits together
 
@@ -158,6 +181,8 @@ src/tools/antenna-modeler/editor/   the four views, projection maths, context me
 src/tools/smith-chart/    network maths, the matcher, the chart
 src/tools/balun/          transformer engine, winding recipe, design pad, core and wire lists
 src/lib/ferrite.ts        toroid geometry and complex permeability
+src/lib/vna/              NanoVNA drivers (classic and V2) over Web Serial, one-port calibration
+src/ui/MeasureWithVna.tsx the connect / calibrate / measure control every tool shares
 src/guides/               one Field Guide per tool (keep them in step with the tools)
 src/ui/                   shared plotting components
 examples/                 example antenna models (.nec)

@@ -156,6 +156,33 @@ delete them from a normal shell.
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
   and the refused design.
 
+### NanoVNA over Web Serial (`src/lib/vna/`, `src/ui/MeasureWithVna.tsx`)
+
+- **Written from the published protocols only.** The NanoVNA firmware, nanovna-saver and the
+  V2 desktop apps are all GPL: never read their source for this, let alone copy it. Classic
+  NanoVNA = text shell (`scan start stop pts 3`, older firmware `sweep` + `frequencies` +
+  `data 0`, prompt `ch> `); NanoVNA-V2 / SAA-2 = binary registers (op 0x0d INDICATE answers
+  `'2'`, WRITE/WRITE2/WRITE8, FIFO at 0x30 in 32-byte entries). `identify(link)` sends one
+  `\r` and tells them apart by the reply; anything else is "not a NanoVNA".
+- **Calibration is not the same on the two families.** The classic instrument applies its
+  own calibration and sends corrected data; the V2 sends raw readings, so `calibration.ts`
+  does one-port SOL (three-term error model) and `MeasureWithVna` refuses to measure on a V2
+  until short, open and load have been taken for the current range. Nothing leaves the
+  component uncalibrated.
+- Web Serial exists only on secure pages (https:// or localhost) in desktop Chromium.
+  `serialUnavailableReason()` says which is missing and the UI shows that instead of a dead
+  button; the `.s1p` route is always there. `scripts/enable-https.ps1` gives an IIS site a
+  self-signed certificate trusted on that machine - it touches the Trusted Root store, so the
+  user runs it, not the assistant.
+- One component, three homes: Smith chart load (`ChainPanel`), balun core measurement
+  (`DesignPanel`), Antenna Modeler `ComparePanel` (measured SWR dashed over the modelled
+  curve in `SweepChart`, `measured` prop). Its range follows the tool's range (`useEffect`
+  on the props), because a single-frequency model gave a zero-width sweep before that.
+- `tests/vna.test.ts` drives both drivers against scripted links; `npm run smoke -- --vna`
+  injects a simulated NanoVNA-H into the page (`Page.addScriptToEvaluateOnNewDocument`, after
+  `Page.enable`; the fake port hands out fresh streams on every `open()`, as a real one does)
+  and measures from all three tools. **No real instrument has been connected yet**; say so.
+
 ## Conventions
 
 - TypeScript strict + `noUncheckedIndexedAccess`. British spelling in prose ("licence", "colour").

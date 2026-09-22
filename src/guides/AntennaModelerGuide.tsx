@@ -327,6 +327,36 @@ export function AntennaModelerGuide() {
         a few decibels down; it keeps the main lobe readable while still showing small side lobes.
       </p>
 
+      <h2>Compare with the real antenna</h2>
+      <p>
+        A model is a claim about a piece of wire. The way to find out how good a claim is to build the antenna,
+        measure it, and hold the two side by side — which is what the <em>Compare with the real antenna</em>{' '}
+        panel under the results is for. Give it a measurement, from a NanoVNA plugged in by USB (
+        <em>Connect a NanoVNA…</em>, then <em>Measure the antenna</em>) or from a <code>.s1p</code> it saved,
+        and:
+      </p>
+      <ul>
+        <li>
+          the measured SWR is drawn over the modelled curve, dashed, so a shifted resonance or a mismatch the
+          model did not predict is visible at a glance;
+        </li>
+        <li>
+          at whichever frequency you are looking at, the modelled and measured impedance and SWR are put in a
+          table, one above the other.
+        </li>
+      </ul>
+      <p>
+        Where they part company is where the model is wrong, and the usual suspects are worth knowing. Insulated
+        wire is electrically a few percent longer than bare, which the model does not know unless you shorten
+        it. Real ground is rarely as kind as "average". And a measurement taken at the shack end of the coax is
+        of the antenna <em>plus</em> the coax, which the model never saw — measure at the feed point, or send the
+        model's impedance to the Smith chart and add the coax there before comparing.
+      </p>
+      <p>
+        The live route needs a secure page (https:// or localhost) and a desktop Chromium browser; the Smith
+        chart guide explains, and what a NanoVNA-V2 needs before it will measure anything.
+      </p>
+
       <h2>The design checks</h2>
       <p>
         Warnings appear under the views as you work. They are NEC-2's rules, not opinions: ignore them and the

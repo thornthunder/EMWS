@@ -6,6 +6,7 @@
 import { type ChangeEvent, type DragEvent, useRef, useState } from 'react';
 import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
 import { TouchstoneError, parseTouchstone } from '../../lib/touchstone';
+import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
 import { COAX, CORES, type CoreSize, type Material, WIRES } from './catalog';
 import {
@@ -446,29 +447,33 @@ function MeasureSection({ design, onAddProfiles }: DesignPanelProps) {
   const core = coreOf(design);
   const suggested = `${core.name} ${mix}`.trim();
 
+  /** A sweep of the test winding, from a file or straight off the instrument, becomes a profile. */
+  const keep = (points: { fMHz: number; z: { re: number; im: number } }[], source: string) => {
+    const profile = makeProfile({
+      name: name.trim() || suggested,
+      size: { ...core, id: 'custom', name: core.name },
+      family,
+      mix: mix.trim() || 'unknown mix',
+      setup: { turns, strayPf, stack: design.stack },
+      sweep: points.map((p) => ({ fMHz: p.fMHz, r: p.z.re, x: p.z.im })),
+      sourceFile: source,
+    });
+    onAddProfiles([profile]);
+    setMessage(
+      `Kept ${profile.name}: μ′ starts at ${initialPermeability(profile)}. ` +
+        (profile.trustworthyUpToMHz === undefined
+          ? 'The winding never went capacitive in this sweep, so the whole curve is usable.'
+          : `The winding resonates in this sweep - trust the curve up to about ${profile.trustworthyUpToMHz.toFixed(1)} MHz, or measure again with fewer turns.`),
+    );
+    setName('');
+  };
+
   const open = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
     if (!file) return;
     try {
-      const parsed = parseTouchstone(await file.text());
-      const profile = makeProfile({
-        name: name.trim() || suggested,
-        size: { ...core, id: 'custom', name: core.name },
-        family,
-        mix: mix.trim() || 'unknown mix',
-        setup: { turns, strayPf, stack: design.stack },
-        sweep: parsed.points.map((p) => ({ fMHz: p.fMHz, r: p.z.re, x: p.z.im })),
-        sourceFile: file.name,
-      });
-      onAddProfiles([profile]);
-      setMessage(
-        `Kept ${profile.name}: μ′ starts at ${initialPermeability(profile)}. ` +
-          (profile.trustworthyUpToMHz === undefined
-            ? 'The winding never went capacitive in this sweep, so the whole curve is usable.'
-            : `The winding resonates in this sweep - trust the curve up to about ${profile.trustworthyUpToMHz.toFixed(1)} MHz, or measure again with fewer turns.`),
-      );
-      setName('');
+      keep(parseTouchstone(await file.text()).points, file.name);
     } catch (problem) {
       setMessage(problem instanceof TouchstoneError ? problem.message : String(problem));
     }
@@ -514,6 +519,7 @@ function MeasureSection({ design, onAddProfiles }: DesignPanelProps) {
           </button>
           <input ref={fileInput} type="file" accept=".s1p,.txt,text/plain" hidden onChange={open} />
         </div>
+        <MeasureWithVna startMHz={design.sweep.startMHz} stopMHz={design.sweep.stopMHz} action="Measure this core" onMeasured={keep} />
         {message && <p className="muted">{message}</p>}
       </details>
     </section>

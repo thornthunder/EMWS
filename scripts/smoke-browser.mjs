@@ -45,12 +45,18 @@ const dark = args.includes('--dark');
 const smithTest = args.includes('--smith');
 /** Wind a transformer in the balun tool with real mouse input, and check what it reports. */
 const balunTest = args.includes('--balun');
+/**
+ * Plug a simulated NanoVNA into the page and measure with it. Web Serial needs a secure
+ * origin (https, or localhost), so this only runs there; on a plain-http origin it checks
+ * that the tools say so and stops.
+ */
+const vnaTest = args.includes('--vna');
 /** Send the model to this site's own solver and check it comes back the same. */
 const solverTest = args.includes('--solver');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : undefined);
+const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -330,6 +336,78 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
 
   // Leave the next visitor the shipped design, not this test's leftovers.
   await evaluate(`localStorage.removeItem('emws.balun.v1')`);
+}
+
+/**
+ * Measures with a (simulated) NanoVNA from each tool that offers it. On an insecure
+ * origin there is nothing to plug in, and the honest thing - the tools saying why - is
+ * what is checked instead.
+ */
+async function runVnaTest({ evaluate, send, log }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`VNA test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const clickText = async (selector, text) => {
+    const done = await evaluate(`(() => { const b = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => e.textContent.trim().startsWith(${JSON.stringify(text)})); if (!b) return false; b.click(); return true; })()`);
+    await sleep(300);
+    return done;
+  };
+  const until = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+
+  const secure = await evaluate('window.isSecureContext');
+  if (!secure) {
+    const note = await evaluate(`document.querySelector('.vna-unavailable')?.textContent ?? ''`);
+    check(/secure page|https/i.test(note), `on a plain-http origin the tool says why the VNA is unavailable: "${note.slice(0, 90)}…"`);
+    log('    (run against https:// or localhost to exercise the instrument itself)');
+    return;
+  }
+  if (process.env.SMOKE_DEBUG) console.error('vna debug:', await evaluate(`JSON.stringify({ sim: window.__emwsSimulatedVna, err: window.__emwsSimError, secure: window.isSecureContext, serial: typeof navigator.serial })`));
+  check(await evaluate('window.__emwsSimulatedVna === true'), 'a simulated NanoVNA-H is on the (fake) serial port');
+
+  // ---- Smith chart: the load straight off the instrument ----
+  const before = await evaluate(`document.querySelector('.summary')?.textContent ?? ''`);
+  check(await clickText('.vna button', 'Connect a NanoVNA'), 'Smith chart: Connect a NanoVNA…');
+  check(await until(`document.querySelector('.vna-status')?.textContent.includes('connected')`), `connected: ${await evaluate(`document.querySelector('.vna-status strong')?.textContent`)}`);
+  check(await clickText('.vna button', 'Measure the load'), 'Measure the load');
+  check(await until(`(document.querySelector('.summary')?.textContent ?? '') !== ${JSON.stringify(before)}`), 'and the chart takes it as the load');
+  const load = await evaluate(`document.querySelector('.form-section p.muted strong')?.textContent ?? ''`);
+  check(load.includes('NanoVNA-H (simulated)'), `named after the instrument: ${load}`);
+  const z = await evaluate(`[...document.querySelectorAll('.summary > div')].map((d) => d.textContent).find((t) => /Load|impedance/i.test(t)) ?? document.querySelector('.summary')?.textContent ?? ''`);
+  const seventyFive = (t) => t.includes('74.') || t.includes('75.');
+  check(seventyFive(z), `the readout shows the 75-ohm load the instrument was fed: ${z.replace(/\s+/g, ' ').slice(0, 80)}`);
+
+  // ---- Antenna Modeler: modelled against measured ----
+  await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
+  check(await until(`document.querySelectorAll('.summary > div').length > 2`, 30_000), 'Antenna Modeler solves its example');
+  await evaluate(`[...document.querySelectorAll('details.compare')].forEach((d) => d.setAttribute('open', ''))`);
+  check(await clickText('.compare .vna button', 'Connect a NanoVNA'), 'Compare with the real antenna: connect');
+  check(await until(`document.querySelector('.compare .vna-status')?.textContent.includes('connected')`), 'connected');
+  check(await clickText('.compare .vna button', 'Measure the antenna'), 'Measure the antenna');
+  check(await until(`document.querySelector('.compare-table') !== null`), 'modelled and measured are put side by side');
+  const row = await evaluate(`[...document.querySelectorAll('.compare-table tbody tr')].map((r) => r.textContent).join(' | ')`);
+  check(row.includes('Impedance') && seventyFive(row), `with the instrument's 75 ohms in the measured column: ${row.replace(/\s+/g, ' ').slice(0, 110)}`);
+  // The Yagi is one frequency, so there is no SWR curve to draw over. Load the sweep
+  // example, measure again, and the measurement should be laid over the modelled curve.
+  await evaluate(`(() => { const s = document.querySelector('.example-picker'); s.value = 'dipole-20m-swr-sweep'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  check(await until(`document.querySelector('.plot-wide') !== null && document.querySelector('.modeler')?.dataset.busy !== 'true'`, 45_000), 'the 20 m sweep example solves, with an SWR curve');
+  await evaluate(`[...document.querySelectorAll('details.compare')].forEach((d) => d.setAttribute('open', ''))`);
+  const stillConnected = await evaluate(`document.querySelector('.compare .vna-status')?.textContent.includes('connected') ?? false`);
+  if (!stillConnected) {
+    check(await clickText('.compare .vna button', 'Connect a NanoVNA'), 'connect again for the new model');
+    check(await until(`document.querySelector('.compare .vna-status')?.textContent.includes('connected')`), 'connected');
+  }
+  check(await clickText('.compare .vna button', 'Measure the antenna'), 'Measure the antenna across the sweep');
+  check(await until(`document.querySelectorAll('path.sweep-measured').length === 1`), 'and it is drawn over the modelled SWR curve, dashed, with a legend');
+  const legend = await evaluate(`document.querySelector('.plot-wide .chart-legend')?.textContent ?? ''`);
+  check(legend.includes('modelled') && legend.includes('measured'), `legend: ${legend.replace(/\s+/g, ' ').trim()}`);
 }
 
 /**
@@ -785,6 +863,47 @@ try {
   await send('Log.enable');
   await send('Network.enable');
   await send('Page.enable');
+  if (vnaTest) {
+    // A NanoVNA-H with DiSlord firmware, as a Web Serial port. It answers the text shell
+    // the way the instrument does, and its "antenna" is 75 ohms with half a microhenry in
+    // series - so the tools should read 75 + j(2 pi f L) back.
+    await send('Page.addScriptToEvaluateOnNewDocument', {
+      source: `(() => { try {
+        if (!window.isSecureContext) return;
+        const enc = new TextEncoder(), dec = new TextDecoder();
+        const gamma = (fMHz) => {
+          const r = 75, x = 2 * Math.PI * fMHz * 1e6 * 0.5e-6, d = (r + 50) ** 2 + x * x;
+          return [((r - 50) * (r + 50) + x * x) / d, (x * (r + 50) - (r - 50) * x) / d];
+        };
+        const reply = (cmd) => {
+          if (cmd === '') return 'ch> ';
+          if (cmd === 'version') return 'version\\r\\n1.2.14\\r\\nch> ';
+          if (cmd === 'info') return 'info\\r\\nBoard: NanoVNA-H (simulated)\\r\\nch> ';
+          const m = /^scan (\\d+) (\\d+) (\\d+) 3$/.exec(cmd);
+          if (m) {
+            const [a, b, n] = [Number(m[1]), Number(m[2]), Number(m[3])];
+            const lines = [];
+            for (let i = 0; i < n; i++) { const hz = Math.round(a + (b - a) * i / (n - 1)); const [re, im] = gamma(hz / 1e6); lines.push(hz + ' ' + re.toFixed(6) + ' ' + im.toFixed(6)); }
+            return cmd + '\\r\\n' + lines.join('\\r\\n') + '\\r\\nch> ';
+          }
+          return cmd + '\\r\\nch> ';
+        };
+        // As a real port does: fresh streams on every open(), none while closed.
+        const port = {
+          readable: null, writable: null,
+          async open() {
+            let push;
+            this.readable = new ReadableStream({ start(c) { push = (t) => { try { c.enqueue(enc.encode(t)); } catch {} }; } });
+            this.writable = new WritableStream({ write(chunk) { const cmd = dec.decode(chunk).trim(); setTimeout(() => push(reply(cmd)), 5); } });
+          },
+          async close() { this.readable = null; this.writable = null; },
+          async forget() {}, getInfo() { return { usbVendorId: 0x0483, usbProductId: 0x5740 }; },
+        };
+        Object.defineProperty(navigator, 'serial', { value: { requestPort: async () => port, getPorts: async () => [port] }, configurable: true });
+        window.__emwsSimulatedVna = true;
+      } catch (e) { window.__emwsSimError = String(e); } })();`,
+    });
+  }
   await send('Emulation.setDeviceMetricsOverride', {
     width: viewportWidth,
     height: 1100,
@@ -845,6 +964,8 @@ try {
     await sleep(300); // let the first paint settle
     if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
+    if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (process.env.SMOKE_PROBE) console.log('probe:', await evaluate(process.env.SMOKE_PROBE));
     const info = JSON.parse(
       await evaluate(
         `JSON.stringify({ title: document.querySelector('h1')?.textContent ?? null, headings: [...document.querySelectorAll('h2')].map((h) => h.textContent), links: document.querySelectorAll('a').length })`,
