@@ -26,6 +26,8 @@ export interface WindingPadProps {
   design: Design;
   materialName: string;
   onDropCore: (coreId: string, materialId: string) => void;
+  /** One of the user's own measured cores was dropped. */
+  onDropProfile: (profileId: string) => void;
   /** The wire's free end has been dragged to where this many turns, in all, are wound. */
   onWindTo: (totalTurns: number) => void;
   onGesture: (active: boolean) => void;
@@ -57,7 +59,7 @@ function layOut(design: Design): { turns: Turn[]; pitch: number; freeEnd: number
 
 const SECTION_COLOUR = ['var(--series-1)', 'var(--series-2)'];
 
-export function WindingPad({ design, materialName, onDropCore, onWindTo, onGesture }: WindingPadProps) {
+export function WindingPad({ design, materialName, onDropCore, onDropProfile, onWindTo, onGesture }: WindingPadProps) {
   const svg = useRef<SVGSVGElement>(null);
   const [over, setOver] = useState(false);
   const [winding, setWinding] = useState(false);
@@ -109,8 +111,9 @@ export function WindingPad({ design, materialName, onDropCore, onWindTo, onGestu
     if (!raw) return;
     e.preventDefault();
     try {
-      const { coreId, materialId } = JSON.parse(raw) as { coreId: string; materialId: string };
-      onDropCore(coreId, materialId);
+      const payload = JSON.parse(raw) as { coreId?: string; materialId?: string; profileId?: string };
+      if (payload.profileId) onDropProfile(payload.profileId);
+      else if (payload.coreId && payload.materialId) onDropCore(payload.coreId, payload.materialId);
     } catch {
       // not one of ours
     }
@@ -159,7 +162,7 @@ export function WindingPad({ design, materialName, onDropCore, onWindTo, onGestu
               d={`M${cx + outerPx},${cy} A${outerPx},${outerPx} 0 1 0 ${cx - outerPx},${cy} A${outerPx},${outerPx} 0 1 0 ${cx + outerPx},${cy} Z M${cx + innerPx},${cy} A${innerPx},${innerPx} 0 1 1 ${cx - innerPx},${cy} A${innerPx},${innerPx} 0 1 1 ${cx + innerPx},${cy} Z`}
             />
             <text className="pad-core-name" x={cx} y={cy - 2} textAnchor="middle">
-              {core.name}-{materialName.replace('#', '')}
+              {design.profileId ? core.name : `${core.name}-${materialName.replace('#', '')}`}
               {design.stack > 1 ? ` ×${design.stack}` : ''}
             </text>
             <text className="pad-label" x={cx} y={cy + 16} textAnchor="middle">

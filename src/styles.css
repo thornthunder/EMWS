@@ -1793,3 +1793,56 @@ button.icon:hover:not(:disabled) {
 .chart-key {
   white-space: nowrap;
 }
+
+/* your cores: the bin under the catalogue grid, and the library that manages them */
+.bin-title {
+  margin: 10px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+.bin {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 0;
+  list-style: none;
+}
+.core-chip-wide {
+  width: auto;
+  padding: 0 8px 0 4px;
+  gap: 4px;
+  grid-auto-flow: column;
+}
+.core-chip-name {
+  font-size: 13px;
+  color: var(--text);
+}
+.library {
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+.library-item {
+  padding: 10px 0;
+  border-top: 1px solid var(--border);
+}
+.library-item-on {
+  box-shadow: inset 3px 0 0 var(--accent);
+  padding-left: 10px;
+}
+.profile-card .field {
+  margin-bottom: 4px;
+}
+.profile-facts {
+  margin: 4px 0 8px;
+  font-size: 12px;
+  line-height: 1.5;
+}
+button.danger {
+  border-color: var(--danger);
+  color: var(--danger);
+}

@@ -67,7 +67,10 @@ and nothing to abuse. Started by **ZR1JT**.
   impedance, band by band from 160 m to 10 m. Compare the same winding on two mixes.
 - What a core is worth is *calculated* from its dimensions, not looked up. The ferrite's
   behaviour with frequency is an honest estimate from Snoek's law - no manufacturer's
-  curves are copied - and **a NanoVNA sweep of your own core replaces it**.
+  curves are copied - and **a NanoVNA sweep of your own core replaces it**. Measured cores
+  are kept as profiles in the browser, sit in the core bin beside the catalogue ones, can be
+  corrected after the fact (the sweep is what is stored, the curve is re-derived), and
+  export to a small JSON file to back up, move or share.
 - Takes its load from the Antenna Modeler, and passes what the radio sees on to the Smith
   chart.
 

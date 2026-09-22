@@ -21,7 +21,7 @@
 import { type Complex, cInv, cSub } from '../../lib/complex';
 import { type FerriteFamily, type PermeabilityPoint, permeabilityFromImpedance, toroidGeometry } from '../../lib/ferrite';
 import type { MeasuredPoint } from '../../lib/touchstone';
-import type { CoreSize, Material } from './catalog';
+import type { CoreSize } from './catalog';
 
 export interface MeasurementSetup {
   core: CoreSize;
@@ -70,18 +70,4 @@ export function permeabilityCurve(points: readonly MeasuredPoint[], setup: Measu
 export function trustworthyUpToMHz(points: readonly MeasuredPoint[]): number | undefined {
   const resonance = points.find((p) => p.z.im <= 0);
   return resonance ? resonance.fMHz / 3 : undefined;
-}
-
-/** A material built from a measurement, ready to stand in for a catalogue mix. */
-export function measuredMaterial(name: string, points: readonly MeasuredPoint[], setup: MeasurementSetup): Material {
-  const curve = permeabilityCurve(points, setup);
-  return {
-    id: `measured-${name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-    name,
-    family: setup.family ?? 'NiZn',
-    // The lowest frequency measured is the nearest thing to the initial permeability.
-    muInitial: Math.max(1, Math.round(curve[0]?.real ?? 1)),
-    curve,
-    note: `measured: ${setup.turns} turns on ${setup.core.name}${setup.stack > 1 ? ` x${setup.stack}` : ''}`,
-  };
 }

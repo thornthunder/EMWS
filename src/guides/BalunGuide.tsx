@@ -233,14 +233,43 @@ export function BalunGuide() {
         </li>
         <li>Sweep it with a NanoVNA across the range you care about, and save the <code>.s1p</code>.</li>
         <li>
-          Open <em>Measure the core in your hand</em>, enter the turns, give it a name, and open the file.
+          Open <em>Measure the core in your hand</em>, enter the turns, say what the core is as far as you know,
+          give it a name, and open the file.
         </li>
       </ol>
       <p>
         The impedance you measured <em>is</em> the permeability, scaled by the shape and the turns: the resistance
-        is the loss and the reactance is the inductance. Your core appears in the grid under a ★ and the whole
-        tool now runs on it. If the winding resonated inside your sweep the tool says so, and how far up to trust
-        the curve.
+        is the loss and the reactance is the inductance. The core goes straight under your design, and the whole
+        tool now runs on its measured curve rather than the estimate. If the winding resonated inside your sweep
+        the tool says so, and how far up to trust the curve.
+      </p>
+
+      <h3>Your cores</h3>
+      <p>
+        A measured core is kept — in this browser, on this machine — as a <strong>core profile</strong>: its size,
+        what it is, when you measured it, how many turns you used, and the whole sweep. It appears under{' '}
+        <em>Your cores</em> beneath the catalogue grid, where it can be clicked or dragged onto the pad exactly
+        like a catalogue core. Next time you open the tool it is still there. A profile is a <em>core</em>, not a
+        mix: what you measured was that FT240, and the tool will not quietly apply it to an FT50.
+      </p>
+      <p>
+        <em>Your core library</em>, at the bottom of the panel, is where you look after them. You can rename one,
+        add a note about where it came from, and <strong>correct the measurement</strong> — if you realise the
+        test winding was 9 turns rather than 8, or you have since worked out its stray capacitance, change the
+        figure and the curve is worked out again from the sweep you took. Nothing is ever lost, because the sweep
+        itself is what is kept.
+      </p>
+      <p>
+        <strong>Export</strong> writes a core, or all of them, to a small JSON file: a backup, a way of moving them
+        to another machine, or something to hand to another amateur — the file carries the whole sweep, so anyone
+        who opens it can see exactly what was measured and how. <strong>Import</strong> reads such a file. Cores
+        you import are never trusted on their curve alone; the curve is re-derived from the sweep inside the
+        file, so a file that has been edited by hand still says what its measurements say.
+      </p>
+      <p>
+        Sweep a profile outside the range it was measured over, or above the point where its test winding
+        resonated, and the design checks say so: beyond the measurement the curve is a guess, and the tool will
+        not pretend otherwise.
       </p>
       <p className="muted">
         One thing that looks like a fault and is not: the reactance of a winding on #43 peaks and then{' '}
@@ -270,6 +299,10 @@ export function BalunGuide() {
 
       <h2>Honest limits</h2>
       <ul>
+        <li>
+          <strong>Your cores live in this browser's storage and nowhere else.</strong> Clearing site data, or a
+          different browser, means starting again — unless you exported them. Export what you would mind losing.
+        </li>
         <li>
           <strong>Nothing here has been checked against a bench yet.</strong> The engine is held to conservation
           of energy and to exact limiting cases, so its arithmetic is sound; whether the ferrite and the strays

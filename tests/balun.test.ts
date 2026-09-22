@@ -20,7 +20,8 @@ import {
 } from '../src/lib/ferrite';
 import { CORES, MATERIALS, type Material, awgMm } from '../src/tools/balun/catalog';
 import { analyse } from '../src/tools/balun/circuit';
-import { measuredMaterial, permeabilityCurve, trustworthyUpToMHz } from '../src/tools/balun/measure';
+import { permeabilityCurve, trustworthyUpToMHz } from '../src/tools/balun/measure';
+import { makeProfile, profileMaterial } from '../src/tools/balun/profiles';
 import {
   type Design,
   checkDesign,
@@ -344,9 +345,18 @@ describe('measuring a core', () => {
     expect(trustworthyUpToMHz(loaded)).toBeCloseTo(resonance / 3, 12);
   });
 
-  it('makes a material that the engine then uses instead of the estimate', () => {
-    const material = measuredMaterial('My FT240', sweep(0), setup);
+  it('becomes a core profile that the engine uses instead of the estimate', () => {
+    const profile = makeProfile({
+      name: 'My FT240',
+      size: ft240,
+      family: 'NiZn',
+      mix: '#43',
+      setup: { turns: 8, strayPf: 0, stack: 1 },
+      sweep: sweep(0).map((p) => ({ fMHz: p.fMHz, r: p.z.re, x: p.z.im })),
+    });
+    const material = profileMaterial(profile);
     expect(material.muInitial).toBeGreaterThan(700);
+    expect(material.id).toBe(`core:${profile.id}`);
     const analysis = analyse(efhwDesign(), material);
     expect(analysis.measuredMaterial).toBe(true);
     expect(analyse(efhwDesign(), mix43).measuredMaterial).toBe(false);

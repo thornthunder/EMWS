@@ -17,7 +17,16 @@ npm run build:engine   # recompile nec2c -> WASM; needs Emscripten in .tools/ems
 
 Before calling a change done: `npm test && npm run build`. For anything touching the
 worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview` +
-`npm run smoke` - the Node tests cannot see those paths.
+`npm run smoke` - the Node tests cannot see those paths. `npm test` goes through
+`scripts/test.mjs`, which normalises the drive-letter case first: started from `d:...`
+(as VS Code's terminal often is) Vitest collects no tests at all.
+
+**The smoke test spawns a real browser.** On Windows the spawned process is only a
+launcher; the browser must be closed over DevTools (`shutDownBrowser` in the script) or it
+and its profile are leaked - this machine was once found with 488 orphaned Edge processes
+and 23 GB of `%TEMP%emws-smoke-*`. If the script warns it could not remove a profile, the
+sandbox this project is often driven from can make some undeletable from inside it;
+delete them from a normal shell.
 
 ## Hard rules
 
@@ -135,6 +144,14 @@ worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview
   are (eps ~12), MnZn as conductors - getting that wrong made a compensation capacitor
   appear to hurt, which is how it was caught. A winding's reactance PEAKING is the ferrite,
   not resonance; only going capacitive is (`trustworthyUpToMHz`).
+- **Core profiles** (`profiles.ts`): a measured core is a `CoreProfile` - size + mix + the raw
+  VNA sweep + setup - kept in localStorage (`emws.balun.cores.v1`) and exportable as
+  `{ emws: 'core-profiles', version: 1 }` JSON. **The sweep is the truth; the curve is a
+  cache** and is re-derived on load, on import and on any setup correction. (A stored profile
+  with an empty curve once ran the whole tool on an air core - SWR 159,272:1 - because load
+  trusted it; a test now plants exactly that and checks the numbers.) A profile pick copies
+  its size into `customCore` and sets `profileId`; picking a catalogue core or editing
+  dimensions clears `profileId` (`withProfile` / `withCatalogueCore` / `withCustomDimensions`).
 - Nothing in it has been checked against a bench measurement yet. Do not claim otherwise.
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
   and the refused design.

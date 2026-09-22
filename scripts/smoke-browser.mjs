@@ -13,9 +13,16 @@
 // This covers what the Node test suite cannot: the Web Worker, WebAssembly streaming
 // compilation, relative asset URLs, and the server's MIME types and CSP header.
 // No dependencies: it speaks the DevTools protocol over Node's built-in WebSocket.
+//
+// HOUSEKEEPING. Each run makes a throwaway browser profile in the OS temp folder and
+// closes the browser properly afterwards (see shutDownBrowser at the bottom - the how and
+// the why are both there). A profile that cannot be removed is reported with its path;
+// stale ones are swept on the next run. If you see the warning repeatedly, look in
+// %TEMP% for emws-smoke-* folders - a few hundred megabytes each - and delete them.
 
 import { spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
+import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -261,6 +268,65 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   check(await click('.segmented button', '1:1 current'), 'switching to a 1:1 current balun');
   now = await state();
   check('Chokes with' in now.summary, `reports what matters for a choke: ${now.summary['Chokes with']}`);
+
+
+  // Your cores. A file picker cannot be driven from here, so a profile is put into storage
+  // exactly as the tool saves one, and the page is reloaded - which is the persistence
+  // being tested anyway: does a measured core come back next time, and can it be used?
+  await evaluate(`(() => {
+    // Eight turns on an FT240: the impedance a mu_i = 800 core relaxing at 7 MHz would show.
+    const mu0 = 4e-7 * Math.PI, od = 0.06096, id = 0.03556, h = 0.0127;
+    const c1 = (2 * Math.PI) / (h * Math.log(od / id));
+    const sweep = [];
+    for (let i = 0; i < 40; i++) {
+      const f = 1 * 30 ** (i / 39), x = f / 7, span = 799;
+      const real = 1 + span / (1 + x * x), loss = (span * x) / (1 + x * x);
+      const wL0 = 2 * Math.PI * f * 1e6 * mu0 * 64 / c1;
+      sweep.push({ fMHz: f, r: wL0 * loss, x: wL0 * real });
+    }
+    const profile = {
+      id: 'core-smoke-1', name: 'Smoke-test FT240', family: 'NiZn', mix: '#43',
+      size: { id: 'custom', name: 'FT240', odMm: 60.96, idMm: 35.56, heightMm: 12.7 },
+      measuredAt: new Date().toISOString(), setup: { turns: 8, strayPf: 0, stack: 1 },
+      sweep, curve: [], sourceFile: 'smoke.s1p', notes: 'planted by the smoke test',
+    };
+    localStorage.setItem('emws.balun.cores.v1', JSON.stringify([profile]));
+    localStorage.removeItem('emws.balun.v1');
+    location.reload();
+  })()`);
+  await sleep(1500);
+  now = await state();
+  const bin = await evaluate(`[...document.querySelectorAll('.bin .core-chip-name')].map((e) => e.textContent)`);
+  check(bin.includes('Smoke-test FT240'), `a kept core comes back after a reload, in the bin: ${bin.join(', ')}`);
+
+  check(await click('.bin .core-chip', undefined), 'clicking it puts it under the design');
+  now = await state();
+  const padName = await evaluate(`document.querySelector('.pad-core-name')?.textContent ?? ''`);
+  check(padName.startsWith('Smoke-test FT240'), `the pad names your core, not a catalogue one: ${padName}`);
+  check(/your measurement/.test(now.note), `and the results say they come from your measurement: ${now.note.slice(0, 60)}...`);
+  // The planted profile carries NO curve, only the sweep. If the tool did not re-derive it
+  // from the sweep it would be running on an air core, with an SWR in the hundreds of
+  // thousands - which is exactly what an earlier version did while this check only asked
+  // whether charts existed. So: ask for the numbers.
+  const swr = Number.parseFloat(now.summary.SWR);
+  check(swr > 1 && swr < 5, `and it analyses on a curve re-derived from the sweep: SWR ${now.summary.SWR}, ${now.summary['Heat in the core']} in the core`);
+
+  // Open the library so a screenshot shows it, and check the profile's card is there.
+  await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('Your core library'))?.setAttribute('open', '')`);
+  await sleep(200);
+  const facts = await evaluate(`document.querySelector('.profile-facts')?.textContent ?? ''`);
+  // Two backslashes: this is a template literal, and the browser must receive \d, not d.
+  const muStart = await evaluate(`(document.querySelector('.profile-facts')?.textContent.match(/μ′ starts at (\\d+)/) ?? [])[1] ?? null`);
+  check(muStart !== null && Number(muStart) > 700 && Number(muStart) < 800, `with μ′ starting at ${muStart} (the planted core relaxes at 7 MHz, so 784 at 1 MHz)`);
+
+  check(/8 turns/.test(facts) && /40 points/.test(facts), `the library shows how it was measured: ${facts.trim().slice(0, 70)}...`);
+  await snap('library');
+
+  check(await click('.core-chip[aria-label="FT240 in #43"]'), 'a catalogue core leaves the profile behind');
+  now = await state();
+  check(/built-in estimate/.test(now.note), 'and the results say so');
+
+  await evaluate(`localStorage.removeItem('emws.balun.cores.v1')`);
 
   // Leave the next visitor the shipped design, not this test's leftovers.
   await evaluate(`localStorage.removeItem('emws.balun.v1')`);
@@ -595,6 +661,20 @@ if (!browserPath) {
   process.exit(2);
 }
 
+// Earlier runs that could not clean up leave their browser profiles here; each is a few
+// hundred megabytes. Sweep any older than an hour before adding another. Best effort:
+// one that is still locked, or that this process is not allowed to touch, is left alone.
+for (const name of readdirSync(tmpdir())) {
+  if (!name.startsWith('emws-smoke-')) continue;
+  const dir = join(tmpdir(), name);
+  try {
+    if (Date.now() - statSync(dir).mtimeMs < 60 * 60 * 1000) continue;
+    rmSync(dir, { recursive: true, force: true });
+  } catch {
+    // still in use, or not ours to remove
+  }
+}
+
 const port = 9300 + Math.floor(Math.random() * 600);
 const profile = mkdtempSync(join(tmpdir(), 'emws-smoke-'));
 const browser = spawn(
@@ -614,6 +694,9 @@ const browser = spawn(
 
 let exitCode = 1;
 const editLog = [];
+/** The DevTools connection, once up; shutdown needs it after the try block. */
+let ws;
+let send;
 try {
   // Wait for the DevTools endpoint, then find the page target.
   let target;
@@ -628,7 +711,7 @@ try {
   }
   if (!target) throw new Error('The browser did not expose a DevTools page target.');
 
-  const ws = new WebSocket(target.webSocketDebuggerUrl);
+  ws = new WebSocket(target.webSocketDebuggerUrl);
   await new Promise((resolve, reject) => {
     ws.onopen = resolve;
     ws.onerror = () => reject(new Error('Could not connect to the DevTools WebSocket.'));
@@ -673,7 +756,7 @@ try {
     }
   };
 
-  const send = (method, params = {}, sessionId = undefined) =>
+  send = (method, params = {}, sessionId = undefined) =>
     new Promise((resolve, reject) => {
       const id = nextId++;
       waiting.set(id, { resolve, reject });
@@ -787,8 +870,9 @@ try {
     const pageOk = info.title !== null && problems.length === 0;
     console.log(pageOk ? '\nPASS' : '\nFAIL');
     exitCode = pageOk ? 0 : 1;
-    ws.close();
-    browser.kill();
+    // This early exit used to call browser.kill() and leave: every page-mode run leaked a
+    // whole browser, because killing the launcher does nothing. Close it properly.
+    await shutDownBrowser();
     process.exit(exitCode);
   }
 
@@ -890,12 +974,121 @@ try {
   }
   console.error(`Smoke test error: ${e instanceof Error ? e.message : e}`);
 } finally {
-  browser.kill();
-  await sleep(500);
-  try {
-    rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 300 });
-  } catch {
-    // the browser can hold the profile briefly; it's in the OS temp dir either way
-  }
+  await shutDownBrowser();
 }
 process.exit(exitCode);
+
+/**
+ * Closing the browser properly, and saying so if it cannot be done.
+ *
+ * Three things were learnt the hard way, after this machine was found with 95 abandoned
+ * profiles, 488 orphaned Edge processes and 23 GB of a full system drive:
+ *
+ *   - The process spawned above is only a LAUNCHER. It starts the real browser and exits
+ *     with code 0, so browser.pid is nobody, browser.kill() kills nobody, and waiting for
+ *     its exit proves nothing. The browser's real process id has to come from the browser
+ *     itself, over DevTools (SystemInfo.getProcessInfo).
+ *   - Browser.close is a browser-level command and is ignored on a page session. It has to
+ *     go over the browser-level socket from /json/version.
+ *   - The only liveness test worth having is whether the DevTools port still answers.
+ *
+ * So: ask the browser its pid; ask it to close; wait for the port to go quiet; if it does
+ * not, kill the real process tree; then remove the profile with patience, and if it is
+ * STILL there, say so, loudly, with the path.
+ */
+async function shutDownBrowser() {
+  const endpoint = `http://127.0.0.1:${port}/json/version`;
+  const alive = async () => {
+    try {
+      await fetch(endpoint, { signal: AbortSignal.timeout(800) });
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** One browser-level DevTools call on a socket of its own. */
+  const browserLevel = async (method) => {
+    const version = await (await fetch(endpoint, { signal: AbortSignal.timeout(2000) })).json();
+    const sock = new WebSocket(version.webSocketDebuggerUrl);
+    await new Promise((resolve, reject) => {
+      sock.onopen = resolve;
+      sock.onerror = () => reject(new Error('no browser socket'));
+    });
+    try {
+      return await Promise.race([
+        new Promise((resolve, reject) => {
+          sock.onmessage = (e) => {
+            const m = JSON.parse(e.data);
+            if (m.id !== 1) return;
+            m.error ? reject(new Error(m.error.message)) : resolve(m.result);
+          };
+          sock.send(JSON.stringify({ id: 1, method }));
+        }),
+        sleep(2000).then(() => undefined),
+      ]);
+    } finally {
+      try {
+        sock.close();
+      } catch {
+        // already gone
+      }
+    }
+  };
+
+  let realPid;
+  try {
+    const info = await browserLevel('SystemInfo.getProcessInfo');
+    realPid = info?.processInfo?.find((x) => x.type === 'browser')?.id;
+  } catch {
+    // the port may already be down, which is the good case
+  }
+  try {
+    ws?.close();
+  } catch {
+    // already closed
+  }
+  try {
+    await browserLevel('Browser.close');
+  } catch {
+    // gone already, or refused; the fallback handles it
+  }
+
+  let quiet = false;
+  for (let i = 0; i < 20 && !(quiet = !(await alive())); i++) await sleep(250);
+
+  if (!quiet) {
+    const pid = realPid ?? browser.pid;
+    if (process.platform === 'win32') {
+      try {
+        execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+      } catch {
+        // refused, or already gone
+      }
+    } else {
+      try {
+        process.kill(pid, 'SIGKILL');
+      } catch {
+        // already gone
+      }
+    }
+    for (let i = 0; i < 12 && !(quiet = !(await alive())); i++) await sleep(250);
+  }
+
+  // The browser is gone by now, but Windows can take a while to let go of a profile a
+  // long run wrote heavily to. Keep trying for a good twenty seconds before giving up.
+  for (let attempt = 0; attempt < 40 && existsSync(profile); attempt++) {
+    try {
+      rmSync(profile, { recursive: true, force: true });
+    } catch {
+      await sleep(500);
+    }
+  }
+  if (process.env.SMOKE_DEBUG) console.error(`shutdown: launcher pid=${browser.pid} browser pid=${realPid} port quiet=${quiet}`);
+  if (existsSync(profile)) {
+    console.error(
+      `\nWARNING: could not remove the browser profile ${profile}\n` +
+        `         (the browser ${quiet ? 'has exited' : 'is STILL RUNNING'}). ` +
+        'Each one is a few hundred megabytes; delete emws-smoke-* from the temp folder by hand.',
+    );
+  }
+}

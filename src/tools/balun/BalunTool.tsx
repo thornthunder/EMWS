@@ -5,15 +5,15 @@ import { type Complex, cAbs } from '../../lib/complex';
 import { type ImpedanceHandoff, saveImpedanceHandoff } from '../../lib/handoff';
 import { formatImpedance } from '../../lib/rf';
 import { guideForTool } from '../../guides/registry';
-import { MATERIALS, type Material } from './catalog';
+import { MATERIALS } from './catalog';
 import { LineChart, type Series } from './Charts';
 import { type Analysis, type Point, analyse } from './circuit';
 import { DesignPanel } from './DesignPanel';
-import { type Design, checkDesign, coreOf, efhwDesign, summarise, tappedTurns, windTo } from './model';
+import { type Design, type Issue, checkDesign, coreOf, efhwDesign, summarise, tappedTurns, windTo, withCatalogueCore, withProfile } from './model';
+import { type CoreProfile, loadProfiles, profileIdOfMaterial, profileMaterial, saveProfiles } from './profiles';
 import { WindingPad } from './WindingPad';
 
 const DESIGN_KEY = 'emws.balun.v1';
-const MATERIALS_KEY = 'emws.balun.materials.v1';
 
 /** A frequency to stand for each band, MHz. */
 const BANDS: [string, number][] = [
@@ -49,7 +49,6 @@ function write(key: string, value: unknown): void {
 
 const isDesign = (v: unknown): v is Design =>
   typeof v === 'object' && v !== null && Array.isArray((v as Design).steps) && typeof (v as Design).topology === 'string' && typeof (v as Design).overrides === 'object';
-const isMaterials = (v: unknown): v is Material[] => Array.isArray(v) && v.every((m) => typeof (m as Material)?.id === 'string' && Array.isArray((m as Material).curve));
 
 interface History {
   past: Design[];
@@ -83,7 +82,7 @@ const ohms = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)} kΩ` : v >=
 
 export function BalunTool() {
   const [history, setHistory] = useState<History>(() => ({ past: [], present: read(DESIGN_KEY, isDesign) ?? efhwDesign(), future: [] }));
-  const [measured, setMeasured] = useState<Material[]>(() => read(MATERIALS_KEY, isMaterials) ?? []);
+  const [profiles, setProfiles] = useState<CoreProfile[]>(loadProfiles);
   const [compareId, setCompareId] = useState('');
   const [antenna, setAntenna] = useState<ImpedanceHandoff | undefined>(undefined);
   const [hover, setHover] = useState<number | undefined>(undefined);
@@ -92,7 +91,7 @@ export function BalunTool() {
   const gesture = useRef(false);
 
   const design = history.present;
-  const materials = useMemo(() => [...MATERIALS, ...measured], [measured]);
+  const materials = useMemo(() => [...MATERIALS, ...profiles.map(profileMaterial)], [profiles]);
   const material = materials.find((m) => m.id === design.materialId) ?? MATERIALS[1]!;
   const compare = materials.find((m) => m.id === compareId && m.id !== material.id);
 
@@ -109,14 +108,55 @@ export function BalunTool() {
   const redo = () => setHistory((h) => (h.future.length === 0 ? h : { past: [...h.past, h.present], present: h.future[0]!, future: h.future.slice(1) }));
 
   useEffect(() => write(DESIGN_KEY, design), [design]);
-  useEffect(() => write(MATERIALS_KEY, measured), [measured]);
+  useEffect(() => saveProfiles(profiles), [profiles]);
 
+  /** The same core again stacks it; anything else starts a single one. */
   const pickCore = (coreId: string, materialId: string) => {
-    const same = design.coreId === coreId && design.materialId === materialId;
-    setDesign({ ...design, coreId, materialId, customCore: undefined, stack: same ? Math.min(4, design.stack + 1) : 1 });
+    const same = !design.profileId && design.coreId === coreId && design.materialId === materialId;
+    setDesign(withCatalogueCore(design, coreId, materialId, same ? Math.min(4, design.stack + 1) : 1));
+  };
+  const pickProfile = (profile: CoreProfile) => {
+    const same = design.profileId === profile.id;
+    setDesign(withProfile(design, { id: profile.id, name: profile.name, size: profile.size, materialId: profileMaterial(profile).id }, same ? Math.min(4, design.stack + 1) : 1));
+  };
+  /** A renamed or re-derived profile has to reach the design that is using it. */
+  const updateProfile = (next: CoreProfile) => {
+    setProfiles((list) => list.map((x) => (x.id === next.id ? next : x)));
+    if (design.profileId === next.id) setDesign(withProfile(design, { id: next.id, name: next.name, size: next.size, materialId: profileMaterial(next).id }, design.stack));
+  };
+  const removeProfile = (id: string) => {
+    setProfiles((list) => list.filter((x) => x.id !== id));
+    if (design.profileId === id) setDesign(withCatalogueCore(design, 'FT240', '43'));
+    if (profileIdOfMaterial(compareId) === id) setCompareId('');
   };
 
-  const issues = useMemo(() => checkDesign(design), [design]);
+  const profile = profiles.find((p) => p.id === design.profileId);
+  const issues = useMemo(() => {
+    const list: Issue[] = checkDesign(design);
+    // A measured curve is only a curve where it was measured.
+    if (profile) {
+      const first = profile.curve[0]?.fMHz;
+      const last = profile.curve[profile.curve.length - 1]?.fMHz;
+      if (first !== undefined && last !== undefined && (design.sweep.startMHz < first * 0.99 || design.sweep.stopMHz > last * 1.01)) {
+        list.push({
+          severity: 'warning',
+          message:
+            `${profile.name} was measured from ${first.toFixed(first < 10 ? 2 : 1)} to ${last.toFixed(last < 10 ? 2 : 1)} MHz. ` +
+            'Outside that the curve is held at its end value, which is a guess, not a measurement.',
+        });
+      }
+      if (profile.trustworthyUpToMHz !== undefined && design.sweep.stopMHz > profile.trustworthyUpToMHz) {
+        list.push({
+          severity: 'warning',
+          message:
+            `The test winding on ${profile.name} resonated during its sweep, so its curve is only good up to about ` +
+            `${profile.trustworthyUpToMHz.toFixed(1)} MHz. Above that it is the winding you are seeing, not the core. ` +
+            'Measure it again with fewer turns to go higher.',
+        });
+      }
+    }
+    return list;
+  }, [design, profile]);
   const blocked = issues.some((i) => i.severity === 'error');
   const loadAt = useMemo(() => (antenna ? loadFrom(antenna) : undefined), [antenna]);
   const analysis: Analysis | undefined = useMemo(() => (blocked ? undefined : analyse(design, material, loadAt)), [blocked, design, material, loadAt]);
@@ -179,14 +219,16 @@ export function BalunTool() {
             onCompare={setCompareId}
             onChange={setDesign}
             onPickCore={pickCore}
-            onAddMaterial={(m) => {
-              setMeasured((list) => [...list.filter((x) => x.id !== m.id), m]);
-              setDesign({ ...design, materialId: m.id });
+            profiles={profiles}
+            onPickProfile={pickProfile}
+            onAddProfiles={(added) => {
+              setProfiles((list) => [...list, ...added]);
+              // A freshly measured core is the one you want to use; an imported batch is not.
+              const only = added.length === 1 ? added[0] : undefined;
+              if (only) setDesign(withProfile(design, { id: only.id, name: only.name, size: only.size, materialId: profileMaterial(only).id }, only.setup.stack));
             }}
-            onRemoveMaterial={(id) => {
-              setMeasured((list) => list.filter((x) => x.id !== id));
-              if (design.materialId === id) setDesign({ ...design, materialId: '43' });
-            }}
+            onUpdateProfile={updateProfile}
+            onRemoveProfile={removeProfile}
             antenna={antenna}
             onAntenna={setAntenna}
             canUndo={history.past.length > 0}
@@ -197,7 +239,7 @@ export function BalunTool() {
         </aside>
 
         <div className="workspace">
-          <WindingPad design={design} materialName={material.name} onDropCore={pickCore} onWindTo={(total) => setDesign({ ...design, steps: windTo(design.steps, total) })} onGesture={onGesture} />
+          <WindingPad design={design} materialName={material.name} onDropCore={pickCore} onDropProfile={(id) => { const p = profiles.find((x) => x.id === id); if (p) pickProfile(p); }} onWindTo={(total) => setDesign({ ...design, steps: windTo(design.steps, total) })} onGesture={onGesture} />
 
           {issues.length > 0 && (
             <ul className="issues">
@@ -219,7 +261,8 @@ export function BalunTool() {
                 <p className="muted">
                   {material.curve ? (
                     <>
-                      Core behaviour from <strong>your measurement</strong> of {material.name}.
+                      Core behaviour from <strong>your measurement</strong> of {material.name}
+                      {profile ? ` (${profile.setup.turns} turns, ${new Date(profile.measuredAt).toLocaleDateString()})` : ''}.
                     </>
                   ) : (
                     <>

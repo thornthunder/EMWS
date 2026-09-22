@@ -32,9 +32,17 @@ export type Conductor =
 
 export interface Design {
   topology: Topology;
+  /** A catalogue size, or 'custom' for one given by its dimensions - which a profile also is. */
   coreId: string;
   /** Used when coreId is 'custom'. */
   customCore?: CoreSize;
+  /**
+   * Set when the core is one of yours - measured, kept as a profile. Its size is copied into
+   * customCore and its curve is the material, so the rest of the tool need not know. Cleared
+   * the moment a catalogue core is picked or the dimensions are edited, because then this is
+   * no longer the core that was measured.
+   */
+  profileId?: string;
   /** Cores stacked side by side at each position; they act as one taller core. */
   stack: number;
   /** A 1:4 Guanella is properly built on two cores. One is possible, with a catch. */
@@ -140,6 +148,37 @@ export function tappedTurns(design: Design): { primary: number; total: number } 
   const inside = summary.taps.filter((t) => t > 0 && t < summary.totalTurns);
   const primary = inside[Math.min(design.inputTap, inside.length - 1)] ?? 0;
   return { primary, total: summary.totalTurns };
+}
+
+/** Puts one of your measured cores under the design: its size and its curve together. */
+export function withProfile(
+  design: Design,
+  profile: { id: string; name: string; size: CoreSize; materialId: string },
+  stack = 1,
+): Design {
+  return {
+    ...design,
+    coreId: 'custom',
+    customCore: { ...profile.size, id: 'custom', name: profile.name },
+    materialId: profile.materialId,
+    profileId: profile.id,
+    stack,
+  };
+}
+
+/** A catalogue core, or custom dimensions: anything that is not one of your measured cores. */
+export function withCatalogueCore(design: Design, coreId: string, materialId: string, stack = 1): Design {
+  return { ...design, coreId, materialId, customCore: undefined, profileId: undefined, stack };
+}
+
+export function withCustomDimensions(design: Design, size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm'>>): Design {
+  const current = coreOf(design);
+  return {
+    ...design,
+    coreId: 'custom',
+    customCore: { ...current, ...size, id: 'custom', name: 'Custom' },
+    profileId: undefined,
+  };
 }
 
 export function coreOf(design: Design): CoreSize {

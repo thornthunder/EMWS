@@ -7,9 +7,18 @@ import { type ChangeEvent, type DragEvent, useRef, useState } from 'react';
 import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
 import { TouchstoneError, parseTouchstone } from '../../lib/touchstone';
 import { NumberField } from '../../ui/NumberField';
-import { COAX, CORES, type Material, WIRES } from './catalog';
+import { COAX, CORES, type CoreSize, type Material, WIRES } from './catalog';
+import {
+  type CoreProfile,
+  ProfileFileError,
+  exportProfiles,
+  importProfiles,
+  initialPermeability,
+  makeProfile,
+  rederive,
+  suggestedFileName,
+} from './profiles';
 import type { Analysis } from './circuit';
-import { measuredMaterial, trustworthyUpToMHz } from './measure';
 import {
   type Design,
   type Step,
@@ -25,6 +34,7 @@ import {
   summarise,
   tap,
   wind,
+  withCustomDimensions,
 } from './model';
 import { CORE_DRAG_TYPE } from './WindingPad';
 
@@ -36,8 +46,12 @@ export interface DesignPanelProps {
   onCompare: (materialId: string) => void;
   onChange: (design: Design) => void;
   onPickCore: (coreId: string, materialId: string) => void;
-  onAddMaterial: (material: Material) => void;
-  onRemoveMaterial: (id: string) => void;
+  /** The cores you have measured and kept. */
+  profiles: CoreProfile[];
+  onPickProfile: (profile: CoreProfile) => void;
+  onAddProfiles: (profiles: CoreProfile[]) => void;
+  onUpdateProfile: (profile: CoreProfile) => void;
+  onRemoveProfile: (id: string) => void;
   /** A load taken from the Antenna Modeler, if one is in use. */
   antenna: ImpedanceHandoff | undefined;
   onAntenna: (handoff: ImpedanceHandoff | undefined) => void;
@@ -90,16 +104,19 @@ export function DesignPanel(props: DesignPanelProps) {
       <LoadSection {...props} set={set} />
       <StraysSection design={design} analysis={props.analysis} set={set} />
       <MeasureSection {...props} />
+      <LibrarySection {...props} />
     </div>
   );
 }
 
-function CoreSection({ design, materials, onPickCore, onChange, compareId, onCompare, onRemoveMaterial }: DesignPanelProps) {
+function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, onChange, compareId, onCompare }: DesignPanelProps) {
   const core = coreOf(design);
-  const startDrag = (e: DragEvent, coreId: string, materialId: string) => {
-    e.dataTransfer.setData(CORE_DRAG_TYPE, JSON.stringify({ coreId, materialId }));
+  const startDrag = (e: DragEvent, payload: object) => {
+    e.dataTransfer.setData(CORE_DRAG_TYPE, JSON.stringify(payload));
     e.dataTransfer.effectAllowed = 'copy';
   };
+  const setDims = (size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm'>>) => onChange(withCustomDimensions(design, size));
+  const catalogue = materials.filter((m) => !m.id.startsWith('core:'));
 
   return (
     <section className="form-section">
@@ -111,9 +128,9 @@ function CoreSection({ design, materials, onPickCore, onChange, compareId, onCom
             <th scope="col">
               <span className="visually-hidden">Size</span>
             </th>
-            {materials.map((m) => (
+            {catalogue.map((m) => (
               <th key={m.id} scope="col" title={m.note}>
-                {m.curve ? '★' : m.name}
+                {m.name}
               </th>
             ))}
           </tr>
@@ -122,8 +139,8 @@ function CoreSection({ design, materials, onPickCore, onChange, compareId, onCom
           {CORES.map((c) => (
             <tr key={c.id}>
               <th scope="row">{c.name}</th>
-              {materials.map((m) => {
-                const chosen = design.coreId === c.id && design.materialId === m.id;
+              {catalogue.map((m) => {
+                const chosen = !design.profileId && design.coreId === c.id && design.materialId === m.id;
                 return (
                   <td key={m.id}>
                     <button
@@ -131,14 +148,12 @@ function CoreSection({ design, materials, onPickCore, onChange, compareId, onCom
                       className={`core-chip${chosen ? ' core-chip-on' : ''}`}
                       draggable
                       aria-pressed={chosen}
-                      aria-label={`${c.name} in ${m.name}${m.curve ? ' (measured)' : ''}`}
+                      aria-label={`${c.name} in ${m.name}`}
                       title={`${c.name}-${m.name.replace('#', '')}: ${m.note}`}
-                      onDragStart={(e) => startDrag(e, c.id, m.id)}
+                      onDragStart={(e) => startDrag(e, { coreId: c.id, materialId: m.id })}
                       onClick={() => onPickCore(c.id, m.id)}
                     >
-                      <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
-                        <circle cx="10" cy="10" r="6.2" fill="none" stroke="currentColor" strokeWidth="4.4" />
-                      </svg>
+                      <CoreGlyph />
                     </button>
                   </td>
                 );
@@ -147,20 +162,35 @@ function CoreSection({ design, materials, onPickCore, onChange, compareId, onCom
           ))}
         </tbody>
       </table>
-      {materials.some((m) => m.curve) && (
+
+      <h4 className="bin-title">Your cores</h4>
+      {profiles.length === 0 ? (
         <p className="muted">
-          ★ measured:{' '}
-          {materials
-            .filter((m) => m.curve)
-            .map((m) => (
-              <span key={m.id} className="measured-tag">
-                {m.name}{' '}
-                <button type="button" className="link" onClick={() => onRemoveMaterial(m.id)} aria-label={`Forget ${m.name}`}>
-                  forget
-                </button>
-              </span>
-            ))}
+          None yet. Measure one below and it appears here, ready to drop onto the pad - and it stays, in this browser, for next
+          time.
         </p>
+      ) : (
+        <ul className="bin" aria-label="Your measured cores">
+          {profiles.map((p) => {
+            const chosen = design.profileId === p.id;
+            return (
+              <li key={p.id}>
+                <button
+                  type="button"
+                  className={`core-chip core-chip-wide${chosen ? ' core-chip-on' : ''}`}
+                  draggable
+                  aria-pressed={chosen}
+                  title={`${p.size.name} ${p.mix}, measured ${new Date(p.measuredAt).toLocaleDateString()} with ${p.setup.turns} turns`}
+                  onDragStart={(e) => startDrag(e, { profileId: p.id })}
+                  onClick={() => onPickProfile(p)}
+                >
+                  <CoreGlyph measured />
+                  <span className="core-chip-name">{p.name}</span>
+                </button>
+              </li>
+            );
+          })}
+        </ul>
       )}
 
       <div className="field-row">
@@ -178,10 +208,11 @@ function CoreSection({ design, materials, onPickCore, onChange, compareId, onCom
 
       <details>
         <summary>A core that is not in the list</summary>
+        {design.profileId && <p className="muted">Editing these leaves your measured core behind: the numbers would no longer be its.</p>}
         <div className="field-row">
-          <NumberField label="Outside" value={core.odMm} above={0} unit="mm" onCommit={(v) => onChange({ ...design, coreId: 'custom', customCore: { ...core, id: 'custom', name: 'Custom', odMm: v } })} />
-          <NumberField label="Inside" value={core.idMm} above={0} unit="mm" onCommit={(v) => onChange({ ...design, coreId: 'custom', customCore: { ...core, id: 'custom', name: 'Custom', idMm: v } })} />
-          <NumberField label="Height" value={core.heightMm} above={0} unit="mm" onCommit={(v) => onChange({ ...design, coreId: 'custom', customCore: { ...core, id: 'custom', name: 'Custom', heightMm: v } })} />
+          <NumberField label="Outside" value={core.odMm} above={0} unit="mm" onCommit={(v) => setDims({ odMm: v })} />
+          <NumberField label="Inside" value={core.idMm} above={0} unit="mm" onCommit={(v) => setDims({ idMm: v })} />
+          <NumberField label="Height" value={core.heightMm} above={0} unit="mm" onCommit={(v) => setDims({ heightMm: v })} />
         </div>
       </details>
 
@@ -193,12 +224,21 @@ function CoreSection({ design, materials, onPickCore, onChange, compareId, onCom
             .filter((m) => m.id !== design.materialId)
             .map((m) => (
               <option key={m.id} value={m.id}>
-                the same, wound on {m.name}
+                {m.id.startsWith('core:') ? `your ${m.name}` : `the same, wound on ${m.name}`}
               </option>
             ))}
         </select>
       </label>
     </section>
+  );
+}
+
+function CoreGlyph({ measured = false }: { measured?: boolean }) {
+  return (
+    <svg viewBox="0 0 20 20" width="18" height="18" aria-hidden="true">
+      <circle cx="10" cy="10" r="6.2" fill="none" stroke="currentColor" strokeWidth="4.4" />
+      {measured && <circle cx="10" cy="10" r="1.6" fill="currentColor" />}
+    </svg>
   );
 }
 
@@ -395,12 +435,16 @@ function StraysSection({ design, analysis, set }: { design: Design; analysis: An
   );
 }
 
-function MeasureSection({ design, onAddMaterial }: DesignPanelProps) {
+function MeasureSection({ design, onAddProfiles }: DesignPanelProps) {
   const [turns, setTurns] = useState(8);
   const [strayPf, setStrayPf] = useState(0);
-  const [name, setName] = useState('My core');
+  const [mix, setMix] = useState('#43');
+  const [family, setFamily] = useState<CoreProfile['family']>('NiZn');
+  const [name, setName] = useState('');
   const [message, setMessage] = useState<string>();
   const fileInput = useRef<HTMLInputElement>(null);
+  const core = coreOf(design);
+  const suggested = `${core.name} ${mix}`.trim();
 
   const open = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -408,15 +452,23 @@ function MeasureSection({ design, onAddMaterial }: DesignPanelProps) {
     if (!file) return;
     try {
       const parsed = parseTouchstone(await file.text());
-      const material = measuredMaterial(name.trim() || file.name, parsed.points, { core: coreOf(design), stack: design.stack, turns, strayPf });
-      onAddMaterial(material);
-      const limit = trustworthyUpToMHz(parsed.points);
+      const profile = makeProfile({
+        name: name.trim() || suggested,
+        size: { ...core, id: 'custom', name: core.name },
+        family,
+        mix: mix.trim() || 'unknown mix',
+        setup: { turns, strayPf, stack: design.stack },
+        sweep: parsed.points.map((p) => ({ fMHz: p.fMHz, r: p.z.re, x: p.z.im })),
+        sourceFile: file.name,
+      });
+      onAddProfiles([profile]);
       setMessage(
-        `Added ${material.name}: μ′ starts at ${material.muInitial}. ` +
-          (limit === undefined
+        `Kept ${profile.name}: μ′ starts at ${initialPermeability(profile)}. ` +
+          (profile.trustworthyUpToMHz === undefined
             ? 'The winding never went capacitive in this sweep, so the whole curve is usable.'
-            : `The winding resonates in this sweep - trust the curve up to about ${limit.toFixed(1)} MHz, or measure again with fewer turns.`),
+            : `The winding resonates in this sweep - trust the curve up to about ${profile.trustworthyUpToMHz.toFixed(1)} MHz, or measure again with fewer turns.`),
       );
+      setName('');
     } catch (problem) {
       setMessage(problem instanceof TouchstoneError ? problem.message : String(problem));
     }
@@ -427,17 +479,33 @@ function MeasureSection({ design, onAddMaterial }: DesignPanelProps) {
       <details>
         <summary>Measure the core in your hand</summary>
         <p className="muted">
-          Wind a few turns on <strong>the core chosen above</strong>, sweep it with a NanoVNA, and open the <code>.s1p</code> here. EMWS works the
-          permeability out from it and uses that instead of its own estimate - which, ferrite varying as it does, is the better number.
+          Wind a few turns on <strong>the core chosen above ({core.name})</strong>, sweep it with a NanoVNA, and open the{' '}
+          <code>.s1p</code> here. EMWS works the permeability out from it, keeps the core under <em>Your cores</em>, and
+          uses its measured curve instead of the estimate - which, ferrite varying as it does, is the better number.
         </p>
         <div className="field-row">
           <NumberField label="Turns on the test winding" value={turns} min={1} integer onCommit={setTurns} />
           <NumberField label="Its capacitance, if known" value={strayPf} min={0} unit="pF" onCommit={setStrayPf} />
         </div>
+        <div className="field-row">
+          <label className="field">
+            <span className="field-label">What it is, as far as you know</span>
+            <span className="field-input">
+              <input type="text" value={mix} placeholder="#43, unknown, from a monitor lead…" onChange={(e) => setMix(e.target.value)} />
+            </span>
+          </label>
+          <label className="field">
+            <span className="field-label">Family</span>
+            <select value={family} onChange={(e) => setFamily(e.target.value === 'MnZn' ? 'MnZn' : 'NiZn')}>
+              <option value="NiZn">Nickel-zinc (#43, #52, #61…)</option>
+              <option value="MnZn">Manganese-zinc (#31, #73, #77…)</option>
+            </select>
+          </label>
+        </div>
         <label className="field">
           <span className="field-label">Call it</span>
           <span className="field-input">
-            <input type="text" value={name} onChange={(e) => setName(e.target.value)} />
+            <input type="text" value={name} placeholder={suggested} onChange={(e) => setName(e.target.value)} />
           </span>
         </label>
         <div className="button-row">
@@ -449,5 +517,166 @@ function MeasureSection({ design, onAddMaterial }: DesignPanelProps) {
         {message && <p className="muted">{message}</p>}
       </details>
     </section>
+  );
+}
+
+/** Everything you have measured: look it over, rename it, correct it, keep it, share it. */
+function LibrarySection({ profiles, design, onAddProfiles, onUpdateProfile, onRemoveProfile, onPickProfile }: DesignPanelProps) {
+  const [message, setMessage] = useState<string>();
+  const fileInput = useRef<HTMLInputElement>(null);
+
+  const download = (list: CoreProfile[]) => {
+    const blob = new Blob([exportProfiles(list)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = suggestedFileName(list);
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  const open = async (e: ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    try {
+      const imported = importProfiles(await file.text());
+      onAddProfiles(imported);
+      setMessage(`Added ${imported.length} ${imported.length === 1 ? 'core' : 'cores'} from ${file.name}.`);
+    } catch (problem) {
+      setMessage(problem instanceof ProfileFileError ? problem.message : String(problem));
+    }
+  };
+
+  return (
+    <section className="form-section">
+      <details>
+        <summary>Your core library{profiles.length > 0 ? ` (${profiles.length})` : ''}</summary>
+        <p className="muted">
+          Kept in this browser only. Export to keep a copy, move it to another machine, or hand a core's measurement to someone
+          else; the file carries the whole sweep, so anyone can see exactly what was measured.
+        </p>
+        <div className="button-row">
+          <button type="button" className="small" onClick={() => fileInput.current?.click()}>
+            Import…
+          </button>
+          {profiles.length > 0 && (
+            <button type="button" className="small" onClick={() => download(profiles)}>
+              Export all
+            </button>
+          )}
+          <input ref={fileInput} type="file" accept=".json,application/json" hidden onChange={open} />
+        </div>
+        {message && <p className="muted">{message}</p>}
+        <ul className="library">
+          {profiles.map((p) => (
+            <li key={p.id} className={`library-item${design.profileId === p.id ? ' library-item-on' : ''}`}>
+              <ProfileCard
+                profile={p}
+                chosen={design.profileId === p.id}
+                onUse={() => onPickProfile(p)}
+                onUpdate={onUpdateProfile}
+                onExport={() => download([p])}
+                onRemove={() => onRemoveProfile(p.id)}
+              />
+            </li>
+          ))}
+        </ul>
+      </details>
+    </section>
+  );
+}
+
+interface ProfileCardProps {
+  profile: CoreProfile;
+  chosen: boolean;
+  onUse: () => void;
+  onUpdate: (p: CoreProfile) => void;
+  onExport: () => void;
+  onRemove: () => void;
+}
+
+function ProfileCard({ profile, chosen, onUse, onUpdate, onExport, onRemove }: ProfileCardProps) {
+  const [confirm, setConfirm] = useState(false);
+  const first = profile.curve[0];
+  const last = profile.curve[profile.curve.length - 1];
+  const mhz = (f: number) => f.toFixed(f < 10 ? 2 : 1);
+  const span = first && last ? `${mhz(first.fMHz)} – ${mhz(last.fMHz)} MHz` : 'no points';
+  return (
+    <div className="profile-card">
+      <label className="field">
+        <span className="visually-hidden">Name</span>
+        <span className="field-input">
+          <input type="text" value={profile.name} onChange={(e) => onUpdate({ ...profile, name: e.target.value })} />
+        </span>
+      </label>
+      <p className="muted profile-facts">
+        {profile.size.name} · {profile.size.odMm} × {profile.size.idMm} × {profile.size.heightMm} mm
+        {profile.setup.stack > 1 ? ` ×${profile.setup.stack}` : ''} · {profile.mix} ({profile.family})
+        <br />
+        measured {new Date(profile.measuredAt).toLocaleDateString()} with {profile.setup.turns} turns
+        {profile.setup.strayPf > 0 ? `, ${profile.setup.strayPf} pF taken out` : ''} · {profile.sweep.length} points, {span}
+        <br />
+        μ′ starts at {initialPermeability(profile)}
+        {profile.trustworthyUpToMHz !== undefined ? (
+          <>
+            {' '}
+            · <strong>trust it up to {profile.trustworthyUpToMHz.toFixed(1)} MHz</strong>
+          </>
+        ) : (
+          ' · the whole sweep is usable'
+        )}
+        {profile.sourceFile ? ` · from ${profile.sourceFile}` : ''}
+      </p>
+      <div className="field-row">
+        <NumberField
+          label="Turns it was measured with"
+          value={profile.setup.turns}
+          min={1}
+          integer
+          onCommit={(v) => onUpdate(rederive(profile, { turns: v }))}
+        />
+        <NumberField
+          label="Winding capacitance to take out"
+          value={profile.setup.strayPf}
+          min={0}
+          unit="pF"
+          onCommit={(v) => onUpdate(rederive(profile, { strayPf: v }))}
+        />
+      </div>
+      <label className="field">
+        <span className="field-label">Notes</span>
+        <span className="field-input">
+          <input
+            type="text"
+            value={profile.notes ?? ''}
+            placeholder="where it came from, what it is for…"
+            onChange={(e) => onUpdate({ ...profile, notes: e.target.value })}
+          />
+        </span>
+      </label>
+      <div className="button-row">
+        <button type="button" className="small" onClick={onUse} aria-pressed={chosen}>
+          {chosen ? 'In use' : 'Use it'}
+        </button>
+        <button type="button" className="small" onClick={onExport}>
+          Export
+        </button>
+        {confirm ? (
+          <>
+            <button type="button" className="small danger" onClick={onRemove}>
+              Yes, forget it
+            </button>
+            <button type="button" className="small" onClick={() => setConfirm(false)}>
+              Keep it
+            </button>
+          </>
+        ) : (
+          <button type="button" className="small" onClick={() => setConfirm(true)}>
+            Forget…
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
