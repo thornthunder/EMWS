@@ -156,6 +156,30 @@ delete them from a normal shell.
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
   and the refused design.
 
+### Coils, traps and filters (`src/tools/lc/`)
+
+- Three pure-maths modules, each held to closed forms in `tests/lc.test.ts`: `coil.ts`
+  (Wheeler 1982 for any shape, checked against Wheeler 1928 over its stated range and against
+  the long solenoid with Nagaoka's end correction; skin depth; `turnsFor` by bisection),
+  `trap.ts` (parallel LC with the coil's R following sqrt(f) from Q at resonance), `filter.ts`
+  (Butterworth / Chebyshev prototypes from formulas - the ripple constant is `40 / ln 10`, not
+  17.37, which put the ripple 5e-5 dB over; ABCD chain with any source and load).
+- **Q is a range, never a number.** Skin effect alone is the upper bound; Medhurst's 3.4 for a
+  long close-wound coil is the lower. No proximity-effect table is transcribed. A measured Q
+  (typed, from a NanoVNA sweep, or from an `.s1p`) overrides both, and `coilQ()` is what the
+  trap and filter tabs take. Self-resonance is a bound (wire = half a wave), not an estimate.
+- Facts the tests taught: a parallel trap is not real at 1/2π√LC (its phase is 1/Q off; |Z| is
+  L/RC there exactly); above resonance its equivalent capacitance is C(1 − f0²/f²), less than C;
+  a reactive ladder is transparent at DC whatever the load, so an even-order Chebyshev's
+  "ripple at DC" only appears with the load it was designed for - the page draws both.
+- The coil tab's former and wire are what "wind it" means on the other tabs (`turnsFor`, to the
+  nearest half turn). State persists as `emws.lc.v1`. `src/ui/LineChart.tsx` is the shared log-axis
+  chart (moved out of the balun tool; `marks` draws vertical guides such as the cutoff and 2×, 3×).
+- The guide is `src/guides/CoilsGuide.tsx`; it states no regulatory or voltage figures, on
+  purpose. `npm run smoke -- --lc` drives all three tabs and checks the numbers.
+- Not yet: loads on wires in the Antenna Modeler (the natural home for "put this trap in the
+  antenna"), band-pass, coax traps, capacitor voltage and coil current ratings.
+
 ### NanoVNA over Web Serial (`src/lib/vna/`, `src/ui/MeasureWithVna.tsx`)
 
 - **Written from the published protocols only.** The NanoVNA firmware, nanovna-saver and the

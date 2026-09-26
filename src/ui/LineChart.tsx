@@ -1,4 +1,5 @@
-// Line charts against frequency, on a log axis.
+// Line charts against frequency, on a log axis. Shared by the balun tool and the coil,
+// trap and filter tool.
 //
 // One axis per chart, always: SWR, decibels, watts and ohms each get their own rather
 // than sharing a frame with two scales. Hovering any chart moves a crosshair on all of
@@ -28,13 +29,15 @@ export interface LineChartProps {
   ceiling?: number;
   floor?: number;
   guides?: number[];
+  /** Frequencies to mark with a vertical guide - a cutoff, a harmonic - labelled if given a name. */
+  marks?: { fMHz: number; label?: string }[];
   format?: (value: number) => string;
   hover: number | undefined;
   onHover: (index: number | undefined) => void;
 }
 
 /** Frequencies worth labelling: the amateur bands, plus round numbers around them. */
-const TICKS = [0.1, 0.2, 0.5, 1, 1.8, 3.5, 5, 7, 10, 14, 21, 28, 50, 100, 144, 200, 500];
+const TICKS = [0.1, 0.2, 0.5, 1, 1.8, 3.5, 5, 7, 10, 14, 21, 28, 50, 100, 144, 200, 500, 1000];
 
 function niceCeiling(value: number): number {
   if (!(value > 0)) return 1;
@@ -43,7 +46,7 @@ function niceCeiling(value: number): number {
   return 10 * magnitude;
 }
 
-export function LineChart({ title, fMHz, series, unit, ceiling, floor = 0, guides = [], format, hover, onHover }: LineChartProps) {
+export function LineChart({ title, fMHz, series, unit, ceiling, floor = 0, guides = [], marks = [], format, hover, onHover }: LineChartProps) {
   const svg = useRef<SVGSVGElement>(null);
   const first = fMHz[0];
   const last = fMHz[fMHz.length - 1];
@@ -153,6 +156,18 @@ export function LineChart({ title, fMHz, series, unit, ceiling, floor = 0, guide
               <text className="plot-label" x={WIDTH - PAD.right - 4} y={y(g) - 4} textAnchor="end">
                 {show(g)}
               </text>
+            </g>
+          ))}
+        {marks
+          .filter((m) => m.fMHz > first && m.fMHz < last)
+          .map((m) => (
+            <g key={m.fMHz}>
+              <line className="plot-guide" x1={x(m.fMHz)} x2={x(m.fMHz)} y1={PAD.top} y2={HEIGHT - PAD.bottom} />
+              {m.label && (
+                <text className="plot-label" x={x(m.fMHz) + 4} y={PAD.top + 10} textAnchor="start">
+                  {m.label}
+                </text>
+              )}
             </g>
           ))}
 

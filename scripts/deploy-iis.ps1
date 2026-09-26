@@ -39,6 +39,20 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+
+<#
+    Runs a native command and judges it by its exit code. Under 'Stop', Windows PowerShell
+    turns anything a program writes to stderr into a terminating error whenever stderr is
+    redirected - as a scheduled task or a logging wrapper does - and npm writes ordinary
+    notices there. Exit codes are what they mean by failure.
+#>
+function Invoke-Native([string] $What, [scriptblock] $Command) {
+    $previous = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try { & $Command } finally { $ErrorActionPreference = $previous }
+    if ($LASTEXITCODE -ne 0) { throw "$What failed (exit code $LASTEXITCODE)." }
+}
+
 $repo = Split-Path -Parent $PSScriptRoot
 $dist = Join-Path $repo 'dist'
 $markerName = 'emws-build.json'
@@ -48,12 +62,10 @@ if (-not $SkipBuild) {
     try {
         if (-not (Test-Path (Join-Path $repo 'node_modules'))) {
             Write-Host 'Installing dependencies (npm ci)...'
-            npm ci
-            if ($LASTEXITCODE -ne 0) { throw 'npm ci failed.' }
+            Invoke-Native 'npm ci' { npm ci --no-audit --no-fund }
         }
         Write-Host 'Building (npm run build)...'
-        npm run build
-        if ($LASTEXITCODE -ne 0) { throw 'The build failed; nothing was deployed.' }
+        Invoke-Native 'The build' { npm run build }
     }
     finally {
         Pop-Location
@@ -105,7 +117,9 @@ if (-not $PSCmdlet.ShouldProcess($SitePath, "Mirror $dist (deleting anything els
     Write-Host "What if: robocopy would make these changes to ${SitePath}:"
 }
 
-& robocopy @robocopyArgs
+$previous = $ErrorActionPreference
+$ErrorActionPreference = 'Continue'
+try { & robocopy @robocopyArgs } finally { $ErrorActionPreference = $previous }
 # robocopy: 0-7 are degrees of success, 8 and above are failures.
 if ($LASTEXITCODE -ge 8) { throw "robocopy failed with exit code $LASTEXITCODE." }
 

@@ -41,7 +41,7 @@ param(
     [Parameter(Mandatory = $true)]
     [string] $SiteName,
 
-    [string] $SolverUrl = 'http://192.168.0.124:8073',
+    [string] $SolverUrl = '',
 
     [string] $PhpCgi,
 
@@ -114,6 +114,10 @@ if (-not $PhpCgi -or -not (Test-Path $PhpCgi)) {
 }
 
 $fastCgiKey = "[fullPath='$PhpCgi',arguments='$marker']"
+
+if (-not $Remove -and -not $SolverUrl) {
+    throw 'Give -SolverUrl, the address of the solver service this site should forward to (e.g. http://192.168.0.124:8073).'
+}
 
 if ($Remove) {
     if ($PSCmdlet.ShouldProcess($SiteName, 'Remove the EMWS PHP handler and its FastCGI application')) {

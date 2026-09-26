@@ -45,6 +45,8 @@ const dark = args.includes('--dark');
 const smithTest = args.includes('--smith');
 /** Wind a transformer in the balun tool with real mouse input, and check what it reports. */
 const balunTest = args.includes('--balun');
+/** Drive the coil, trap and filter tabs and check the numbers against the closed forms. */
+const lcTest = args.includes('--lc');
 /**
  * Plug a simulated NanoVNA into the page and measure with it. Web Serial needs a secure
  * origin (https, or localhost), so this only runs there; on a plain-http origin it checks
@@ -56,7 +58,7 @@ const solverTest = args.includes('--solver');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : undefined);
+const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -343,6 +345,116 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
  * origin there is nothing to plug in, and the honest thing - the tools saying why - is
  * what is checked instead.
  */
+/**
+ * Coils, traps and filters: the three tabs, driven the way a person would. The numbers
+ * checked here are ones the unit tests already hold to closed forms, so what this proves
+ * is that the page wires the maths to its controls and to the other tabs.
+ */
+async function runLcTest({ evaluate, send, log }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`LC test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const click = async (selector, text) => {
+    const done = await evaluate(`(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => ${text === undefined ? 'true' : `e.textContent.trim().startsWith(${JSON.stringify(text)})`});
+      if (!el) return false;
+      el.click();
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  const choose = async (label, value) => {
+    const done = await evaluate(`(() => {
+      const select = [...document.querySelectorAll('select')].find((s) => s.closest('label')?.textContent.includes(${JSON.stringify(label)}));
+      if (!select) return false;
+      const option = [...select.options].find((o) => o.textContent.includes(${JSON.stringify(value)}));
+      if (!option) return false;
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  /** Types into a number field and presses Enter, as a person does. */
+  const typeNumber = async (label, text) => {
+    const focused = await evaluate(`(() => {
+      const input = [...document.querySelectorAll('label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    })()`);
+    if (!focused) return false;
+    await send('Input.insertText', { text: String(text) });
+    for (const type of ['keyDown', 'keyUp']) {
+      await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+    }
+    await sleep(250);
+    return true;
+  };
+  const state = async () =>
+    JSON.parse(
+      await evaluate(`JSON.stringify({
+        tab: document.querySelector('.lc-tab[aria-selected="true"]')?.textContent.trim() ?? null,
+        title: document.querySelector('.results-title')?.textContent.trim() ?? null,
+        summary: Object.fromEntries([...document.querySelectorAll('.summary > div')].map((d) =>
+          [(d.querySelector('dt')?.textContent ?? '').trim(), (d.querySelector('dd')?.textContent ?? '').trim()])),
+        build: document.querySelector('.build-card')?.textContent ?? '',
+        turns: [...document.querySelectorAll('label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === 'Turns')?.querySelector('input')?.value ?? null,
+        parts: document.querySelectorAll('.parts-table tbody tr').length,
+        bands: document.querySelectorAll('.band-table tbody tr').length,
+        charts: document.querySelectorAll('figure.chart').length,
+        legends: document.querySelectorAll('.chart-legend').length,
+        issues: [...document.querySelectorAll('.issue-text')].map((e) => e.textContent),
+      })`),
+    );
+
+  // Start from the shipped designs whatever an earlier visit left behind.
+  await evaluate(`(localStorage.removeItem('emws.lc.v1'), location.reload())`);
+  await sleep(1500);
+
+  // ---- the coil ----
+  let now = await state();
+  check(now.tab === 'A coil' && now.title === '4.05 µH', `opens on the coil tab with the shipped coil: ${now.title}`);
+  check(now.build.includes('12 turns') && now.build.includes('25 mm'), 'described as it would be wound: 12 turns on a 25 mm former');
+  check(/^up to \d+/.test(now.summary['Q at 7.1 MHz'] ?? ''), `Q given as a range, not a number: ${now.summary['Q at 7.1 MHz']}`);
+  check(await typeNumber('Inductance wanted', '8'), 'ask for 8 µH');
+  check(await click('.form-section button', 'Find the turns'), 'Find the turns');
+  now = await state();
+  check(/^(7\.[89]|8\.[012])\d* µH$/.test(now.title ?? ''), `the turns change to give about 8 µH: ${now.turns} turns, ${now.title}`);
+
+  // ---- the trap ----
+  check(await click('.lc-tab', 'A trap'), 'A trap');
+  check(await click('.band-buttons button', '40 m'), '40 m');
+  now = await state();
+  check((now.title ?? '').startsWith('7.1 MHz trap: 8 µH across 62.8 pF'), `8 µH at 7.1 MHz wants 62.8 pF: ${now.title}`);
+  check((now.summary['Impedance at resonance'] ?? '').startsWith('71.4 kΩ'), `Q 200 makes it 71.4 kΩ at resonance: ${now.summary['Impedance at resonance']}`);
+  check(now.charts === 1 && now.bands >= 5, `an impedance chart and ${now.bands} bands in the table`);
+  const trapTurns = now.summary['Wind the coil'] ?? '';
+  check(await click('.summary button', 'Design that coil'), 'Design that coil');
+  now = await state();
+  check(now.tab === 'A coil' && trapTurns.startsWith(`${now.turns} turns`), `lands on the coil tab with those turns: ${now.turns}`);
+
+  // ---- the filter ----
+  check(await click('.lc-tab', 'A filter'), 'A filter');
+  now = await state();
+  check(now.title === '5th-order Butterworth low-pass, 32 MHz cutoff', `the shipped filter: ${now.title}`);
+  check(now.parts === 5 && now.charts === 2, 'five parts listed, two charts');
+  const second = now.summary['Second harmonic, 64.0 MHz'] ?? '';
+  check(/^(29|30|31)\.\d dB down$/.test(second), `Butterworth 5th order at twice cutoff: ${second} (30.1 dB lossless)`);
+  check(await choose('Shape', 'Chebyshev'), 'Chebyshev');
+  check(await typeNumber('Order', '4'), 'order 4');
+  now = await state();
+  check(now.issues.some((t) => t.includes('even-order Chebyshev')), 'an even order draws the warning about terminations');
+  check(now.legends >= 1, 'and the chart shows both responses, with a legend');
+  check(await typeNumber('Order', '7'), 'order 7');
+  now = await state();
+  check(now.issues.length === 0 && now.parts === 7, `an odd order clears it: ${now.parts} parts`);
+}
+
 async function runVnaTest({ evaluate, send, log }) {
   const check = (ok, message) => {
     if (!ok) throw new Error(`VNA test failed: ${message}`);
@@ -1035,6 +1147,7 @@ try {
     if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (process.env.SMOKE_PROBE) console.log('probe:', await evaluate(process.env.SMOKE_PROBE));
     const info = JSON.parse(
       await evaluate(

@@ -79,12 +79,28 @@ and nothing to abuse. Started by **ZR1JT**.
 - Takes its load from the Antenna Modeler, and passes what the radio sees on to the Smith
   chart.
 
+**Coils, traps and filters**: the parts you wind and solder yourself, worked out rather
+than looked up.
+
+- **Coils**: turns, former and wire in; inductance out (Wheeler's formula), or the other
+  way round - ask for a value and get the turns. Q is given honestly as a range: the skin
+  effect's best case and Medhurst's close-wound factor, with a measured Q taking over
+  whenever you have one. Self-resonance is bounded, not guessed.
+- **Traps**: a coil across a capacitor for a multiband wire. Either part in, the other out,
+  the impedance at resonance, the bandwidth, and what the trap amounts to on every other
+  band - a loading coil of so much below resonance, a capacitor above.
+- **Filters**: Butterworth and Chebyshev low-pass and high-pass ladders from the closed-form
+  prototypes, with the response worked out for the parts as they will be built - real
+  coil Q, E24 capacitors - so a transmitter low-pass shows its true harmonic rejection and
+  passband loss, and an even-order Chebyshev shows the mismatch it really has.
+
 **Measure it with a NanoVNA**: every tool that takes a measurement can take it straight
 from the instrument, over USB, using the browser's Web Serial API - no driver, no
 program in between.
 
 - Both families: the **NanoVNA, -H and -H4** (the text shell) and the **NanoVNA-V2 /
-  SAA-2** (the binary protocol). The tool works out which it is talking to.
+  SAA-2** (the binary protocol). The tool works out which it is talking to. A coil on the
+  port gives its real inductance, Q and self-resonance in the coil tool.
 - The classic NanoVNA applies its own calibration, so what arrives is what its screen
   shows. The V2 sends raw readings; the tool walks you through short, open and load
   from its kit, and corrects every sweep after that. Nothing is handed on uncalibrated.
@@ -103,7 +119,9 @@ NEC2 by 5B4AZ, compiled unmodified to WebAssembly. Its results are checked again
 antenna theory by the test suite: a resonant half-wave dipole comes out at 72 Ω and
 2.14 dBi, a quarter-wave vertical over perfect ground at 37.6 Ω and 5.16 dBi.
 
-**Planned**: Ruthroff transformers and measured ferrite data in the balun tool · RF toolbox (wire lengths, coax loss, LC, coils, L and Pi networks) · a 2-D
+**Planned**: loads on wires in the antenna editor, so a trap or loading coil designed here can be
+put into an antenna and solved · Ruthroff transformers in the balun tool · band-pass filters
+and coax traps · RF toolbox (wire lengths, coax loss, L and Pi networks) · a 2-D
 FDTD field sandbox · loads and wire materials in the antenna editor · Pi and T networks
 and a tuning optimiser in the Smith chart.
 
@@ -123,7 +141,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | Runs real antenna models through the real engine and checks the physics |
 | `npm run build` | Type-checks, then writes the deployable site to `dist/` |
 | `npm run preview` | Serves `dist/` locally, exactly as built |
-| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --page "#/guides"` checks any other page |
+| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --lc` drives the coil, trap and filter tabs and checks the numbers; `-- --page "#/guides"` checks any other page |
 | `npm run build:engine` | Recompiles nec2c to WebAssembly ([needs Emscripten](docs/building-the-engine.md)) |
 
 ## Hosting it
@@ -138,6 +156,9 @@ security headers), and there is a deploy script:
 .\scripts\deploy-iis.ps1 -SitePath C:\inetpub\wwwroot\emws
 node scripts/smoke-browser.mjs https://your-server/emws/    # check the live site
 ```
+
+On a server that has only Git and Node, `scripts\deploy-on-SH-Server.ps1 -SitePath W:\EMWS`
+clones the public repository and does the same from the clone.
 
 See [docs/deploy-iis.md](docs/deploy-iis.md). Talking to a NanoVNA needs the site on
 `https://`; on a private network, `.\scripts\enable-https.ps1 -SiteName emws.local`
@@ -180,6 +201,7 @@ src/tools/                one folder per tool
 src/tools/antenna-modeler/editor/   the four views, projection maths, context menu
 src/tools/smith-chart/    network maths, the matcher, the chart
 src/tools/balun/          transformer engine, winding recipe, design pad, core and wire lists
+src/tools/lc/             air-cored coils, traps and ladder filters: the maths and the page
 src/lib/ferrite.ts        toroid geometry and complex permeability
 src/lib/vna/              NanoVNA drivers (classic and V2) over Web Serial, one-port calibration
 src/ui/MeasureWithVna.tsx the connect / calibrate / measure control every tool shares

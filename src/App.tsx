@@ -4,6 +4,7 @@ import { Home } from './pages/Home';
 import { useHashPath } from './router';
 import { AntennaModeler } from './tools/antenna-modeler/AntennaModeler';
 import { BalunTool } from './tools/balun/BalunTool';
+import { LcTool } from './tools/lc/LcTool';
 import { SmithTool } from './tools/smith-chart/SmithTool';
 
 const NAV = [
@@ -11,6 +12,7 @@ const NAV = [
   { path: '/antenna', label: 'Antenna Modeler' },
   { path: '/smith', label: 'Smith Chart' },
   { path: '/balun', label: 'Baluns' },
+  { path: '/lc', label: 'Coils & Filters' },
   { path: '/guides', label: 'Field Guides' },
   { path: '/about', label: 'About' },
 ];
@@ -28,6 +30,8 @@ function Page({ path }: { path: string }) {
       return <SmithTool />;
     case '/balun':
       return <BalunTool />;
+    case '/lc':
+      return <LcTool />;
     case '/about':
       return <About />;
     default:

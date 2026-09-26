@@ -6,7 +6,7 @@ import { type ImpedanceHandoff, saveImpedanceHandoff } from '../../lib/handoff';
 import { formatImpedance } from '../../lib/rf';
 import { guideForTool } from '../../guides/registry';
 import { MATERIALS } from './catalog';
-import { LineChart, type Series } from './Charts';
+import { LineChart, type Series } from '../../ui/LineChart';
 import { type Analysis, type Point, analyse } from './circuit';
 import { DesignPanel } from './DesignPanel';
 import { type Design, type Issue, checkDesign, coreOf, efhwDesign, summarise, tappedTurns, windTo, withCatalogueCore, withProfile } from './model';

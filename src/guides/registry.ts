@@ -6,6 +6,7 @@
 import type { ComponentType } from 'react';
 import { AntennaModelerGuide } from './AntennaModelerGuide';
 import { BalunGuide } from './BalunGuide';
+import { CoilsGuide } from './CoilsGuide';
 import { SmithChartGuide } from './SmithChartGuide';
 
 export interface Guide {
@@ -46,6 +47,15 @@ export const GUIDES: Guide[] = [
     toolHref: '#/balun',
     toolName: 'Baluns and ununs',
     Content: BalunGuide,
+  },
+  {
+    id: 'coils-traps-filters',
+    title: 'Coils, traps and filters',
+    summary:
+      'Wind a coil to a value, design a trap for a multiband wire, and design a low-pass or high-pass filter, with the honest Q of real parts. Includes a 40 m trap and a 30 MHz transmitter low-pass.',
+    toolHref: '#/lc',
+    toolName: 'Coils, traps and filters',
+    Content: CoilsGuide,
   },
 ];
 

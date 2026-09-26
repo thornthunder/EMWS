@@ -154,7 +154,7 @@ address goes to the web server's error log, where the operator will look for it.
 
 | Variable | Meaning |
 |---|---|
-| `EMWS_SOLVER_URL` | The NEC service to forward to. Default `http://192.168.0.124:8073`. |
+| `EMWS_SOLVER_URL` | The service to forward to. There is no default: unset, the proxy answers 503 "this site has no solver configured" and models solve in the browser. |
 | `EMWS_SOLVER_TOKEN` | Optional; sent as `Authorization: Bearer <token>`. |
 | `EMWS_SOLVER_TIMEOUT` | Seconds to wait for a solve. Default 300. |
 

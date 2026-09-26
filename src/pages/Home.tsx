@@ -26,8 +26,14 @@ const TOOLS: Tool[] = [
     href: '#/balun',
   },
   {
+    name: 'Coils, traps and filters',
+    blurb:
+      'Wind an air-cored coil and know its inductance and Q; design a trap for a multiband wire; design a low-pass or high-pass filter and see its response with the parts you will really use.',
+    href: '#/lc',
+  },
+  {
     name: 'RF toolbox',
-    blurb: 'Wire lengths, coax loss, LC resonance, coil inductance, L and Pi networks, SWR and return loss.',
+    blurb: 'Wire lengths, coax loss, L and Pi networks, SWR and return loss.',
   },
   {
     name: 'Field sandbox',

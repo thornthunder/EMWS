@@ -11,7 +11,7 @@
  * and is never taken from the request. Set it with an environment variable on the site
  * (IIS: FastCGI environment variables, or the site's app settings):
  *
- *     EMWS_SOLVER_URL      http://192.168.0.124:8073   (default)
+ *     EMWS_SOLVER_URL      the service to forward to; unset, this site has no solver
  *     EMWS_SOLVER_TOKEN    optional, sent as Authorization: Bearer <token>
  *     EMWS_SOLVER_TIMEOUT  seconds to wait for a solve (default 300)
  *
@@ -20,7 +20,6 @@
 
 declare(strict_types=1);
 
-const DEFAULT_SOLVER_URL = 'http://192.168.0.124:8073';
 const DEFAULT_TIMEOUT_SECONDS = 300;
 const CONNECT_TIMEOUT_SECONDS = 5;
 /** Refuse anything larger, rather than tie the server up with it. */
@@ -70,10 +69,15 @@ if ($method !== $operations[$op]) {
     fail(405, 'Wrong method', sprintf('%s needs %s.', $op, $operations[$op]));
 }
 
-$target = rtrim(setting('EMWS_SOLVER_URL', DEFAULT_SOLVER_URL), '/');
+// No address, no solver: a site that has not been given one says so at once, rather
+// than try an address someone else's network happens to use.
+$target = rtrim(setting('EMWS_SOLVER_URL', ''), '/');
+if ($target === '') {
+    fail(503, 'This site has no solver configured', 'Models solve in the browser instead. To offer a solver, set EMWS_SOLVER_URL on the site.');
+}
 $parts = parse_url($target);
 if ($parts === false || !isset($parts['scheme'], $parts['host']) || !in_array($parts['scheme'], ['http', 'https'], true)) {
-    fail(500, 'This site has no solver configured', 'Set EMWS_SOLVER_URL on the site to the address of a NEC solver.');
+    fail(500, "This site's solver address is not usable", 'EMWS_SOLVER_URL must be an http:// or https:// address.', $target);
 }
 
 $body = '';

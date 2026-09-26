@@ -43,6 +43,25 @@ holds an EMWS deployment, or you pass `-Force`.
 
 Doing it by hand is just as good: copy the contents of `dist\` over the site folder.
 
+### From a server that has only Git and Node
+
+`scripts/deploy-on-SH-Server.ps1` is for a web server with nothing of EMWS on it: it
+clones the public repository fresh (no key or account needed), then runs
+`deploy-iis.ps1` from inside the clone. Copy just that one script to the server:
+
+```powershell
+.\deploy-on-SH-Server.ps1 -SitePath W:\EMWS -SiteUrl https://emws.semiheavy.com/
+```
+
+It needs Git and Node.js 20.19+ or 22.12+ on the PATH, and checks both. The clone lands
+in `W:\Build\EMWS` by default (`-BuildDir`), and `-WhatIf` and `-Force` mean what they
+mean for `deploy-iis.ps1`. Give the site a local folder or a UNC path, not a mapped
+drive letter: a mapped drive is only visible to the account that mapped it, never to IIS.
+
+A server that runs no PHP still gets `solver/index.php` in the build; it is inert there.
+With PHP but no `EMWS_SOLVER_URL`, the proxy answers that the site has no solver, and
+visitors solve in the browser, which is the default anyway.
+
 ## 4. Verify
 
 ```powershell
