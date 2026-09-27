@@ -1944,3 +1944,22 @@ button.danger {
   display: inline-block;
   cursor: pointer;
 }
+
+/* ---- loads on wires: coils, traps, resistors ---- */
+
+.load {
+  fill: var(--plot-line);
+  stroke: var(--surface);
+  stroke-width: 2;
+}
+.load-editable {
+  cursor: pointer;
+}
+.swatch-load {
+  background: var(--plot-line);
+  border-radius: 2px;
+}
+.handoff-offer {
+  padding: 0.4rem 0.6rem;
+  border-left: 3px solid var(--plot-line);
+}

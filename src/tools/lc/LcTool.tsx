@@ -9,6 +9,7 @@
 import { type ChangeEvent, useEffect, useRef, useState } from 'react';
 import { guideForTool } from '../../guides/registry';
 import { cAbs } from '../../lib/complex';
+import { saveLoadHandoff } from '../../lib/handoff';
 import { type MeasuredPoint, TouchstoneError, parseTouchstone } from '../../lib/touchstone';
 import { LineChart } from '../../ui/LineChart';
 import { MeasureWithVna } from '../../ui/MeasureWithVna';
@@ -294,6 +295,21 @@ function CoilSection({ coil, onChange }: { coil: CoilDesign; onChange: (patch: P
               </dd>
             </div>
           </dl>
+          <div className="button-row">
+            <button
+              type="button"
+              className="small"
+              title="Offers it to the Antenna Modeler as a series load: the inductance, with its loss at the frequency above as the resistance"
+              onClick={() => {
+                const q = coilQ(coil, coil.atMHz);
+                saveLoadHandoff({ name: `${formatSi(henries, 'H', 3)} coil`, savedAt: new Date().toISOString(), kind: 'series', ohms: q > 0 ? reactanceOhms(henries, coil.atMHz) / q : 0, henries, farads: 0 });
+                location.hash = '#/antenna';
+              }}
+            >
+              Put this coil in an antenna
+            </button>
+            <span className="muted">A loading coil: opens the Antenna Modeler, where it goes on a wire and NEC works out what it does there.</span>
+          </div>
         </section>
 
         <Notes notes={notes} />
@@ -450,6 +466,20 @@ function TrapSection({ trap, coil, onChange, onCoil, goTo }: { trap: TrapDesign;
               </dd>
             </div>
           </dl>
+          <div className="button-row">
+            <button
+              type="button"
+              className="small"
+              title="Offers it to the Antenna Modeler as a parallel load, with the coil's loss as the resistance across it"
+              onClick={() => {
+                saveLoadHandoff({ name: `${trap.fMHz} MHz trap`, savedAt: new Date().toISOString(), kind: 'parallel', ohms: resonantImpedanceOhms(spec), henries: parts.henries, farads: parts.farads });
+                location.hash = '#/antenna';
+              }}
+            >
+              Put this trap in an antenna
+            </button>
+            <span className="muted">Opens the Antenna Modeler, where it can go on any wire and be solved as part of the antenna.</span>
+          </div>
         </section>
 
         <Notes notes={notes} />

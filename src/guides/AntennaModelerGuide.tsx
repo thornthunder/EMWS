@@ -327,6 +327,44 @@ export function AntennaModelerGuide() {
         a few decibels down; it keeps the main lobe readable while still showing small side lobes.
       </p>
 
+      <h2>Loads: coils, traps and resistors in the wire</h2>
+      <p>
+        A <strong>load</strong> is something in series with one segment of a wire: a loading coil that lets a short
+        antenna resonate, a trap that lets one wire serve two bands, a resistor that makes a terminated antenna
+        broadband. Right-click a wire and choose <em>Coil here</em>, or select the wire and press <em>Coil at centre</em>;
+        the load appears as a small square on the wire, and you drag it along like a feed point. Under{' '}
+        <em>Loads</em> in the panel each one has a kind, its parts, its position, and a name.
+      </p>
+      <ul>
+        <li>
+          <strong>Series R, L, C</strong> is a coil or a capacitor: a coil is L with its loss as R, a capacitor is C alone, and
+          a 0 leaves a part out. This is the loading coil.
+        </li>
+        <li>
+          <strong>Parallel R, L, C</strong> is a trap. At its own resonance it is nearly an open circuit, so the wire beyond
+          it drops out; below resonance it is just its coil. The R is the coil's loss seen across the trap - Q times the
+          coil's reactance, which is what the coil tool works out for you.
+        </li>
+        <li>
+          <strong>Fixed R + jX</strong> is what it says, and NEC keeps it the same at every frequency; the tool warns you
+          if you sweep with one, because a real coil or capacitor would not stay put.
+        </li>
+      </ul>
+      <p>
+        You need not type the parts. Design the coil or the trap in <a href="#/lc">Coils, traps and filters</a>, press{' '}
+        <em>Put this … in an antenna</em>, and the Loads section here offers it for the selected wire; drag it to where it
+        belongs. The loads travel with the deck as <code>LD</code> cards, so a saved <code>.nec</code> file carries them.
+      </p>
+      <p>
+        <strong>What the loads cost shows in the efficiency.</strong> The <em>Trap dipole, 40 and 80 m</em> example is
+        35 m of wire with a trap in each half 10.2 m out. On 7.1 MHz the traps isolate the outer wire and the inner 20.4 m
+        is the antenna, at 87 + j2 Ω - but the efficiency reads 90.8 %, because a trap on its own band sits at a current
+        node with the full end voltage across it, and its coil turns a tenth of the power into heat. Change the frequency
+        to 3.65 MHz: now each trap is only its 8.2 µH, the whole 35 m is in circuit and resonant where 39 m of plain wire
+        would be, at 47 − j2 Ω, and the traps cost under 2 %. Raise the coil Q in the trap and watch the 40 m efficiency
+        follow it; that is the number to spend money on.
+      </p>
+
       <h2>Compare with the real antenna</h2>
       <p>
         A model is a claim about a piece of wire. The way to find out how good a claim is to build the antenna,

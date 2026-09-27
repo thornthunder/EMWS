@@ -27,6 +27,10 @@ and nothing to abuse. Started by **ZR1JT**.
   represent yet (arcs, helices, GM copies, ...) still run, exactly as written.
 - Feed impedance, SWR and return loss against any reference impedance; several feeds
   for phased arrays.
+- **Loads in the wires**: loading coils, traps and resistors on any segment, dragged along
+  the wire like a feed point, carried in the deck as `LD` cards, and costed - what a trap
+  turns into heat shows in the efficiency. A trap dipole for 40 and 80 m is among the
+  examples, tuned with the engine itself.
 - Peak gain, front-to-back ratio, efficiency. Azimuth and elevation patterns on the
   ARRL log scale, cut automatically through the main lobe of the whole-sphere pattern.
 - Frequency sweeps with an SWR curve; click a point to inspect that frequency. A sweep is
@@ -88,7 +92,9 @@ than looked up.
   whenever you have one. Self-resonance is bounded, not guessed.
 - **Traps**: a coil across a capacitor for a multiband wire. Either part in, the other out,
   the impedance at resonance, the bandwidth, and what the trap amounts to on every other
-  band - a loading coil of so much below resonance, a capacitor above.
+  band - a loading coil of so much below resonance, a capacitor above. One button puts the
+  trap, or a loading coil, into the Antenna Modeler as a load on a wire, where NEC solves the
+  antenna with it in.
 - **Filters**: Butterworth and Chebyshev low-pass and high-pass ladders from the closed-form
   prototypes, with the response worked out for the parts as they will be built - real
   coil Q, E24 capacitors - so a transmitter low-pass shows its true harmonic rejection and
@@ -119,8 +125,8 @@ NEC2 by 5B4AZ, compiled unmodified to WebAssembly. Its results are checked again
 antenna theory by the test suite: a resonant half-wave dipole comes out at 72 Ω and
 2.14 dBi, a quarter-wave vertical over perfect ground at 37.6 Ω and 5.16 dBi.
 
-**Planned**: loads on wires in the antenna editor, so a trap or loading coil designed here can be
-put into an antenna and solved · Ruthroff transformers in the balun tool · band-pass filters
+**Planned**: a "tune the coil to resonance" search and trap voltages at your power in the
+antenna editor · wire materials · Ruthroff transformers in the balun tool · band-pass filters
 and coax traps · RF toolbox (wire lengths, coax loss, L and Pi networks) · a 2-D
 FDTD field sandbox · loads and wire materials in the antenna editor · Pi and T networks
 and a tuning optimiser in the Smith chart.
@@ -141,7 +147,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | Runs real antenna models through the real engine and checks the physics |
 | `npm run build` | Type-checks, then writes the deployable site to `dist/` |
 | `npm run preview` | Serves `dist/` locally, exactly as built |
-| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --lc` drives the coil, trap and filter tabs and checks the numbers; `-- --page "#/guides"` checks any other page |
+| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --lc` drives the coil, trap and filter tabs, checks the numbers, and follows a trap into the Antenna Modeler; `-- --page "#/guides"` checks any other page |
 | `npm run build:engine` | Recompiles nec2c to WebAssembly ([needs Emscripten](docs/building-the-engine.md)) |
 
 ## Hosting it

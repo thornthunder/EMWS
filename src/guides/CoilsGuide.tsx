@@ -97,7 +97,11 @@ export function CoilsGuide() {
       </p>
       <p>
         What the trap does to a particular antenna, its resonances, its pattern and how much of your power the coil turns
-        into heat, is a job for the <a href="#/antenna">Antenna Modeler</a>, where it takes the form of a load on a wire.
+        into heat, is a job for the <a href="#/antenna">Antenna Modeler</a>. Press <em>Put this trap in an antenna</em>: it
+        opens the modeller, which offers the trap as a load on the selected wire; put it there, drag it along the wire to
+        where the trap goes, and NEC solves the antenna with it in. The coil tab has the same button for a loading coil.
+        The <em>Trap dipole, 40 and 80 m</em> example there was built exactly this way, and its efficiency reading is the
+        honest cost of the traps.
       </p>
 
       <h2>A low-pass filter after a transmitter</h2>
@@ -175,7 +179,7 @@ export function CoilsGuide() {
         <li>
           <strong>Ratings are not worked out.</strong> The tool does not know your power, so it says nothing about the
           voltage a trap capacitor sees or the current a filter coil carries. The trap section above says how to think about
-          the first; NEC in the Antenna Modeler will eventually put numbers on it.
+          the first. The Antenna Modeler does show what a trap or coil <em>costs</em>, as efficiency, once it is in a wire.
         </li>
         <li>
           <strong>Not yet here:</strong> band-pass filters, traps made from coax, and multi-layer or toroidal air coils.

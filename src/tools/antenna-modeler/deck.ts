@@ -15,6 +15,7 @@ import {
   type Wire,
   newId,
 } from './model';
+import type { Load, LoadKind } from './model';
 
 // ---- model -> deck ----
 
@@ -24,8 +25,19 @@ const COMMENT_WIDTH = 100;
 /** Cards that trigger a solution. They must follow the setup cards. */
 const EXECUTION_CARDS = new Set(['XQ', 'RP', 'NE', 'NH']);
 
-/** Program cards kept verbatim. Everything else the model either understands or rejects. */
+/**
+ * Program cards kept verbatim. Everything else the model either understands or rejects.
+ * LD is only here for the forms the model does not hold: loads spread over a run of
+ * segments, per-metre loads, wire conductivity. A lumped load on one segment is a Load.
+ */
 const PASSTHROUGH_CARDS = new Set(['LD', 'TL', 'NT', 'EK', 'KH', 'PT', 'PQ', 'CP', 'NE', 'NH']);
+
+/** An LD card for a load on one segment: type 0 series, 1 parallel, 4 fixed impedance. */
+function loadCard(load: Load, tag: number): string {
+  const type = load.kind === 'series' ? 0 : load.kind === 'parallel' ? 1 : 4;
+  const values = load.kind === 'impedance' ? [load.ohms, load.reactance] : [load.ohms, load.henries, load.farads];
+  return formatCard('LD', [type, tag, load.segment, load.segment], values);
+}
 
 function wrapComment(text: string): string[] {
   const words = text.split(/\s+/).filter((w) => w !== '');
@@ -90,6 +102,10 @@ export function modelToDeck(model: AntennaModel, options: DeckOptions = {}): str
 
   const gn = groundCard(model.ground);
   if (gn) lines.push(gn);
+  for (const load of model.loads) {
+    const wire = model.wires.find((w) => w.id === load.wireId);
+    if (wire) lines.push(loadCard(load, wire.tag));
+  }
   const setup = model.extraCards.filter((c) => !EXECUTION_CARDS.has(c.slice(0, 2).toUpperCase()));
   const after = model.extraCards.filter((c) => EXECUTION_CARDS.has(c.slice(0, 2).toUpperCase()));
   lines.push(...setup);
@@ -227,6 +243,14 @@ interface RawFeed {
   voltage: { re: number; im: number };
 }
 
+interface RawLoad {
+  card: Card;
+  tag: number;
+  segment: number;
+  kind: LoadKind;
+  values: [number, number, number];
+}
+
 export function deckToModel(text: string): DeckImport {
   const { cards, notices } = lexDeck(text);
   const notes = notices.map((n) => n.message);
@@ -245,6 +269,7 @@ function buildModel(cards: Card[], notes: string[]): AntennaModel {
   let groundCard: Card | undefined;
   let frequency: FrequencyPlan | undefined;
   const rawFeeds: RawFeed[] = [];
+  const rawLoads: RawLoad[] = [];
   const patternCards: string[] = [];
   const extraCards: string[] = [];
   let executed = false;
@@ -305,6 +330,16 @@ function buildModel(cards: Card[], notes: string[]): AntennaModel {
       if (kind !== 0) fail(card, `only voltage sources (EX 0) can be edited; this is EX ${kind}`);
       if (flags !== 0) fail(card, 'EX print options are not supported by the editor');
       rawFeeds.push({ card, tag, segment, voltage: { re, im } });
+    } else if (m === 'LD') {
+      const [type = 0, tag = 0, first = 0, last = 0] = ints(card, 4);
+      if ((type === 0 || type === 1 || type === 4) && first > 0 && first === last) {
+        const [a = 0, b = 0, c = 0] = floats(card, 3);
+        const kind: LoadKind = type === 0 ? 'series' : type === 1 ? 'parallel' : 'impedance';
+        rawLoads.push({ card, tag, segment: first, kind, values: [a, b, c] });
+      } else {
+        // A load over a run of segments, a per-metre load or a wire conductivity: kept as written.
+        extraCards.push(card.raw);
+      }
     } else if (PASSTHROUGH_CARDS.has(m)) {
       extraCards.push(card.raw);
     } else {
@@ -324,6 +359,7 @@ function buildModel(cards: Card[], notes: string[]): AntennaModel {
   const tagsUsable = tags.every((t) => t > 0) && new Set(tags).size === tags.length;
   const tagRefs = extraCards.some((c) => /^(LD|TL|NT)/i.test(c));
   const feeds = rawFeeds.map((f) => resolveFeed(f, wires));
+  const loads = rawLoads.map((l) => resolveLoad(l, wires));
   if (!tagsUsable) {
     if (tagRefs) throw new Unsupported('Wire tags are missing or repeated, and other cards refer to them by tag.');
     wires = wires.map((w, i) => ({ ...w, tag: i + 1 }));
@@ -337,7 +373,7 @@ function buildModel(cards: Card[], notes: string[]): AntennaModel {
 
   const pattern: PatternPlan = patternCards.length > 0 ? { kind: 'cards', cards: patternCards } : { kind: 'none' };
 
-  return { comments, wires, feeds: dedupeFeeds(feeds, notes), ground, frequency, pattern, extraCards };
+  return { comments, wires, feeds: dedupeFeeds(feeds, notes), loads, ground, frequency, pattern, extraCards };
 }
 
 function readGround(card: Card | undefined, groundPlane: number): Ground {
@@ -357,31 +393,36 @@ function readGround(card: Card | undefined, groundPlane: number): Ground {
   return { kind: 'real', permittivity, conductivity, method: type === 2 ? 'sommerfeld' : 'reflection' };
 }
 
-function resolveFeed(raw: RawFeed, wires: Wire[]): Feed {
+/**
+ * Which wire, and which of its segments, a (tag, segment) pair on an EX or LD card means:
+ * the m-th segment among the wires carrying that tag, in deck order, or the m-th segment
+ * of the whole structure when the tag is 0.
+ */
+function resolveSegment(card: Card, tag: number, asked: number, wires: Wire[], what: string): { wire: Wire; segment: number } {
   let wire: Wire | undefined;
-  let segment = raw.segment;
-  if (raw.tag > 0) {
-    // The m-th segment among the wires carrying this tag, in deck order.
-    for (const w of wires.filter((x) => x.tag === raw.tag)) {
-      if (segment <= w.segments) {
-        wire = w;
-        break;
-      }
-      segment -= w.segments;
+  let segment = asked;
+  for (const w of tag > 0 ? wires.filter((x) => x.tag === tag) : wires) {
+    if (segment <= w.segments) {
+      wire = w;
+      break;
     }
-  } else {
-    for (const w of wires) {
-      if (segment <= w.segments) {
-        wire = w;
-        break;
-      }
-      segment -= w.segments;
-    }
+    segment -= w.segments;
   }
-  if (!wire || segment < 1) {
-    fail(raw.card, `the source is on segment ${raw.segment} of tag ${raw.tag}, which doesn't exist`);
-  }
+  if (!wire || segment < 1) fail(card, `the ${what} is on segment ${asked} of tag ${tag}, which doesn't exist`);
+  return { wire, segment };
+}
+
+function resolveFeed(raw: RawFeed, wires: Wire[]): Feed {
+  const { wire, segment } = resolveSegment(raw.card, raw.tag, raw.segment, wires, 'source');
   return { id: newId('f'), wireId: wire.id, segment, voltage: raw.voltage };
+}
+
+function resolveLoad(raw: RawLoad, wires: Wire[]): Load {
+  const { wire, segment } = resolveSegment(raw.card, raw.tag, raw.segment, wires, 'load');
+  const [a, b, c] = raw.values;
+  return raw.kind === 'impedance'
+    ? { id: newId('l'), wireId: wire.id, segment, kind: raw.kind, ohms: a, henries: 0, farads: 0, reactance: b }
+    : { id: newId('l'), wireId: wire.id, segment, kind: raw.kind, ohms: a, henries: b, farads: c, reactance: 0 };
 }
 
 function dedupeFeeds(feeds: Feed[], notes: string[]): Feed[] {

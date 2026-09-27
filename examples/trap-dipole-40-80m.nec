@@ -1,0 +1,26 @@
+CM Trap dipole for 40 and 80 m: 35.1 m of 2 mm wire, 10 m above average ground, with a
+CM parallel LC trap cut into each half 10.2 m from the centre.
+CM Each trap is 8.2 uH across 60 pF, resonant at 7.18 MHz, with a coil Q of 200 - which
+CM NEC sees as 74 kohms in parallel with the L and C (the LD 1 cards below). On 40 m the
+CM traps are nearly open circuits, so the inner 20.4 m is the whole antenna: 87 + j2 ohms
+CM at 7.1 MHz. On 80 m each trap is just its coil, and the 7.35 m beyond it is still in
+CM circuit but loaded, so 35 m of wire resonates where 39 m of plain wire would:
+CM 47 - j2 ohms at 3.65 MHz. Change FR to 3.65 to see it.
+CM The traps are not free. At 7.1 MHz the efficiency reads 90.8 %: a tenth of the power is
+CM heat in the two coils, because a trap on its own band sits at a current node with the
+CM full end voltage across it. On 80 m, where it is only an inductor, they cost under 2 %.
+CM The dimensions were tuned with this engine; a wire of a different thickness, height or
+CM insulation lands a little differently, which is what the model is for.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 41 0 -10.2 10 0 10.2 10 0.001
+GW 2 13 0 10.2 10 0 17.55 10 0.001
+GW 3 13 0 -10.2 10 0 -17.55 10 0.001
+GE 1
+GN 2 0 0 0 13 0.005
+LD 1 2 1 1 73937 0.0000082 6e-11
+LD 1 3 1 1 73937 0.0000082 6e-11
+FR 0 1 0 0 7.1 0
+EX 0 1 21 0 1.0 0.0
+RP 0 19 72 1000 0 0 5 5
+EN

@@ -4,7 +4,7 @@
 
 import type { FrequencyResult, Nec2Report, SegmentCurrent, Vec3 } from '../../../engine/nec2/types';
 import { lerp } from '../../../lib/vec3';
-import { type AntennaModel, type Wire, segmentCentre } from '../model';
+import { type AntennaModel, type LoadKind, type Wire, segmentCentre } from '../model';
 
 export interface SceneLine {
   key: string;
@@ -22,12 +22,23 @@ export interface SceneFeed {
   at: Vec3;
 }
 
+export interface SceneLoad {
+  key: string;
+  loadId: string;
+  wireId: string;
+  at: Vec3;
+  kind: LoadKind;
+  label: string;
+}
+
 export interface Scene {
   editable: boolean;
   /** Wires that can be picked and dragged (empty when not editable). */
   wires: Wire[];
   lines: SceneLine[];
   feeds: SceneFeed[];
+  /** Coils, traps and the like on the wires. Only known for a model, not for a bare deck. */
+  loads: SceneLoad[];
   ground: boolean;
   /** Whether the lines are coloured by current. */
   showsCurrent: boolean;
@@ -80,7 +91,13 @@ export function sceneFromModel(model: AntennaModel, currents?: readonly SegmentC
     if (wire) feeds.push({ key: f.id, feedId: f.id, wireId: wire.id, at: segmentCentre(wire, f.segment) });
   }
 
-  return { editable: true, wires: model.wires, lines, feeds, ground: model.ground.kind !== 'free-space', showsCurrent };
+  const loads: SceneLoad[] = [];
+  for (const l of model.loads) {
+    const wire = model.wires.find((w) => w.id === l.wireId);
+    if (wire) loads.push({ key: l.id, loadId: l.id, wireId: wire.id, at: segmentCentre(wire, l.segment), kind: l.kind, label: l.label ?? l.kind });
+  }
+
+  return { editable: true, wires: model.wires, lines, feeds, loads, ground: model.ground.kind !== 'free-space', showsCurrent };
 }
 
 /** Read-only scene from a solved deck, for decks the model can't represent. */
@@ -103,6 +120,7 @@ export function sceneFromReport(report: Nec2Report, frequency: FrequencyResult |
     wires: [],
     lines,
     feeds,
+    loads: [],
     ground: frequency !== undefined && frequency.environment !== 'free-space',
     showsCurrent: peak > 0,
   };

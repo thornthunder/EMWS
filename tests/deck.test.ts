@@ -9,6 +9,7 @@ const EXAMPLES = [
   'dipole-20m-over-ground.nec',
   'dipole-20m-swr-sweep.nec',
   'ocf-dipole-windom.nec',
+  'trap-dipole-40-80m.nec',
   'vertical-40m-perfect-ground.nec',
   'yagi-3el-2m.nec',
 ];

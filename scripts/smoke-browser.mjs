@@ -378,6 +378,14 @@ async function runLcTest({ evaluate, send, log }) {
     await sleep(250);
     return done;
   };
+  const until = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
   /** Types into a number field and presses Enter, as a person does. */
   const typeNumber = async (label, text) => {
     const focused = await evaluate(`(() => {
@@ -453,6 +461,26 @@ async function runLcTest({ evaluate, send, log }) {
   check(await typeNumber('Order', '7'), 'order 7');
   now = await state();
   check(now.issues.length === 0 && now.parts === 7, `an odd order clears it: ${now.parts} parts`);
+
+  // ---- the trap, into an antenna ----
+  check(await click('.lc-tab', 'A trap'), 'back to the trap');
+  check(await click('.button-row button', 'Put this trap in an antenna'), 'Put this trap in an antenna');
+  check(await until(`location.hash === '#/antenna' && [...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('Loads'))`, 15_000), 'the Antenna Modeler opens, with a Loads section');
+  check(await until(`document.querySelector('.handoff-offer')?.textContent.includes('7.1 MHz trap')`), 'which offers the 7.1 MHz trap');
+  check(await click('.handoff-offer button', 'Put it on wire'), 'Put it on wire');
+  check(await until(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('Loads (1)'))`), 'one load in the list');
+  check(await until(`document.querySelectorAll('rect.load').length >= 1`), 'drawn on the wire as a square');
+  const kind = await evaluate(`[...document.querySelectorAll('.load-row select')].map((s) => s.value).join()`);
+  check(kind === 'parallel', `as a parallel load: ${kind}`);
+  check(await until(`document.querySelector('.modeler')?.dataset.busy !== 'true' && [...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Efficiency')`, 45_000), 'the antenna solves with it in');
+  // A 7 MHz trap on the 2 m Yagi is only a small capacitor, so nothing shows in the
+  // efficiency there. The example built from two of them does show it.
+  await evaluate(`(() => { const s = document.querySelector('.example-picker'); s.value = 'trap-dipole-40-80m'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  check(await until(`[...document.querySelectorAll('h3')].some((h) => h.textContent.startsWith('Loads (2)'))`), 'the trap dipole example comes in with its two traps as loads');
+  const efficiencyNow = `(() => { const d = [...document.querySelectorAll('.summary > div')].find((x) => x.querySelector('dt')?.textContent === 'Efficiency'); return parseFloat(d?.querySelector('dd')?.textContent ?? 'NaN'); })()`;
+  check(await until(`document.querySelector('.modeler')?.dataset.busy !== 'true' && ${efficiencyNow} < 99`, 45_000), 'and solves with them in');
+  const efficiency = await evaluate(efficiencyNow);
+  check(efficiency > 88 && efficiency < 93, `the traps' loss is in the efficiency: ${efficiency} % on 40 m (90.8 % when the example was tuned)`);
 }
 
 async function runVnaTest({ evaluate, send, log }) {

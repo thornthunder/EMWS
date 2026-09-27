@@ -75,6 +75,20 @@ export function validateModel(model: AntennaModel, options: ValidateOptions = {}
     warn('Nothing is driven yet. Right-click a wire and choose Feed here.');
   }
 
+  for (const l of model.loads) {
+    const wire = model.wires.find((w) => w.id === l.wireId);
+    if (!wire) continue;
+    const name = l.label ? `"${l.label}"` : 'load';
+    const empty = l.kind !== 'impedance' && l.ohms === 0 && l.henries === 0 && l.farads === 0;
+    if (empty && l.kind === 'series') warn(`The ${name} on ${label(wire)} has no R, L or C, so it does nothing.`, wire);
+    if (empty && l.kind === 'parallel') {
+      warn(`The ${name} on ${label(wire)} is a parallel load with nothing in it, which NEC treats as an open circuit: the wire is cut there.`, wire);
+    }
+    if (l.kind === 'impedance' && plan.steps > 1) {
+      warn(`The ${name} on ${label(wire)} is a fixed R + jX, which NEC keeps the same at every frequency of the sweep. A real coil or capacitor would not; use a series or parallel load for one of those.`, wire);
+    }
+  }
+
   const topMHz = highestFrequencyMHz(plan);
   const wavelength = wavelengthM(topMHz);
   const hasGround = model.ground.kind !== 'free-space';

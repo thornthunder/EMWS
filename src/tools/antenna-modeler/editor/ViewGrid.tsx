@@ -225,6 +225,11 @@ export function ViewGrid(props: ViewGridProps) {
               <span className="swatch swatch-feed" /> feed
             </span>
           )}
+          {scene.loads.length > 0 && (
+            <span className="legend">
+              {' '}· <span className="swatch swatch-load" /> load: a coil, trap or resistor in the wire
+            </span>
+          )}
         </p>
         {menu && <ContextMenu menu={menu} onClose={closeMenu} />}
       </section>

@@ -18,6 +18,40 @@ export function saveImpedanceHandoff(handoff: ImpedanceHandoff): void {
   }
 }
 
+const LOAD_KEY = 'emws.handoff.load';
+
+/** A coil or trap designed in the coil tool, offered to the Antenna Modeler as a load on a wire. */
+export interface LoadHandoff {
+  name: string;
+  savedAt: string;
+  /** 'series' for a coil (with its loss as ohms), 'parallel' for a trap (ohms is the parallel loss). */
+  kind: 'series' | 'parallel';
+  ohms: number;
+  henries: number;
+  farads: number;
+}
+
+export function saveLoadHandoff(handoff: LoadHandoff): void {
+  try {
+    localStorage.setItem(LOAD_KEY, JSON.stringify(handoff));
+  } catch {
+    // As above: without storage the tools work, they just cannot pass this along.
+  }
+}
+
+export function loadLoadHandoff(): LoadHandoff | undefined {
+  try {
+    const raw = localStorage.getItem(LOAD_KEY);
+    if (!raw) return undefined;
+    const value = JSON.parse(raw) as LoadHandoff;
+    if (value.kind !== 'series' && value.kind !== 'parallel') return undefined;
+    if (![value.ohms, value.henries, value.farads].every((v) => Number.isFinite(v) && v >= 0)) return undefined;
+    return value;
+  } catch {
+    return undefined;
+  }
+}
+
 export function loadImpedanceHandoff(): ImpedanceHandoff | undefined {
   try {
     const raw = localStorage.getItem(KEY);

@@ -53,7 +53,7 @@ interface PatternSolved {
   model: AntennaModel;
 }
 
-const EMPTY_SCENE: Scene = { editable: false, wires: [], lines: [], feeds: [], ground: false, showsCurrent: false };
+const EMPTY_SCENE: Scene = { editable: false, wires: [], lines: [], feeds: [], loads: [], ground: false, showsCurrent: false };
 
 // ---- persistence ----
 
@@ -105,7 +105,8 @@ function loadInitial(): Initial {
   if (stored) {
     try {
       const saved = JSON.parse(stored) as { kind?: string; model?: unknown; deck?: unknown };
-      if (saved.kind === 'model' && looksLikeModel(saved.model)) return { model: saved.model, source: { kind: 'model' }, notes: [] };
+      // Models saved before loads existed have none; give them the field rather than refuse them.
+      if (saved.kind === 'model' && looksLikeModel(saved.model)) return { model: { ...saved.model, loads: Array.isArray(saved.model.loads) ? saved.model.loads : [] }, source: { kind: 'model' }, notes: [] };
       if (saved.kind === 'text' && typeof saved.deck === 'string') return fromDeck(saved.deck);
     } catch {
       // fall through to the defaults
@@ -901,7 +902,7 @@ function Summary({ frequency, segments, patterns, cuts, z0, onZ0 }: SummaryProps
         <div>
           <dt>Efficiency</dt>
           <dd>{frequency.power.efficiencyPct.toFixed(1)} %</dd>
-          <small>conductor losses only</small>
+          <small>losses in wires and loads; the ground is not counted</small>
         </div>
       )}
     </dl>

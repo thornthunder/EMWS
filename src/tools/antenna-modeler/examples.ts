@@ -5,6 +5,7 @@ import dipoleFreeSpace from '../../../examples/dipole-20m-free-space.nec?raw';
 import dipoleOverGround from '../../../examples/dipole-20m-over-ground.nec?raw';
 import dipoleSweep from '../../../examples/dipole-20m-swr-sweep.nec?raw';
 import ocfDipole from '../../../examples/ocf-dipole-windom.nec?raw';
+import trapDipole from '../../../examples/trap-dipole-40-80m.nec?raw';
 import vertical from '../../../examples/vertical-40m-perfect-ground.nec?raw';
 import yagi from '../../../examples/yagi-3el-2m.nec?raw';
 
@@ -29,5 +30,6 @@ export const EXAMPLES: Example[] = [
   { id: 'dipole-20m-over-ground', label: 'Dipole, 20 m, 10 m over real ground', deck: dipoleOverGround },
   { id: 'dipole-20m-swr-sweep', label: 'Dipole, 20 m, SWR sweep', deck: dipoleSweep },
   { id: 'ocf-dipole-windom', label: 'Off-centre-fed dipole (Windom), 4:1 balun', deck: ocfDipole, z0: 200 },
+  { id: 'trap-dipole-40-80m', label: 'Trap dipole, 40 and 80 m', deck: trapDipole },
   { id: 'vertical-40m-perfect-ground', label: 'Quarter-wave vertical, 40 m', deck: vertical },
 ];

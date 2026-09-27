@@ -37,6 +37,30 @@ export interface Feed {
   voltage: Complex;
 }
 
+/**
+ * How a load is wired: R, L and C in series (an LD 0 card: a loading coil, with its loss
+ * as R), the three in parallel (LD 1: a trap), or a fixed R + jX that does not change with
+ * frequency (LD 4). For the two RLC kinds a zero means that part is left out, as NEC reads
+ * it - so a coil is L with its loss as R and C at 0.
+ */
+export type LoadKind = 'series' | 'parallel' | 'impedance';
+
+/** Something in series with one segment of a wire: a loading coil, a trap, a resistor. */
+export interface Load {
+  id: string;
+  wireId: string;
+  /** 1-based, counted along the wire from end a, as a feed is. */
+  segment: number;
+  kind: LoadKind;
+  ohms: number;
+  henries: number;
+  farads: number;
+  /** The X of an 'impedance' load, ohms; unused by the other kinds. */
+  reactance: number;
+  /** What it is, for the person: "40 m trap". */
+  label?: string;
+}
+
 export type Ground =
   | { kind: 'free-space' }
   | { kind: 'perfect' }
@@ -69,10 +93,12 @@ export interface AntennaModel {
   comments: string[];
   wires: Wire[];
   feeds: Feed[];
+  /** Loads on single segments (LD 0, 1 and 4 cards). Other LD cards stay in extraCards. */
+  loads: Load[];
   ground: Ground;
   frequency: FrequencyPlan;
   pattern: PatternPlan;
-  /** Program cards the editor doesn't model (LD, TL, NT, EK, ...), kept verbatim, in order. */
+  /** Program cards the editor doesn't model (distributed LD, TL, NT, EK, ...), kept verbatim, in order. */
   extraCards: string[];
 }
 
@@ -102,6 +128,7 @@ export function emptyModel(frequencyMHz = 14.2): AntennaModel {
     comments: [],
     wires: [],
     feeds: [],
+    loads: [],
     ground: { kind: 'free-space' },
     frequency: { startMHz: frequencyMHz, stepMHz: 0, steps: 1 },
     pattern: { kind: 'auto' },
@@ -298,6 +325,9 @@ export function setWireGeometry(
     feeds: next.feeds.map((f) =>
       f.wireId === wireId ? { ...f, segment: remapSegment(f.segment, wire.segments, segments) } : f,
     ),
+    loads: next.loads.map((l) =>
+      l.wireId === wireId ? { ...l, segment: remapSegment(l.segment, wire.segments, segments) } : l,
+    ),
   };
 }
 
@@ -307,6 +337,7 @@ export function deleteWire(model: AntennaModel, wireId: string): AntennaModel {
     ...model,
     wires: model.wires.filter((w) => w.id !== wireId),
     feeds: model.feeds.filter((f) => f.wireId !== wireId),
+    loads: model.loads.filter((l) => l.wireId !== wireId),
   };
 }
 
@@ -371,17 +402,20 @@ export function splitWire(
   const head: Wire = { ...wire, b: point, segments: first };
   const tail: Wire = { ...wire, id: newId('w'), tag: nextTag(model), a: point, segments: second };
 
-  const feeds = model.feeds.map((f) => {
-    if (f.wireId !== wireId) return f;
-    const position = (f.segment - 0.5) / wire.segments;
-    if (position < t) return { ...f, segment: segmentAt(head, position / t) };
-    return { ...f, wireId: tail.id, segment: segmentAt(tail, (position - t) / (1 - t)) };
-  });
+  // Feeds and loads stay where they are along the wire, on whichever half that now is.
+  const rehome = <T extends { wireId: string; segment: number }>(item: T): T => {
+    if (item.wireId !== wireId) return item;
+    const position = (item.segment - 0.5) / wire.segments;
+    if (position < t) return { ...item, segment: segmentAt(head, position / t) };
+    return { ...item, wireId: tail.id, segment: segmentAt(tail, (position - t) / (1 - t)) };
+  };
+  const feeds = model.feeds.map(rehome);
+  const loads = model.loads.map(rehome);
 
   const index = model.wires.findIndex((w) => w.id === wireId);
   const wires = [...model.wires];
   wires.splice(index, 1, head, tail);
-  return { model: { ...model, wires, feeds }, newWireId: tail.id };
+  return { model: { ...model, wires, feeds, loads }, newWireId: tail.id };
 }
 
 export function duplicateWire(
@@ -418,6 +452,56 @@ export function removeFeed(model: AntennaModel, feedId: string): AntennaModel {
 
 export function updateFeed(model: AntennaModel, feedId: string, patch: Partial<Pick<Feed, 'segment' | 'voltage'>>) {
   return { ...model, feeds: model.feeds.map((f) => (f.id === feedId ? { ...f, ...patch } : f)) };
+}
+
+// ---- loads ----
+
+/** What a new load is until it is edited: a coil, with a loss resistance a fair coil has. */
+export const DEFAULT_LOAD: Omit<Load, 'id' | 'wireId' | 'segment'> = { kind: 'series', ohms: 0.5, henries: 1e-6, farads: 0, reactance: 0, label: 'coil' };
+
+/**
+ * Puts a load on a segment. Several loads may share a segment - NEC adds them in series -
+ * and a load may share a segment with a feed, which is how a base-loaded vertical is fed.
+ */
+export function addLoad(model: AntennaModel, wireId: string, segment: number, spec: Partial<Omit<Load, 'id' | 'wireId' | 'segment'>> = {}): AntennaModel {
+  const wire = wireById(model, wireId);
+  if (!wire) return model;
+  const s = Math.min(wire.segments, Math.max(1, Math.round(segment)));
+  const load: Load = { ...DEFAULT_LOAD, ...spec, id: newId('l'), wireId, segment: s };
+  return { ...model, loads: [...model.loads, load] };
+}
+
+export function removeLoad(model: AntennaModel, loadId: string): AntennaModel {
+  const loads = model.loads.filter((l) => l.id !== loadId);
+  return loads.length === model.loads.length ? model : { ...model, loads };
+}
+
+export function updateLoad(model: AntennaModel, loadId: string, patch: Partial<Omit<Load, 'id' | 'wireId'>>): AntennaModel {
+  return { ...model, loads: model.loads.map((l) => (l.id === loadId ? { ...l, ...patch } : l)) };
+}
+
+export function setLoadPosition(model: AntennaModel, loadId: string, fraction: number): AntennaModel {
+  const load = model.loads.find((l) => l.id === loadId);
+  const wire = load && wireById(model, load.wireId);
+  if (!load || !wire) return model;
+  const segment = segmentNearest(wire, Math.min(1, Math.max(0, fraction)));
+  return segment === load.segment ? model : updateLoad(model, loadId, { segment });
+}
+
+/** The impedance a load presents at a frequency, as NEC will work it out. */
+export function loadImpedance(load: Load, fMHz: number): Complex {
+  const w = 2 * Math.PI * fMHz * 1e6;
+  if (load.kind === 'impedance') return { re: load.ohms, im: load.reactance };
+  if (load.kind === 'series') {
+    return { re: load.ohms, im: w * load.henries - (load.farads > 0 ? 1 / (w * load.farads) : 0) };
+  }
+  // Parallel: add the admittances of whichever parts are present.
+  let g = load.ohms > 0 ? 1 / load.ohms : 0;
+  let b = load.farads > 0 ? w * load.farads : 0;
+  if (load.henries > 0) b -= 1 / (w * load.henries);
+  const d = g * g + b * b;
+  if (d === 0) return { re: Infinity, im: 0 };
+  return { re: g / d, im: -b / d };
 }
 
 /** Re-segments every wire to λ/20 at the highest frequency, keeping feeds in place. */

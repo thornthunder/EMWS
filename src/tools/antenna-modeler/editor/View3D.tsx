@@ -142,6 +142,10 @@ export function View3D({ scene, size, selection, onSelect }: View3DProps) {
         const [x, y] = place(f.at);
         return <circle key={f.key} cx={x} cy={y} r={5} className="feed" />;
       })}
+      {scene.loads.map((l) => {
+        const [x, y] = place(l.at);
+        return <rect key={l.key} x={x - 4.5} y={y - 4.5} width={9} height={9} rx={2} className="load" />;
+      })}
       {triad.map((t) => (
         <g key={t.axis}>
           <line x1={26} y1={height - 26} x2={t.x} y2={t.y} className={`axis axis-${t.axis}`} />

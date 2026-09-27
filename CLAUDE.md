@@ -104,6 +104,23 @@ delete them from a normal shell.
   Y up, drawn below front). One shared camera so rows share Z and columns share X.
 - Joined ends follow nec2c: L1 distance <= 1e-3 x segment length. Dragging an end moves its
   junction; dragging a wire drags joined ends along (Shift detaches, Alt disables snapping).
+- **Loads** (`model.loads`) sit on one segment of a wire exactly as feeds do (1-based
+  `segment`), and every cascade that moves feeds moves loads: `setWireGeometry` remaps,
+  `deleteWire` drops, `splitWire` re-homes (`tests/loads.test.ts`). Kinds map to LD cards: series
+  RLC = LD 0 (a coil is L with its loss as R), parallel RLC = LD 1 (a trap; R is the parallel loss,
+  Q x wL), fixed R + jX = LD 4. A zero part is absent, as NEC reads it - so an all-zero
+  *parallel* load is an open circuit, and `validate.ts` says so. `deckToModel` adopts only
+  single-segment LD 0/1/4 cards; ranged, per-metre (2/3), conductivity (5) and `LD -1` stay
+  verbatim in `extraCards`. `resolveSegment` does the tag+segment walk for EX and LD alike. Loads
+  travel free in per-frequency sweep decks and to remote solvers because they are just cards.
+  nec2c's power budget already counts their loss (`structureLossW`), so efficiency is the
+  readout; its "STRUCTURE IMPEDANCE LOADING" table is not parsed. Older stored models have no
+  `loads` field; the restore path defaults it.
+- The trap dipole example (`examples/trap-dipole-40-80m.nec`) was tuned by running the engine:
+  87 + j2 Ω and 90.8 % at 7.1 MHz, 47 − j2 Ω and 98.2 % at 3.65 MHz; the tests hold it to those
+  within a few ohms and percent, and `npm run smoke -- --lc` sees the same 90.8 % in the browser.
+- The coil tool hands a coil or trap over through `emws.handoff.load` (`src/lib/handoff.ts`);
+  the panel's Loads section offers it for the selected wire and reads it once per mount.
 - Ids come from `newId()` (session-prefixed counter): `crypto.randomUUID` is unavailable on
   plain-HTTP origins like http://emws.local.
 - `npm run smoke -- --edit` drives the editor with real mouse/keyboard via CDP (drag, undo,
@@ -177,8 +194,8 @@ delete them from a normal shell.
   chart (moved out of the balun tool; `marks` draws vertical guides such as the cutoff and 2×, 3×).
 - The guide is `src/guides/CoilsGuide.tsx`; it states no regulatory or voltage figures, on
   purpose. `npm run smoke -- --lc` drives all three tabs and checks the numbers.
-- Not yet: loads on wires in the Antenna Modeler (the natural home for "put this trap in the
-  antenna"), band-pass, coax traps, capacitor voltage and coil current ratings.
+- Not yet: a "tune the coil to resonance" search and trap voltages at a given power in the
+  modeler, band-pass, coax traps, capacitor voltage and coil current ratings.
 
 ### NanoVNA over Web Serial (`src/lib/vna/`, `src/ui/MeasureWithVna.tsx`)
 

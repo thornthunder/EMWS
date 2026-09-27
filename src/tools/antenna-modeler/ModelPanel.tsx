@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import type { Vec3 } from '../../engine/nec2/types';
 import { tidy, withAxis } from '../../lib/vec3';
+import { loadLoadHandoff } from '../../lib/handoff';
 import type { HistoryAction } from './history';
 import {
   type AntennaModel,
@@ -10,22 +11,29 @@ import {
   type Feed,
   type FrequencyPlan,
   type Ground,
+  type Load,
+  type LoadKind,
   type Wire,
   addFeed,
+  addLoad,
   autoSegment,
   centreSegment,
   deleteWire,
   feedPosition,
   junctionOf,
+  loadImpedance,
   moveEnds,
   removeFeed,
+  removeLoad,
   segmentLength,
   segmentNearest,
   segmentsForPosition,
   setFeedPosition,
+  setLoadPosition,
   setWireGeometry,
   suggestedSegments,
   updateFeed,
+  updateLoad,
   wavelengthM,
   highestFrequencyMHz,
   wireLength,
@@ -121,6 +129,7 @@ export function ModelPanel({ model, dispatch, selection, onSelect }: ModelPanelP
       </section>
 
       <FeedSection model={model} edit={edit} onSelect={onSelect} />
+      <LoadSection model={model} edit={edit} onSelect={onSelect} selection={selection} />
       <PatternSection model={model} edit={edit} />
       <NotesSection comments={model.comments} onChange={(comments) => edit((m) => ({ ...m, comments }))} />
     </div>
@@ -296,6 +305,9 @@ function WireProperties({ model, wire, edit, onDeleted }: EditProps & { wire: Wi
         <button type="button" className="small" disabled={fedAtCentre} onClick={() => edit((m) => addFeed(m, wire.id, centre))}>
           Feed at centre
         </button>
+        <button type="button" className="small" title="A loading coil on the middle segment; edit it under Loads" onClick={() => edit((m) => addLoad(m, wire.id, centre))}>
+          Coil at centre
+        </button>
         <button
           type="button"
           className="small danger"
@@ -358,23 +370,6 @@ interface FeedRowProps extends EditProps {
  * middle of a segment, so the row says where it actually landed.
  */
 function FeedRow({ feed, wire, model, edit, onSelect, magnitude, phase, setVoltage }: FeedRowProps) {
-  const length = wireLength(wire);
-  const at = feedPosition(wire, feed.segment);
-  const wavelength = wavelengthM(highestFrequencyMHz(model.frequency));
-  const [asked, setAsked] = useState<number | undefined>(undefined);
-
-  const place = (fraction: number) => {
-    setAsked(fraction);
-    edit((m) => setFeedPosition(m, feed.id, fraction));
-  };
-
-  // How far the nearest segment centre is from what was asked for, and whether a
-  // different segment count would land on it.
-  const missM = asked === undefined ? 0 : Math.abs(asked - at.fraction) * length;
-  const better = asked === undefined ? wire.segments : segmentsForPosition(asked, suggestedSegments(length, wavelength));
-  const betterMiss =
-    asked === undefined ? 0 : Math.abs((segmentNearest({ ...wire, segments: better }, asked) - 0.5) / better - asked) * length;
-
   return (
     <div className="feed-row">
       <div className="feed-head">
@@ -390,25 +385,50 @@ function FeedRow({ feed, wire, model, edit, onSelect, magnitude, phase, setVolta
           Remove
         </button>
       </div>
-      <div className="field-row">
-        <NumberField
-          label="From end 1"
-          value={Number(at.metres.toFixed(4))}
-          min={0}
-          unit="m"
-          onCommit={(v) => place(length > 0 ? v / length : 0)}
-        />
-        <NumberField
-          label="Along the wire"
-          value={Number((at.fraction * 100).toFixed(3))}
-          min={0}
-          unit="%"
-          onCommit={(v) => place(v / 100)}
-        />
-      </div>
+      <PositionFields model={model} edit={edit} wire={wire} segment={feed.segment} place={(fraction) => edit((m) => setFeedPosition(m, feed.id, fraction))} />
       <div className="field-row">
         <NumberField label="Volts" value={Number(magnitude.toPrecision(8))} above={0} unit="V" onCommit={(v) => setVoltage(v, phase)} />
         <NumberField label="Phase" value={Number(phase.toPrecision(8))} unit="°" onCommit={(v) => setVoltage(magnitude, v)} />
+      </div>
+    </div>
+  );
+}
+
+interface PositionProps extends EditProps {
+  wire: Wire;
+  segment: number;
+  /** Puts the thing at a fraction of the way along the wire; it lands on a segment centre. */
+  place: (fraction: number) => void;
+}
+
+/**
+ * Where a feed or a load sits along its wire, typed as metres from end 1 or as a
+ * percentage. NEC can only use the middle of a segment, so the fields say where the
+ * request actually landed, and offer a segment count that lands closer.
+ */
+function PositionFields({ model, edit, wire, segment, place }: PositionProps) {
+  const length = wireLength(wire);
+  const at = feedPosition(wire, segment);
+  const wavelength = wavelengthM(highestFrequencyMHz(model.frequency));
+  const [asked, setAsked] = useState<number | undefined>(undefined);
+
+  const put = (fraction: number) => {
+    setAsked(fraction);
+    place(fraction);
+  };
+
+  // How far the nearest segment centre is from what was asked for, and whether a
+  // different segment count would land on it.
+  const missM = asked === undefined ? 0 : Math.abs(asked - at.fraction) * length;
+  const better = asked === undefined ? wire.segments : segmentsForPosition(asked, suggestedSegments(length, wavelength));
+  const betterMiss =
+    asked === undefined ? 0 : Math.abs((segmentNearest({ ...wire, segments: better }, asked) - 0.5) / better - asked) * length;
+
+  return (
+    <>
+      <div className="field-row">
+        <NumberField label="From end 1" value={Number(at.metres.toFixed(4))} min={0} unit="m" onCommit={(v) => put(length > 0 ? v / length : 0)} />
+        <NumberField label="Along the wire" value={Number((at.fraction * 100).toFixed(3))} min={0} unit="%" onCommit={(v) => put(v / 100)} />
       </div>
       {asked !== undefined && missM > 0.005 && (
         <p className="muted">
@@ -424,6 +444,95 @@ function FeedRow({ feed, wire, model, edit, onSelect, magnitude, phase, setVolta
           )}
         </p>
       )}
+    </>
+  );
+}
+
+const ohmsText = (v: number) => (Math.abs(v) >= 1000 ? `${(v / 1000).toFixed(2)} k` : v.toFixed(Math.abs(v) >= 100 ? 0 : 1));
+const tidyUnit = (v: number) => Number(v.toPrecision(6));
+
+function LoadSection({ model, edit, onSelect, selection }: EditProps & { onSelect: (wireId: string) => void; selection: string | null }) {
+  // What the coil tool last offered, if anything. Read once: it does not change while this page is open.
+  const [offer] = useState(() => loadLoadHandoff());
+  const target = model.wires.find((w) => w.id === selection) ?? model.wires[0];
+  return (
+    <section className="form-section">
+      <h3>Loads ({model.loads.length})</h3>
+      {model.loads.length === 0 && (
+        <p className="muted">Nothing in the wires yet. Right-click a wire and choose Coil here, or select a wire and press Coil at centre. A trap is a parallel load.</p>
+      )}
+      {offer && target && (
+        <p className="muted handoff-offer">
+          From Coils &amp; Filters: <strong>{offer.name}</strong>.{' '}
+          <button
+            type="button"
+            className="link"
+            onClick={() =>
+              edit((m) => addLoad(m, target.id, centreSegment(target), { kind: offer.kind, ohms: offer.ohms, henries: offer.henries, farads: offer.farads, reactance: 0, label: offer.name }))
+            }
+          >
+            Put it on wire {target.tag} at the centre
+          </button>
+          , then drag it where it belongs.
+        </p>
+      )}
+      {model.loads.map((l) => {
+        const wire = model.wires.find((w) => w.id === l.wireId);
+        return wire ? <LoadRow key={l.id} load={l} wire={wire} model={model} edit={edit} onSelect={onSelect} /> : null;
+      })}
+    </section>
+  );
+}
+
+/** One load: what it is, what it is made of, where it sits, and what it comes to at the first frequency. */
+function LoadRow({ load, wire, model, edit, onSelect }: EditProps & { load: Load; wire: Wire; onSelect: (wireId: string) => void }) {
+  const set = (patch: Partial<Omit<Load, 'id' | 'wireId'>>) => edit((m) => updateLoad(m, load.id, patch));
+  const f = model.frequency.startMHz;
+  const z = loadImpedance(load, f);
+  const rlc = load.kind !== 'impedance';
+  const resonance = load.kind === 'parallel' && load.henries > 0 && load.farads > 0 ? 1 / (2 * Math.PI * Math.sqrt(load.henries * load.farads)) / 1e6 : undefined;
+  return (
+    <div className="feed-row load-row">
+      <div className="feed-head">
+        <button type="button" className="link" onClick={() => onSelect(wire.id)}>
+          Wire {wire.tag}, segment {load.segment} of {wire.segments}
+        </button>
+        <button type="button" className="small" aria-label={`Remove the load on wire ${wire.tag}`} onClick={() => edit((m) => removeLoad(m, load.id))}>
+          Remove
+        </button>
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">Kind</span>
+          <select value={load.kind} onChange={(e) => set({ kind: e.target.value as LoadKind })}>
+            <option value="series">Series R, L, C: a coil or capacitor</option>
+            <option value="parallel">Parallel R, L, C: a trap</option>
+            <option value="impedance">Fixed R + jX</option>
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-label">Name</span>
+          <input key={load.id} type="text" defaultValue={load.label ?? ''} onBlur={(e) => e.target.value !== (load.label ?? '') && set({ label: e.target.value })} />
+        </label>
+      </div>
+      {rlc ? (
+        <div className="field-row">
+          <NumberField label="R" value={tidyUnit(load.ohms)} min={0} unit="Ω" onCommit={(v) => set({ ohms: v })} />
+          <NumberField label="L" value={tidyUnit(load.henries * 1e6)} min={0} unit="µH" onCommit={(v) => set({ henries: v * 1e-6 })} />
+          <NumberField label="C" value={tidyUnit(load.farads * 1e12)} min={0} unit="pF" onCommit={(v) => set({ farads: v * 1e-12 })} />
+        </div>
+      ) : (
+        <div className="field-row">
+          <NumberField label="R" value={tidyUnit(load.ohms)} min={0} unit="Ω" onCommit={(v) => set({ ohms: v })} />
+          <NumberField label="X" value={tidyUnit(load.reactance)} unit="Ω" onCommit={(v) => set({ reactance: v })} />
+        </div>
+      )}
+      <PositionFields model={model} edit={edit} wire={wire} segment={load.segment} place={(fraction) => edit((m) => setLoadPosition(m, load.id, fraction))} />
+      <p className="muted">
+        {rlc ? 'A 0 leaves that part out. ' : ''}
+        At {formatValue(f)} MHz: {Number.isFinite(z.re) ? `${ohmsText(z.re)} ${z.im >= 0 ? '+' : '−'} j${ohmsText(Math.abs(z.im))} Ω` : 'an open circuit'}
+        {resonance !== undefined ? `; resonant at ${resonance.toFixed(3)} MHz` : ''}.
+      </p>
     </div>
   );
 }

@@ -10,6 +10,7 @@ import {
   type EndName,
   type EndRef,
   addFeed,
+  addLoad,
   addWire,
   centreSegment,
   deleteWire,
@@ -21,10 +22,12 @@ import {
   moveEnds,
   newId,
   removeFeed,
+  removeLoad,
   segmentAt,
   splitWire,
   translateEnds,
   updateFeed,
+  updateLoad,
   wireById,
 } from '../model';
 import type { MenuEntry } from './ContextMenu';
@@ -51,7 +54,8 @@ type Drag =
       /** The pointer's world position when the drag began, at the depth of the wire's end a. */
       grab: Vec3;
     }
-  | { kind: 'feed'; x0: number; y0: number; started: boolean; start: AntennaModel; feedId: string; wireId: string };
+  | { kind: 'feed'; x0: number; y0: number; started: boolean; start: AntennaModel; feedId: string; wireId: string }
+  | { kind: 'load'; x0: number; y0: number; started: boolean; start: AntennaModel; loadId: string; wireId: string };
 
 const isMoving = (moving: readonly EndRef[], wireId: string, end: EndName) =>
   moving.some((m) => m.wireId === wireId && m.end === end);
@@ -177,6 +181,8 @@ export function OrthoView({ plane }: { plane: Plane }) {
         };
       } else if (hit === 'feed' && target.dataset.feed) {
         drag.current = { kind: 'feed', x0, y0, started: false, start: model, feedId: target.dataset.feed, wireId };
+      } else if (hit === 'load' && target.dataset.load) {
+        drag.current = { kind: 'load', x0, y0, started: false, start: model, loadId: target.dataset.load, wireId };
       } else {
         drag.current = {
           kind: 'wire',
@@ -260,6 +266,12 @@ export function OrthoView({ plane }: { plane: Plane }) {
       }
       api.dispatch({ type: 'gesture-update', model: translateEnds(d.start, d.moving, delta) });
       api.setOverlay({ snapTo });
+    } else if (d.kind === 'load') {
+      const wire = wireById(d.start, d.wireId);
+      if (!wire) return;
+      const t = parameterOnScreen(wire.a, wire.b, sx, sy);
+      if (t === undefined) return;
+      api.dispatch({ type: 'gesture-update', model: updateLoad(d.start, d.loadId, { segment: segmentAt(wire, t) }) });
     } else {
       const wire = wireById(d.start, d.wireId);
       const feed = d.start.feeds.find((f) => f.id === d.feedId);
@@ -352,8 +364,13 @@ export function OrthoView({ plane }: { plane: Plane }) {
 
     const offset = withAxis({ x: 0, y: 0, z: 0 }, spec.u, spec.uSign * grid);
     const entries: MenuEntry[] = [];
+    const clickedLoad = target?.dataset.load;
     if (clickedFeed) {
       entries.push({ label: 'Remove feed point', onSelect: () => edit((m) => removeFeed(m, clickedFeed)) });
+    }
+    if (clickedLoad) {
+      const l = model.loads.find((x) => x.id === clickedLoad);
+      entries.push({ label: `Remove ${l?.label ?? 'load'}`, onSelect: () => edit((m) => removeLoad(m, clickedLoad)) });
     }
     const along = `${(feedPosition(wire, segment).fraction * 100).toFixed(1)}% along`;
     entries.push({
@@ -365,6 +382,16 @@ export function OrthoView({ plane }: { plane: Plane }) {
     for (const f of feeds) {
       if (f.id !== clickedFeed) {
         entries.push({ label: `Remove feed on segment ${f.segment}`, onSelect: () => edit((m) => removeFeed(m, f.id)) });
+      }
+    }
+    // A coil is the load people put in a wire most; the panel turns it into a trap or anything else.
+    entries.push({
+      label: t === undefined ? `Coil at the centre (segment ${segment})` : `Coil here: ${along} (segment ${segment})`,
+      onSelect: () => edit((m) => addLoad(m, wire.id, segment)),
+    });
+    for (const l of model.loads.filter((x) => x.wireId === wire.id)) {
+      if (l.id !== clickedLoad) {
+        entries.push({ label: `Remove ${l.label ?? 'load'} on segment ${l.segment}`, onSelect: () => edit((m) => removeLoad(m, l.id)) });
       }
     }
     entries.push(
@@ -511,6 +538,29 @@ export function OrthoView({ plane }: { plane: Plane }) {
           >
             <title>Feed point{editing ? ' - drag it along the wire' : ''}</title>
           </circle>
+        );
+      })}
+
+      {scene.loads.map((l) => {
+        const [x, y] = screen(l.at);
+        return (
+          <rect
+            key={l.key}
+            x={x - 5}
+            y={y - 5}
+            width={10}
+            height={10}
+            rx={2}
+            className={editing ? 'load load-editable' : 'load'}
+            data-hit={editing ? 'load' : undefined}
+            data-wire={l.wireId}
+            data-load={l.loadId}
+          >
+            <title>
+              {l.label}
+              {editing ? ' - drag it along the wire' : ''}
+            </title>
+          </rect>
         );
       })}
 
