@@ -10,6 +10,7 @@ import { LineChart, type Series } from '../../ui/LineChart';
 import { type Analysis, type Point, analyse } from './circuit';
 import { DesignPanel } from './DesignPanel';
 import { type Design, type Issue, checkDesign, coreOf, efhwDesign, summarise, tappedTurns, windTo, withCatalogueCore, withProfile } from './model';
+import { type SavedBalun, loadSavedBaluns, newSavedBalunId, saveSavedBaluns } from './library';
 import { type CoreProfile, loadProfiles, profileIdOfMaterial, profileMaterial, saveProfiles } from './profiles';
 import { WindingPad } from './WindingPad';
 
@@ -83,6 +84,7 @@ const ohms = (v: number) => (v >= 10_000 ? `${(v / 1000).toFixed(1)} kΩ` : v >=
 export function BalunTool() {
   const [history, setHistory] = useState<History>(() => ({ past: [], present: read(DESIGN_KEY, isDesign) ?? efhwDesign(), future: [] }));
   const [profiles, setProfiles] = useState<CoreProfile[]>(loadProfiles);
+  const [saved, setSaved] = useState<SavedBalun[]>(loadSavedBaluns);
   const [compareId, setCompareId] = useState('');
   const [antenna, setAntenna] = useState<ImpedanceHandoff | undefined>(undefined);
   const [hover, setHover] = useState<number | undefined>(undefined);
@@ -109,6 +111,7 @@ export function BalunTool() {
 
   useEffect(() => write(DESIGN_KEY, design), [design]);
   useEffect(() => saveProfiles(profiles), [profiles]);
+  useEffect(() => saveSavedBaluns(saved), [saved]);
 
   /** The same core again stacks it; anything else starts a single one. */
   const pickCore = (coreId: string, materialId: string) => {
@@ -184,6 +187,14 @@ export function BalunTool() {
       ? `1:1 current balun · ${summary.totalTurns} turns`
       : `1:4 Guanella · ${summary.totalTurns} turns on ${design.positions === 2 ? 'each of two cores' : 'one core'}`;
 
+  const savedSummary = `${title} on ${core.name}-${material.name.replace('#', '')}`;
+  const saveDesign = (name: string) => setSaved((list) => [...list, { id: newSavedBalunId(), name, savedAt: new Date().toISOString(), summary: savedSummary, design }]);
+  const openSaved = (id: string) => {
+    const entry = saved.find((s) => s.id === id);
+    if (entry) setDesign(entry.design);
+  };
+  const deleteSaved = (id: string) => setSaved((list) => list.filter((s) => s.id !== id));
+
   const send = () => {
     if (!analysis) return;
     saveImpedanceHandoff({
@@ -235,6 +246,11 @@ export function BalunTool() {
             canRedo={history.future.length > 0}
             onUndo={undo}
             onRedo={redo}
+            saved={saved}
+            suggestedName={savedSummary}
+            onSaveDesign={saveDesign}
+            onOpenSaved={openSaved}
+            onDeleteSaved={deleteSaved}
           />
         </aside>
 

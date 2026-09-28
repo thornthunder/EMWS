@@ -37,6 +37,7 @@ import {
   wind,
   withCustomDimensions,
 } from './model';
+import type { SavedBalun } from './library';
 import { CORE_DRAG_TYPE } from './WindingPad';
 
 export interface DesignPanelProps {
@@ -60,6 +61,12 @@ export interface DesignPanelProps {
   canRedo: boolean;
   onUndo: () => void;
   onRedo: () => void;
+  /** Your saved designs, and what to call this one if you save it now. */
+  saved: SavedBalun[];
+  suggestedName: string;
+  onSaveDesign: (name: string) => void;
+  onOpenSaved: (id: string) => void;
+  onDeleteSaved: (id: string) => void;
 }
 
 const TOPOLOGIES: { id: Topology; label: string; blurb: string; start: () => Design }[] = [
@@ -106,7 +113,52 @@ export function DesignPanel(props: DesignPanelProps) {
       <StraysSection design={design} analysis={props.analysis} set={set} />
       <MeasureSection {...props} />
       <LibrarySection {...props} />
+      <SavedSection {...props} />
     </div>
+  );
+}
+
+/** Designs kept under a name: the shelf other tools read from. */
+function SavedSection({ saved, suggestedName, onSaveDesign, onOpenSaved, onDeleteSaved }: DesignPanelProps) {
+  const [name, setName] = useState('');
+  const save = () => {
+    const chosen = (name.trim() || suggestedName).trim();
+    if (!chosen) return;
+    onSaveDesign(chosen);
+    setName('');
+  };
+  return (
+    <section className="form-section">
+      <h3>Your designs ({saved.length})</h3>
+      <p className="muted">
+        Save a design to use it in the other tools: the Antenna Modeler can then show the SWR the radio sees through it. A design wound on
+        one of your measured cores keeps using that measurement.
+      </p>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">Name</span>
+          <input type="text" value={name} placeholder={suggestedName} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} />
+        </label>
+        <button type="button" className="small" onClick={save}>
+          Save this design
+        </button>
+      </div>
+      {saved.length > 0 && (
+        <ul className="saved-list">
+          {saved.map((s) => (
+            <li key={s.id}>
+              <button type="button" className="link" onClick={() => onOpenSaved(s.id)} title={`Open ${s.name}`}>
+                {s.name}
+              </button>
+              <span className="muted">{s.summary}</span>
+              <button type="button" className="small" aria-label={`Delete ${s.name}`} onClick={() => onDeleteSaved(s.id)}>
+                Delete
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 

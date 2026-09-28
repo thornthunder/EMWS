@@ -14,7 +14,9 @@ import { cutsOf, elevationOfTheta, frontToBackDb, mainLobe, type PatternCut } fr
 import { TRAPPED } from '../../engine/nec2/run';
 import type { FrequencyResult, Nec2Run, RadiationPattern, Segment } from '../../engine/nec2/types';
 import { saveImpedanceHandoff } from '../../lib/handoff';
+import type { Complex } from '../../lib/complex';
 import { DEFAULT_Z0, formatImpedance, returnLossDb, swr } from '../../lib/rf';
+import { type RadioSide, type ThroughOption, radioSide, throughOptions } from './through';
 import { PolarPlot } from '../../ui/PolarPlot';
 import { SweepChart } from '../../ui/SweepChart';
 import { deckToModel, modelToDeck, planRuns } from './deck';
@@ -187,6 +189,10 @@ export function AntennaModeler() {
   const [fitKey, setFitKey] = useState(0);
   const [autoRun, setAutoRun] = useState(() => readStorage(AUTO_RUN_KEY) !== 'off');
   const [z0, setZ0] = useState(DEFAULT_Z0);
+  // Your saved baluns, for "SWR through". Read when the page opens: the balun tool is where they change.
+  const [baluns] = useState<ThroughOption[]>(() => throughOptions());
+  const [throughId, setThroughId] = useState('');
+  const through = baluns.find((o) => o.saved.id === throughId && o.material !== undefined);
   /** A measurement of the real antenna, to hold the model against. Not kept between visits. */
   const [measurement, setMeasurement] = useState<Measurement | undefined>();
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -526,9 +532,21 @@ export function AntennaModeler() {
     return report ? sceneFromReport(report, frequency) : EMPTY_SCENE;
   }, [isModel, model, solved, frequency, report]);
 
+  // The modelled impedance at every solved frequency, seen through the chosen balun.
+  const radio: RadioSide[] | undefined = useMemo(() => {
+    if (!through?.material) return undefined;
+    const points = frequencies.flatMap((f) => (f.feeds[0] ? [{ fMHz: f.frequencyMHz, z: f.feeds[0].impedance }] : []));
+    return radioSide({ saved: through.saved, material: through.material }, points);
+  }, [through, frequencies]);
+  const radioAt = frequency && radio?.find((r) => r.fMHz === frequency.frequencyMHz);
+
   const sweep = useMemo(
-    () => frequencies.map((f) => ({ frequencyMHz: f.frequencyMHz, swr: f.feeds[0] ? swr(f.feeds[0].impedance, z0) : Infinity })),
-    [frequencies, z0],
+    () =>
+      frequencies.map((f) => {
+        const z = radio ? radio.find((r) => r.fMHz === f.frequencyMHz)?.z : f.feeds[0]?.impedance;
+        return { frequencyMHz: f.frequencyMHz, swr: z ? swr(z, z0) : Infinity };
+      }),
+    [frequencies, radio, z0],
   );
 
   const lastRadius = model.wires[model.wires.length - 1]?.radius ?? DEFAULT_RADIUS;
@@ -707,7 +725,18 @@ export function AntennaModeler() {
 
           {frequency && (
             <>
-              <Summary frequency={frequency} segments={report?.segments ?? []} patterns={patterns} cuts={cuts} z0={z0} onZ0={setZ0} />
+              <Summary
+                frequency={frequency}
+                segments={report?.segments ?? []}
+                patterns={patterns}
+                cuts={cuts}
+                z0={z0}
+                onZ0={setZ0}
+                baluns={baluns}
+                throughId={throughId}
+                onThrough={setThroughId}
+                through={through && radioAt ? { name: through.saved.name, powerW: through.saved.design.powerW, ...radioAt } : undefined}
+              />
               {frequency.feeds.length > 1 && <FeedTable frequency={frequency} segments={report?.segments ?? []} z0={z0} />}
               {frequencies.length > 1 && (
                 <SweepChart points={sweep} selected={index} onSelect={setSelectedIndex} z0={z0} measured={measuredSwr} measuredLabel="measured" />
@@ -839,13 +868,21 @@ interface SummaryProps {
   cuts: PatternCut[];
   z0: number;
   onZ0: (z0: number) => void;
+  /** Saved baluns to look through, and which one is chosen ('' for none). */
+  baluns: ThroughOption[];
+  throughId: string;
+  onThrough: (id: string) => void;
+  /** The radio side of the chosen balun at this frequency, when one is chosen and usable. */
+  through?: RadioSide & { name: string; powerW: number };
 }
 
-function Summary({ frequency, segments, patterns, cuts, z0, onZ0 }: SummaryProps) {
+function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throughId, onThrough, through }: SummaryProps) {
   const feed = frequency.feeds[0];
   const peak = mainLobe(patterns.flatMap((p) => p.points));
   const frontToBack = cuts.map(frontToBackDb).find((v) => v !== undefined);
-  const ratio = feed ? swr(feed.impedance, z0) : undefined;
+  // The SWR the radio sees: at the feed point, or at its own connector through the balun.
+  const seen: Complex | undefined = through ? through.z : feed?.impedance;
+  const ratio = seen ? swr(seen, z0) : undefined;
 
   return (
     <dl className="summary">
@@ -878,9 +915,36 @@ function Summary({ frequency, segments, patterns, cuts, z0, onZ0 }: SummaryProps
               aria-label="Reference impedance in ohms"
             />{' '}
             Ω
+            {baluns.length > 0 && (
+              <>
+                {' '}
+                <select className="z0 through" value={throughId} onChange={(e) => onThrough(e.target.value)} aria-label="Seen through one of your baluns">
+                  <option value="">at the feed</option>
+                  {baluns.map((b) => (
+                    <option key={b.saved.id} value={b.saved.id} disabled={b.material === undefined}>
+                      through {b.saved.name}
+                      {b.material === undefined ? ' (its measured core is gone)' : ''}
+                    </option>
+                  ))}
+                </select>
+              </>
+            )}
           </dt>
           <dd>{Number.isFinite(ratio) ? `${ratio.toFixed(2)} : 1` : '∞'}</dd>
-          <small>return loss {returnLossDb(feed.impedance, z0).toFixed(1)} dB</small>
+          <small>
+            {through
+              ? `${formatImpedance(through.z)} Ω at the radio through ${through.name}`
+              : `return loss ${returnLossDb(feed.impedance, z0).toFixed(1)} dB`}
+          </small>
+        </div>
+      )}
+      {through && (
+        <div>
+          <dt>Balun loss</dt>
+          <dd>{Number.isFinite(through.lossDb) ? `${through.lossDb.toFixed(2)} dB` : '∞'}</dd>
+          <small>
+            {through.coreW.toFixed(2)} W in the core at {through.powerW} W, about {through.tempRiseC.toFixed(0)} °C warmer
+          </small>
         </div>
       )}
       {peak && (

@@ -157,6 +157,15 @@ export function AntennaModelerGuide() {
         little, and will not hold exactly 4:1 on every band an OCF is used on.
       </p>
       <p>
+        <strong>Or look through a balun you actually have.</strong> Save a design in the{' '}
+        <a href="#/balun">balun tool</a> under <em>Your designs</em>, and the <em>SWR at</em> box here grows a second choice:{' '}
+        <em>through</em> that balun. The SWR, the sweep curve and a new <em>Balun loss</em> card then show what the radio sees
+        at its own connector: the antenna's impedance transformed by the real winding on the real core, with the loss and
+        heat at the power the design was given. A design wound on one of your NanoVNA-measured cores uses that
+        measurement, which is as close to the thing on your bench as a simulation gets. The feed impedance card stays the
+        antenna's own, so you can see both ends.
+      </p>
+      <p>
         You can add several feed points, each with its own voltage and phase, which is how you model a phased
         array. With more than one feed, a table appears under the results showing what each one sees.
       </p>

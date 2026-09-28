@@ -170,8 +170,18 @@ delete them from a normal shell.
   its size into `customCore` and sets `profileId`; picking a catalogue core or editing
   dimensions clears `profileId` (`withProfile` / `withCatalogueCore` / `withCustomDimensions`).
 - Nothing in it has been checked against a bench measurement yet. Do not claim otherwise.
+- **Component library, first shelf** (`library.ts`): a `SavedBalun` is a name + summary + the
+  whole `Design`, in `emws.balun.designs.v1`. A design on a measured core carries only the
+  `profileId`; `materialFor(design, profiles)` resolves it at use time (so a corrected
+  measurement corrects every design on that core) and returns undefined when the profile is
+  gone - callers must show that, never fall back to an estimate. The Antenna Modeler's side is
+  `antenna-modeler/through.ts`: `analyse(design, material, loadAt, frequencies)` now takes the
+  frequencies from outside, so the balun is evaluated at exactly the solved points with the
+  modelled impedance as its load; the Summary's `select.through` swaps the SWR, the sweep and
+  adds a "Balun loss" card. The feed-impedance card stays the antenna's own. Saved baluns are
+  read once per modeler mount (`throughOptions()`).
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
-  and the refused design.
+  and the refused design, then saves the design and looks through it from the modeler.
 
 ### Coils, traps and filters (`src/tools/lc/`)
 

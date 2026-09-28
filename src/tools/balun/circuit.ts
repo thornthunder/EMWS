@@ -113,7 +113,24 @@ export interface Analysis {
 
 const parallel = (z1: Complex, z2: Complex): Complex => cInv(cAdd(cInv(z1), cInv(z2)));
 
-export function analyse(design: Design, material: Material, loadAt?: (fMHz: number) => Complex): Analysis {
+/**
+ * The frequencies a design's own sweep covers: evenly spaced on a log axis, because a
+ * transformer's life runs from 1.8 to 30 MHz and the interesting part is as likely to be
+ * at the bottom as the top.
+ */
+export function sweepFrequencies(sweep: Design['sweep']): number[] {
+  const { startMHz, stopMHz } = sweep;
+  const count = Math.max(2, Math.floor(sweep.points));
+  return Array.from({ length: count }, (_, i) => startMHz * (stopMHz / startMHz) ** (i / (count - 1)));
+}
+
+/**
+ * The transformer frequency by frequency: at its own sweep, or at `frequencies` given
+ * from outside - the Antenna Modeler's, say, with `loadAt` returning the antenna's
+ * impedance at each - so that what the radio sees through it can be worked out at
+ * exactly the points another tool solved.
+ */
+export function analyse(design: Design, material: Material, loadAt?: (fMHz: number) => Complex, frequencies?: readonly number[]): Analysis {
   const core = coreOf(design);
   const geometry = toroidGeometry(core.odMm, core.idMm, core.heightMm, design.stack);
   const summary = summarise(design.steps);
@@ -132,12 +149,7 @@ export function analyse(design: Design, material: Material, loadAt?: (fMHz: numb
   const lengthM = tapped ? undefined : lineLengthM(design);
 
   const points: Point[] = [];
-  const { startMHz, stopMHz } = design.sweep;
-  const count = Math.max(2, Math.floor(design.sweep.points));
-  for (let i = 0; i < count; i++) {
-    // Evenly spaced on a log axis: a transformer's life runs from 1.8 to 30 MHz, and the
-    // interesting part is as likely to be at the bottom as the top.
-    const fMHz = startMHz * (stopMHz / startMHz) ** (i / (count - 1));
+  for (const fMHz of frequencies ?? sweepFrequencies(design.sweep)) {
     const w = 2 * Math.PI * fMHz * 1e6;
     const mu = permeabilityOf(material, fMHz);
     const zLoad = loadAt?.(fMHz) ?? complex(design.load.ohmsR, design.load.ohmsX);

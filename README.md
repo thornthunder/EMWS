@@ -26,7 +26,9 @@ and nothing to abuse. Started by **ZR1JT**.
 - Reads and writes standard NEC-2 card decks (`.nec`). Decks the visual editor can't
   represent yet (arcs, helices, GM copies, ...) still run, exactly as written.
 - Feed impedance, SWR and return loss against any reference impedance; several feeds
-  for phased arrays.
+  for phased arrays. Or **SWR through one of your own baluns**: pick a design saved in the
+  balun tool and the readout, the sweep curve and a balun-loss card show what the radio
+  sees at its connector, with the balun's real winding, core and loss in the way.
 - **Loads in the wires**: loading coils, traps and resistors on any segment, dragged along
   the wire like a feed point, carried in the deck as `LD` cards, and costed - what a trap
   turns into heat shows in the efficiency. A trap dipole for 40 and 80 m is among the
@@ -82,6 +84,10 @@ and nothing to abuse. Started by **ZR1JT**.
   export to a small JSON file to back up, move or share.
 - Takes its load from the Antenna Modeler, and passes what the radio sees on to the Smith
   chart.
+- **Your designs**: save a finished balun under a name and it becomes a component the other
+  tools can use - the Antenna Modeler looks through it. A design wound on a measured core
+  keeps using that measurement, so a balun you built, measured and saved is carried into the
+  antenna model as faithfully as the tool knows how.
 
 **Coils, traps and filters**: the parts you wind and solder yourself, worked out rather
 than looked up.

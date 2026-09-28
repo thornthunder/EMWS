@@ -334,6 +334,52 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   now = await state();
   check(/built-in estimate/.test(now.note), 'and the results say so');
 
+  // ---- keep the design, and look through it from the Antenna Modeler ----
+  const waitFor = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  const focusedName = await evaluate(`(() => {
+    const section = [...document.querySelectorAll('.form-section')].find((s) => s.querySelector('h3')?.textContent.startsWith('Your designs'));
+    const input = section?.querySelector('input[type="text"]');
+    if (!input) return false;
+    input.focus();
+    return true;
+  })()`);
+  check(focusedName, 'Your designs: a name box');
+  await send('Input.insertText', { text: 'Smoke choke' });
+  check(await click('.form-section button', 'Save this design'), 'Save this design');
+  const savedNames = await evaluate(`[...document.querySelectorAll('.saved-list li .link')].map((b) => b.textContent.trim())`);
+  check(savedNames.includes('Smoke choke'), `it is on the shelf: ${savedNames.join(', ')}`);
+  // The design on the pad at this point is the 49:1 unun on FT240-43; the shelf says so.
+  const savedSummary = await evaluate(`document.querySelector('.saved-list li .muted')?.textContent.trim() ?? ''`);
+  check(savedSummary.startsWith('49:1'), `described as what it is: ${savedSummary}`);
+
+  await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
+  check(await waitFor(`document.querySelector('.example-picker') !== null`, 15_000), 'the Antenna Modeler opens');
+  await evaluate(`(() => { const s = document.querySelector('.example-picker'); s.value = 'dipole-20m-free-space'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  const swrOf = `(() => { const d = [...document.querySelectorAll('.summary > div')].find((x) => x.querySelector('dt')?.textContent.startsWith('SWR at')); return parseFloat(d?.querySelector('dd')?.textContent ?? 'NaN'); })()`;
+  // Wait for the dipole itself, not whatever was solved before it: its 14.2 MHz card.
+  const onDipole = `[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Frequency' && d.querySelector('dd')?.textContent.includes('14.2 MHz'))`;
+  check(await waitFor(`${onDipole} && document.querySelector('.modeler')?.dataset.busy !== 'true' && Number.isFinite(${swrOf}) && document.querySelector('select.through') !== null`, 45_000), 'the 20 m dipole solves, and the SWR box offers your baluns');
+  const atFeed = await evaluate(swrOf);
+  const picked = await evaluate(`(() => { const s = document.querySelector('select.through'); const o = [...s.options].find((x) => x.textContent.includes('Smoke choke')); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
+  check(picked, 'through Smoke choke');
+  check(await waitFor(`[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Balun loss')`), 'a Balun loss card appears');
+  const through = await evaluate(swrOf);
+  const loss = await evaluate(`(() => { const d = [...document.querySelectorAll('.summary > div')].find((x) => x.querySelector('dt')?.textContent === 'Balun loss'); return d?.querySelector('dd')?.textContent ?? ''; })()`);
+  // A 49:1 into a 72 ohm dipole puts about 1.5 ohms at the radio: a hopeless match, and
+  // the tool must say so rather than flatter the design. The loss is the core's, with a
+  // low-impedance load pulling current through it.
+  check(Number.isFinite(through) && through > 10 && through < 80 && parseFloat(loss) > 0.2 && parseFloat(loss) < 6, `the radio sees SWR ${through} through the 49:1 (${atFeed} at the feed), balun loss ${loss}`);
+  await snap('through');
+  await evaluate(`(() => { const s = document.querySelector('select.through'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  check(await waitFor(`Math.abs(${swrOf} - ${atFeed}) < 0.01`), `and back at the feed it reads ${atFeed} again`);
+
   await evaluate(`localStorage.removeItem('emws.balun.cores.v1')`);
 
   // Leave the next visitor the shipped design, not this test's leftovers.

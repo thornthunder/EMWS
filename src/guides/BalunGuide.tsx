@@ -282,6 +282,21 @@ export function BalunGuide() {
         itself. A winding has only hit its own resonance when the reactance goes <em>negative</em>.
       </p>
 
+      <h2>Your designs</h2>
+      <p>
+        <em>Your designs</em>, at the bottom of the panel, keeps finished designs under a name: the core, the wire, every
+        turn and tap, the compensation, the power. Open one to bring it back; delete it when it has left the shack. They
+        live in this browser, like your measured cores.
+      </p>
+      <p>
+        The point of saving is the other tools. In the <a href="#/antenna">Antenna Modeler</a> the <em>SWR at</em> box offers
+        every saved design as <em>through …</em>, and the SWR, the sweep and a balun-loss card then show what the radio
+        sees through it, into the antenna as modelled. A design wound on a measured core keeps using that measurement, so a
+        balun you built, measured and saved is represented in the antenna model as faithfully as this tool knows how. If
+        you later delete the core it was wound on, the design is still listed but greyed out: without the measurement it
+        would only be a guess.
+      </p>
+
       <h2>Working with the other tools</h2>
       <p>
         Model your antenna in the <a href="#/antenna">Antenna Modeler</a> — an end-fed half-wave, a few thousand
