@@ -64,6 +64,13 @@ delete them from a normal shell.
   `services/emws-solver/` (git-ignored - it will link CUDA, so it stays out of this repo).
 - `parse-output.ts` - nec2c's text report -> `Nec2Report`. Whitespace-tokenised (every
   printf field upstream is space-separated); the pattern table's SENSE column can be blank.
+- **3-D pattern** (`antenna-modeler/Pattern3D.tsx`, maths in `pattern-mesh.ts`): a surface only
+  from a COMPLETE theta x phi grid - the free-space dipole example's two crossed RP cuts once
+  produced 140 phantom faces from their union; now it shows a note instead. Same ARRL scale as
+  the polar plots (`src/ui/polar-scale.ts`), grid thinned to <= 40 a side for smooth dragging,
+  peak line from `mainLobe()` (a dipole's maximum is a ring; the first max found was the zenith).
+  The antenna is drawn OVER the surface, not depth-sorted among the faces: a wire lies along a
+  null of its own pattern, so every face in front hid it. Shares `project()` with View3D.
 - `pattern.ts`, `src/lib/rf.ts` - analysis helpers shared by tools. `mainLobe()` breaks ties
   towards the horizon and never picks a pole unless strictly maximal (a dipole's broadside
   plane is all maxima; an azimuth cut through the zenith is meaningless).
@@ -180,6 +187,10 @@ delete them from a normal shell.
   modelled impedance as its load; the Summary's `select.through` swaps the SWR, the sweep and
   adds a "Balun loss" card. The feed-impedance card stays the antenna's own. Saved baluns are
   read once per modeler mount (`throughOptions()`).
+- The Balun-loss card is coloured by `balunStrain()` (`through.ts`): green / orange / red on the
+  temperature RISE (40 and 80 °C) and flux share of saturation (0.5 and 0.9), whichever is worse.
+  These are EMWS's own rules of thumb, stated in the guide as such - not datasheet figures. Tokens
+  `--strain-{ok,hot,burn}-{bg,edge}`, light and dark; the card always carries a mark and a word.
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
   and the refused design, then saves the design and looks through it from the modeler.
 

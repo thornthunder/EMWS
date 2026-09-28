@@ -9,13 +9,13 @@ import type { Size } from './projection';
 const RAD = Math.PI / 180;
 const MARGIN = 30;
 
-interface Orientation {
+export interface Orientation {
   azimuth: number;
   elevation: number;
 }
 
 /** Spin about Z by the azimuth, then tip towards the viewer by the elevation. */
-function project(p: Vec3, o: Orientation): [number, number, number] {
+export function project(p: Vec3, o: Orientation): [number, number, number] {
   const az = o.azimuth * RAD;
   const el = o.elevation * RAD;
   const x = p.x * Math.cos(az) - p.y * Math.sin(az);

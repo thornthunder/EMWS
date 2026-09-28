@@ -11,6 +11,13 @@
   --on-accent: #fffdf8;
   --danger: #a3271f;
   --danger-bg: #fbe9e6;
+  /* How hard a balun works: status colours, always shown with a word and a mark. */
+  --strain-ok-bg: #e3f3ea;
+  --strain-ok-edge: #2f8a5c;
+  --strain-hot-bg: #fdefd9;
+  --strain-hot-edge: #c9700f;
+  --strain-burn-bg: #fbe3e0;
+  --strain-burn-edge: #b73a2e;
   --plot-grid: #cfc7b6;
   --plot-line: #1f6f8b;
   --plot-fill: rgb(31 111 139 / 0.16);
@@ -36,6 +43,12 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    --strain-ok-bg: #173325;
+    --strain-ok-edge: #3f9c6e;
+    --strain-hot-bg: #3b2a12;
+    --strain-hot-edge: #e0922e;
+    --strain-burn-bg: #3d1a18;
+    --strain-burn-edge: #e8675b;
     --bg: #10181f;
     --surface: #17222b;
     --border: #2b3a46;
@@ -1986,4 +1999,51 @@ button.danger {
 select.z0.through {
   width: auto;
   max-width: 16em;
+}
+
+/* ---- the balun-loss card: how hard the balun works ---- */
+
+.summary > div.balun-strain {
+  border-left-width: 5px;
+}
+.summary > div.balun-strain-ok {
+  background: var(--strain-ok-bg);
+  border-color: var(--strain-ok-edge);
+}
+.summary > div.balun-strain-hot {
+  background: var(--strain-hot-bg);
+  border-color: var(--strain-hot-edge);
+}
+.summary > div.balun-strain-burn {
+  background: var(--strain-burn-bg);
+  border-color: var(--strain-burn-edge);
+}
+.strain-word {
+  color: var(--text);
+}
+
+/* ---- 3-D radiation pattern ---- */
+
+.pattern-3d svg {
+  cursor: grab;
+  touch-action: none;
+}
+.pattern-3d svg:active {
+  cursor: grabbing;
+}
+.lobe-face {
+  fill-opacity: 0.35;
+  stroke: var(--surface);
+  stroke-opacity: 0.35;
+  stroke-width: 0.5;
+}
+.lobe-wire-halo {
+  stroke: var(--surface);
+  stroke-width: 6;
+  stroke-linecap: round;
+}
+.lobe-wire {
+  stroke: var(--wire);
+  stroke-width: 3;
+  stroke-linecap: round;
 }

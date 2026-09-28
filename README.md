@@ -28,13 +28,17 @@ and nothing to abuse. Started by **ZR1JT**.
 - Feed impedance, SWR and return loss against any reference impedance; several feeds
   for phased arrays. Or **SWR through one of your own baluns**: pick a design saved in the
   balun tool and the readout, the sweep curve and a balun-loss card show what the radio
-  sees at its connector, with the balun's real winding, core and loss in the way.
+  sees at its connector, with the balun's real winding, core and loss in the way. The
+  balun-loss card turns green, orange or red - with a word, not colour alone - as the core
+  runs cool, risks thermal runaway, or will burn out.
 - **Loads in the wires**: loading coils, traps and resistors on any segment, dragged along
   the wire like a feed point, carried in the deck as `LD` cards, and costed - what a trap
   turns into heat shows in the efficiency. A trap dipole for 40 and 80 m is among the
   examples, tuned with the engine itself.
 - Peak gain, front-to-back ratio, efficiency. Azimuth and elevation patterns on the
-  ARRL log scale, cut automatically through the main lobe of the whole-sphere pattern.
+  ARRL log scale, cut automatically through the main lobe of the whole-sphere pattern, and
+  the whole pattern in 3-D - drag to turn it - with the antenna drawn at its centre, so the
+  lobes can be read against the wires that make them.
 - Frequency sweeps with an SWR curve; click a point to inspect that frequency. A sweep is
   shared across your processor's cores - measured 6.2 s down to 2.2 s on a four-core
   laptop - and counts the frequencies off as they come in.

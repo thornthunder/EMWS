@@ -16,7 +16,8 @@ import type { FrequencyResult, Nec2Run, RadiationPattern, Segment } from '../../
 import { saveImpedanceHandoff } from '../../lib/handoff';
 import type { Complex } from '../../lib/complex';
 import { DEFAULT_Z0, formatImpedance, returnLossDb, swr } from '../../lib/rf';
-import { type RadioSide, type ThroughOption, radioSide, throughOptions } from './through';
+import { Pattern3D } from './Pattern3D';
+import { type RadioSide, type ThroughOption, balunStrain, radioSide, throughOptions } from './through';
 import { PolarPlot } from '../../ui/PolarPlot';
 import { SweepChart } from '../../ui/SweepChart';
 import { deckToModel, modelToDeck, planRuns } from './deck';
@@ -746,6 +747,7 @@ export function AntennaModeler() {
                   {cuts.map((cut, i) => (
                     <PolarPlot key={`${cut.kind}-${cut.fixedDeg}-${i}`} cut={cut} title={cutTitle(cut)} />
                   ))}
+                  <Pattern3D patterns={patterns} lines={scene.lines} ground={scene.ground} frequencyMHz={frequency.frequencyMHz} />
                 </div>
               ) : (
                 plan.patternDeck &&
@@ -876,6 +878,30 @@ interface SummaryProps {
   through?: RadioSide & { name: string; powerW: number };
 }
 
+const STRAIN_WORDS = {
+  ok: { mark: '✓', word: 'Within range' },
+  hot: { mark: '!', word: 'Risk of thermal runaway' },
+  burn: { mark: '✕', word: 'Will burn out' },
+} as const;
+
+/** The balun's loss, and a verdict on how hard it is working: green, orange or red, always with a word. */
+function BalunLossCard({ through }: { through: RadioSide & { name: string; powerW: number } }) {
+  const strain = balunStrain(through);
+  const words = STRAIN_WORDS[strain.level];
+  return (
+    <div className={`balun-strain balun-strain-${strain.level}`} data-strain={strain.level}>
+      <dt>Balun loss</dt>
+      <dd>{Number.isFinite(through.lossDb) ? `${through.lossDb.toFixed(2)} dB` : '∞'}</dd>
+      <small>
+        <strong className="strain-word">
+          <span aria-hidden="true">{words.mark}</span> {words.word}
+        </strong>{' '}
+        at {through.powerW} W: {strain.reason}. {through.coreW.toFixed(2)} W heats the core.
+      </small>
+    </div>
+  );
+}
+
 function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throughId, onThrough, through }: SummaryProps) {
   const feed = frequency.feeds[0];
   const peak = mainLobe(patterns.flatMap((p) => p.points));
@@ -938,15 +964,7 @@ function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throug
           </small>
         </div>
       )}
-      {through && (
-        <div>
-          <dt>Balun loss</dt>
-          <dd>{Number.isFinite(through.lossDb) ? `${through.lossDb.toFixed(2)} dB` : '∞'}</dd>
-          <small>
-            {through.coreW.toFixed(2)} W in the core at {through.powerW} W, about {through.tempRiseC.toFixed(0)} °C warmer
-          </small>
-        </div>
-      )}
+      {through && <BalunLossCard through={through} />}
       {peak && (
         <div>
           <dt>Peak gain</dt>

@@ -166,6 +166,31 @@ export function AntennaModelerGuide() {
         antenna's own, so you can see both ends.
       </p>
       <p>
+        The <em>Balun loss</em> card is coloured by how hard the balun works at the power the design was given, and always
+        says it in words too:
+      </p>
+      <ul>
+        <li>
+          <strong>Green, ✓ Within range</strong>: the core stays under 40 °C above the surrounding air and under half of
+          saturation.
+        </li>
+        <li>
+          <strong>Orange, ! Risk of thermal runaway</strong>: 40 to 80 °C above the air, or half to nine-tenths of
+          saturation. Ferrite's loss changes as it heats, so a core running this warm can keep getting warmer.
+        </li>
+        <li>
+          <strong>Red, ✕ Will burn out</strong>: 80 °C or more above the air, or nine-tenths of saturation. On a warm day
+          that is hotter than a ferrite core should ever be.
+        </li>
+      </ul>
+      <p>
+        These limits are EMWS's rules of thumb, applied to the rise above the air so they hold whatever the weather. The
+        temperature itself is the balun tool's rough still-air estimate, and it depends on the power and duty cycle you
+        set there: change them in the balun tool and save the design again to see a different verdict here. A core in
+        a sealed box, in the sun, runs hotter than the estimate; a measurement of the real core makes the loss, and so
+        the heat, much more trustworthy.
+      </p>
+      <p>
         You can add several feed points, each with its own voltage and phase, which is how you model a phased
         array. With more than one feed, a table appears under the results showing what each one sees.
       </p>
@@ -334,6 +359,16 @@ export function AntennaModelerGuide() {
         (elevation), both taken through the direction of strongest radiation. The rings are the ARRL
         log-periodic scale used in the ARRL Antenna Book, where the outer ring is the peak and each ring in is
         a few decibels down; it keeps the main lobe readable while still showing small side lobes.
+      </p>
+      <p>
+        The third plot is the <strong>whole pattern in three dimensions</strong>, on the same scale: the furthest reach
+        is the peak gain, and darker shading is stronger. Drag it to turn it, like the 3-D view of the wires. A small
+        copy of the antenna sits at its centre, drawn over the pattern so it always shows, so you can see which way
+        the lobes point relative to the wires that make them: a horizontal dipole's doughnut has its hole along the
+        wire; a vertical's is flattened towards the horizon. The dashed line is the direction the peak-gain card names.
+        The antenna is scaled to fit inside, not to the pattern, which has no size in metres. It needs the automatic
+        (whole-sphere) pattern; a deck that asks only for cuts gets a note saying so instead of a surface pieced
+        together from two slices.
       </p>
 
       <h2>Loads: coils, traps and resistors in the wire</h2>

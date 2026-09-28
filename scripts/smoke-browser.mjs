@@ -370,6 +370,37 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   const picked = await evaluate(`(() => { const s = document.querySelector('select.through'); const o = [...s.options].find((x) => x.textContent.includes('Smoke choke')); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`);
   check(picked, 'through Smoke choke');
   check(await waitFor(`[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Balun loss')`), 'a Balun loss card appears');
+  const strain = await evaluate(`(() => { const d = document.querySelector('.balun-strain'); return d ? d.dataset.strain + ' | ' + (d.querySelector('.strain-word')?.textContent.trim() ?? '') + ' | ' + getComputedStyle(d).backgroundColor : ''; })()`);
+  check(/^(ok|hot|burn) | . (Within range|Risk of thermal runaway|Will burn out) | rgb/.test(strain), `coloured by how hard it works, with a word: ${strain}`);
+
+  // ---- the 3-D pattern: there, with the antenna inside, and it turns ----
+  // This example's own RP cards are two cuts, which is no surface: the page says so.
+  check(await waitFor(`(document.querySelector('.pattern-3d')?.textContent ?? '').includes('automatic pattern')`, 30_000), 'with only cuts solved, the 3-D panel says to choose the automatic pattern');
+  await evaluate(`[...document.querySelectorAll('.radio-list label')].find((l) => l.textContent.includes('Automatic')).querySelector('input').click()`);
+  check(await waitFor(`document.querySelector('.pattern-3d polygon.lobe-face') !== null`, 30_000), 'a 3-D pattern beside the polar plots');
+  const faces = await evaluate(`document.querySelectorAll('.pattern-3d polygon.lobe-face').length`);
+  const wires = await evaluate(`document.querySelectorAll('.pattern-3d line.lobe-wire').length`);
+  check(faces > 1000 && wires > 0, `${faces} faces, and the antenna inside as ${wires} segments`);
+  const shape = `[...document.querySelectorAll('.pattern-3d polygon.lobe-face')].slice(0, 5).map((p) => p.getAttribute('points')).join('|')`;
+  await evaluate(`document.querySelector('.pattern-3d').scrollIntoView({ block: 'center' })`);
+  await snap('pattern3d');
+  const before3d = await evaluate(shape);
+  const box = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.pattern-3d svg').getBoundingClientRect())`));
+  const cx = box.x + box.width / 2;
+  const cy = box.y + box.height / 2;
+  await evaluate(`document.querySelector('.pattern-3d').scrollIntoView({ block: 'center' })`);
+  const box2 = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.pattern-3d svg').getBoundingClientRect())`));
+  const mx = box2.x + box2.width / 2;
+  const my = box2.y + box2.height / 2;
+  const mouse3d = (type, x, y, buttons) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons, clickCount: type === 'mouseMoved' ? 0 : 1 });
+  await mouse3d('mousePressed', mx, my, 1);
+  for (let i = 1; i <= 8; i++) {
+    await mouse3d('mouseMoved', mx + i * 10, my + i * 3, 1);
+    await sleep(30);
+  }
+  await mouse3d('mouseReleased', mx + 80, my + 24, 0);
+  await sleep(200);
+  check((await evaluate(shape)) !== before3d, `dragging turns it (${Math.round(cx)},${Math.round(cy)})`);
   const through = await evaluate(swrOf);
   const loss = await evaluate(`(() => { const d = [...document.querySelectorAll('.summary > div')].find((x) => x.querySelector('dt')?.textContent === 'Balun loss'); return d?.querySelector('dd')?.textContent ?? ''; })()`);
   // A 49:1 into a 72 ohm dipole puts about 1.5 ohms at the radio: a hopeless match, and
@@ -938,7 +969,8 @@ async function runEditTest({ send, evaluate, loadExample, waitForResults, getSta
   await changed(() =>
     evaluate(`[...document.querySelectorAll('.radio-list label')].find((l) => l.textContent.includes('Automatic')).querySelector('input').click()`),
   );
-  const cuts = getState().figures.filter((f) => f.includes('pattern'));
+  const cuts = getState().figures.filter((f) => f.includes('pattern') && !f.startsWith('3-D'));
+  check(getState().figures.some((f) => f.startsWith('3-D pattern at')), 'and a 3-D pattern of the whole sphere beside them');
   check(cuts.length === 2, `the automatic pattern plots two cuts through the main lobe: ${cuts.join(' | ')}`);
   check(getState().figures.some((f) => f.startsWith('SWR')), 'and the sweep keeps its SWR curve');
 }

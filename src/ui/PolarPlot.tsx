@@ -5,6 +5,7 @@
 import type { PatternCut } from '../engine/nec2/pattern';
 import { elevationOfTheta, mainLobe } from '../engine/nec2/pattern';
 import { NO_FIELD_DB } from '../engine/nec2/types';
+import { arrlRadius } from './polar-scale';
 
 const SIZE = 340;
 const C = SIZE / 2;
@@ -13,8 +14,7 @@ const RINGS_DB = [0, -3, -10, -20, -30];
 const FLOOR_DB = -60;
 
 function radiusFor(relativeDb: number): number {
-  if (relativeDb <= FLOOR_DB) return 0;
-  return R * Math.pow(0.89, -Math.min(relativeDb, 0) / 2);
+  return relativeDb <= FLOOR_DB ? 0 : R * arrlRadius(relativeDb);
 }
 
 /** Plot angle in degrees, anticlockwise from "3 o'clock". */
