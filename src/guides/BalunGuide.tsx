@@ -303,7 +303,9 @@ export function BalunGuide() {
         <em>Community</em> section appears at the bottom of the panel (and if not, everything else works exactly the
         same — EMWS never needs an account). Register a callsign and a password; on a site that can send email you may
         add an address too, used for password-reset codes and nothing else. Skip it — or register on a site without
-        mail — and there is no reset, so pick a password you will keep. Signed in, you can keep your measured cores on
+        mail — and there is no reset, so pick a password you will keep. If you do ask for a reset code and nothing
+        arrives, <strong>look in the spam folder first</strong>: a short automated mail from a small site is exactly what
+        spam filters grab, however reputable the mail server behind it. Signed in, you can keep your measured cores on
         the site, and share the ones you choose.
       </p>
       <p>

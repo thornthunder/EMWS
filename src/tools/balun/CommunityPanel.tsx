@@ -219,7 +219,11 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
             </form>
           ) : (
             <>
-              <p className="muted">If that account has an email, a code is on its way - give it a minute, and check spam. It lasts 15 minutes.</p>
+              <p className="muted">
+                If that account has an email, a code is on its way. Give it a minute — and <strong>look in the spam or junk
+                folder</strong>: a short automated mail like this often lands there, even from a well-behaved mail server. The
+                code lasts 15 minutes.
+              </p>
               <form className="field-row community-signin" onSubmit={useCode}>
                 <label className="field">
                   <span className="field-label">Code</span>

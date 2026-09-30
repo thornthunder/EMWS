@@ -68,6 +68,13 @@ looks like one. The SMTP client is EMWS's own hundred lines
 (`public/community/mail.php`) - the usual PHP mail libraries are LGPL, which a
 public-domain project does not ship.
 
+Expect the first reset codes to land in **spam** - it happened on the very first live
+test here, through a reputable mail server. A short automated mail from a sender the
+recipient has never heard of is exactly what filters distrust; the page tells people to
+look there, but the lasting cure is on the operator's side: an SPF record naming the
+sending server for the From domain (and DKIM, if the mail server signs) is what earns
+the inbox over time.
+
 With mail set up, registration offers an **optional email**, used for password-reset
 codes and nothing else - never shown, never shared. Forgot-password mails an 8-character
 code good for 15 minutes; five wrong guesses burn it, a new one can be asked for once a
