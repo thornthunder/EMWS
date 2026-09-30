@@ -34,6 +34,9 @@
     .\scripts\enable-php-proxy.ps1 -SiteName emws.local -SolverUrl http://192.168.0.124:8073
 
 .EXAMPLE
+    .\scripts\enable-php-proxy.ps1 -SiteName emws.local -DbDsn 'mysql:host=127.0.0.1;dbname=emws;charset=utf8mb4' -DbUser emws -DbPass secret
+
+.EXAMPLE
     .\scripts\enable-php-proxy.ps1 -SiteName emws.local -Remove
 #>
 [CmdletBinding(SupportsShouldProcess = $true)]
@@ -42,6 +45,30 @@ param(
     [string] $SiteName,
 
     [string] $SolverUrl = '',
+
+    # The community store's database (docs/community-store.md). Leave empty for none.
+    [string] $DbDsn = '',
+
+    [string] $DbUser = '',
+
+    [string] $DbPass = '',
+
+    # Appended to a mysql DSN that names no port.
+    [string] $DbPort = '',
+
+    # The database's name when -DbDsn is a bare host (default emws).
+    [string] $DbName = '',
+
+    # SMTP for password-reset codes: smtp://host (STARTTLS) or smtps://host. Optional.
+    [string] $MailDsn = '',
+
+    [string] $MailUser = '',
+
+    [string] $MailPass = '',
+
+    [string] $MailPort = '',
+
+    [string] $MailFrom = '',
 
     [string] $PhpCgi,
 
@@ -115,8 +142,8 @@ if (-not $PhpCgi -or -not (Test-Path $PhpCgi)) {
 
 $fastCgiKey = "[fullPath='$PhpCgi',arguments='$marker']"
 
-if (-not $Remove -and -not $SolverUrl) {
-    throw 'Give -SolverUrl, the address of the solver service this site should forward to (e.g. http://192.168.0.124:8073).'
+if (-not $Remove -and -not $SolverUrl -and -not $DbDsn) {
+    throw 'Give -SolverUrl (the solver this site forwards to), -DbDsn (the community store''s database), or both.'
 }
 
 if ($Remove) {
@@ -135,11 +162,12 @@ if ($Remove) {
     exit 0
 }
 
-if (-not $PSCmdlet.ShouldProcess($SiteName, "Handle *.php with $PhpCgi and forward to $SolverUrl")) { exit 0 }
+if (-not $PSCmdlet.ShouldProcess($SiteName, "Handle *.php with $PhpCgi")) { exit 0 }
 
 Write-Host "PHP:    $PhpCgi"
 Write-Host "Site:   $SiteName"
-Write-Host "Solver: $SolverUrl"
+if ($SolverUrl) { Write-Host "Solver: $SolverUrl" }
+if ($DbDsn) { Write-Host "Store:  $DbDsn" }
 
 # 1. A FastCGI application for this site alone. Clear out any PHP registered for it
 #    before, so an upgrade replaces the entry instead of adding another.
@@ -150,9 +178,20 @@ foreach ($path in Get-RegisteredPhp | Where-Object { $_ -ne $PhpCgi }) {
 Invoke-AppCmd @('set', 'config', '-section:system.webServer/fastCgi', "/+$fastCgiKey", '/commit:apphost') -IgnoreErrors | Out-Null
 Invoke-AppCmd @('set', 'config', '-section:system.webServer/fastCgi', "/$fastCgiKey.activityTimeout:$([Math]::Max(90, $TimeoutSeconds + 60))", "/$fastCgiKey.requestTimeout:$([Math]::Max(90, $TimeoutSeconds + 60))", '/commit:apphost') | Out-Null
 
-# 2. Its environment: where the solver lives.
-$variables = @{ EMWS_SOLVER_URL = $SolverUrl; EMWS_SOLVER_TIMEOUT = "$TimeoutSeconds" }
+# 2. Its environment: where the solver lives, and where the community store keeps things.
+$variables = @{ EMWS_SOLVER_TIMEOUT = "$TimeoutSeconds" }
+if ($SolverUrl -ne '') { $variables['EMWS_SOLVER_URL'] = $SolverUrl }
 if ($Token -ne '') { $variables['EMWS_SOLVER_TOKEN'] = $Token }
+if ($DbDsn -ne '') { $variables['EMWS_DB_DSN'] = $DbDsn }
+if ($DbUser -ne '') { $variables['EMWS_DB_USER'] = $DbUser }
+if ($DbPass -ne '') { $variables['EMWS_DB_PASS'] = $DbPass }
+if ($DbPort -ne '') { $variables['EMWS_DB_PORT'] = $DbPort }
+if ($DbName -ne '') { $variables['EMWS_DB_NAME'] = $DbName }
+if ($MailDsn -ne '') { $variables['EMWS_MAIL_DSN'] = $MailDsn }
+if ($MailUser -ne '') { $variables['EMWS_MAIL_USER'] = $MailUser }
+if ($MailPass -ne '') { $variables['EMWS_MAIL_PASS'] = $MailPass }
+if ($MailPort -ne '') { $variables['EMWS_MAIL_PORT'] = $MailPort }
+if ($MailFrom -ne '') { $variables['EMWS_MAIL_FROM'] = $MailFrom }
 foreach ($name in $variables.Keys) {
     Invoke-AppCmd @('set', 'config', '-section:system.webServer/fastCgi', "/-$fastCgiKey.environmentVariables.[name='$name']", '/commit:apphost') -IgnoreErrors | Out-Null
     Invoke-AppCmd @('set', 'config', '-section:system.webServer/fastCgi', "/+$fastCgiKey.environmentVariables.[name='$name',value='$($variables[$name])']", '/commit:apphost') | Out-Null
@@ -171,5 +210,6 @@ Invoke-AppCmd @(
 
 Write-Host ''
 Write-Host 'Done. Check it with:'
-Write-Host "  curl http://$SiteName/solver/index.php?op=health"
+if ($SolverUrl) { Write-Host "  curl http://$SiteName/solver/index.php?op=health" }
+if ($DbDsn) { Write-Host "  curl http://$SiteName/community/index.php?op=health" }
 Write-Host "Undo with: .\scripts\enable-php-proxy.ps1 -SiteName $SiteName -Remove"

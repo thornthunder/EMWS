@@ -48,6 +48,12 @@ const balunTest = args.includes('--balun');
 /** Drive the coil, trap and filter tabs and check the numbers against the closed forms. */
 const lcTest = args.includes('--lc');
 /**
+ * Two people sharing a measured core through a site's community store. The base URL must
+ * be served by PHP with EMWS_DB_DSN set - e.g. php -S 127.0.0.1:8090 -t dist - because a
+ * static server has no store, and the whole point is watching one appear.
+ */
+const communityTest = args.includes('--community');
+/**
  * Plug a simulated NanoVNA into the page and measure with it. Web Serial needs a secure
  * origin (https, or localhost), so this only runs there; on a plain-http origin it checks
  * that the tools say so and stops.
@@ -58,7 +64,7 @@ const solverTest = args.includes('--solver');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : undefined);
+const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : communityTest ? '#/balun' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -211,6 +217,10 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   // Start from the shipped design whatever an earlier visit left behind.
   await evaluate(`(localStorage.removeItem('emws.balun.v1'), location.reload())`);
   await sleep(1500);
+
+  // This preview is a static server: no store, so no Community section - the standalone
+  // promise, checked. The --community mode covers the other side, behind PHP.
+  check((await evaluate(`document.querySelector('.community') === null`)) === true, 'no community store here, so no Community section');
 
   let now = await state();
   check(now.title === '49:1 · 2 : 14 turns', `opens on the end-fed transformer: ${now.title}`);
@@ -371,7 +381,9 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   check(picked, 'through Smoke choke');
   check(await waitFor(`[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Balun loss')`), 'a Balun loss card appears');
   const strain = await evaluate(`(() => { const d = document.querySelector('.balun-strain'); return d ? d.dataset.strain + ' | ' + (d.querySelector('.strain-word')?.textContent.trim() ?? '') + ' | ' + getComputedStyle(d).backgroundColor : ''; })()`);
-  check(/^(ok|hot|burn) | . (Within range|Risk of thermal runaway|Will burn out) | rgb/.test(strain), `coloured by how hard it works, with a word: ${strain}`);
+  // The separators must be literal: with them as alternations this regex once matched
+  // anything starting "ok", and the check could not fail.
+  check(/^(ok|hot|burn) \| . (Within expected range|Risk of thermal runaway|Likely to burn out) \| rgb/.test(strain), `coloured by how hard it works, with a word: ${strain}`);
 
   // ---- the 3-D pattern: there, with the antenna inside, and it turns ----
   // This example's own RP cards are two cuts, which is no surface: the page says so.
@@ -558,6 +570,81 @@ async function runLcTest({ evaluate, send, log }) {
   check(await until(`document.querySelector('.modeler')?.dataset.busy !== 'true' && ${efficiencyNow} < 99`, 45_000), 'and solves with them in');
   const efficiency = await evaluate(efficiencyNow);
   check(efficiency > 88 && efficiency < 93, `the traps' loss is in the efficiency: ${efficiency} % on 40 m (90.8 % when the example was tuned)`);
+}
+
+
+/** One visitor measures and shares a core; another takes it and designs on it. */
+async function runCommunityTest({ evaluate, send, log }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error('Community test failed: ' + message);
+    log('ok  ' + message);
+  };
+  const until = async (expr, ms = 15_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  const clickText = async (selector, text) => {
+    const done = await evaluate('(() => { const b = [...document.querySelectorAll(' + JSON.stringify(selector) + ')].find((e) => e.textContent.trim().startsWith(' + JSON.stringify(text) + ')); if (!b) return false; b.click(); return true; })()');
+    await sleep(250);
+    return done;
+  };
+  /** React-controlled inputs only notice a value set through the native setter. */
+  const setInput = (selector, value) =>
+    evaluate('(() => { const el = document.querySelector(' + JSON.stringify(selector) + '); if (!el) return false; Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set.call(el, ' + JSON.stringify(value) + '); el.dispatchEvent(new Event("input", { bubbles: true })); return true; })()');
+  const signInAs = async (callsign) => {
+    check(await setInput('.community-signin input[type="text"]', callsign), 'callsign typed: ' + callsign);
+    check(await setInput('.community-signin input[type="password"]', 'a smoke passphrase'), 'password typed');
+    check(await clickText('.community-signin button', 'Register'), 'Register');
+    check(await until('document.querySelector(".community .vna-status")?.textContent.includes(' + JSON.stringify(callsign) + ')'), 'signed in as ' + callsign);
+  };
+
+  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  const coreName = 'Smoke shared core ' + suffix;
+
+  // A measured core in the local bin: the raw sweep is the truth, the curve re-derives.
+  const sweep = Array.from({ length: 24 }, (_, i) => {
+    const fMHz = 1 * 30 ** (i / 23);
+    return { fMHz, r: 20 + 60 * Math.sqrt(fMHz), x: 2 * Math.PI * fMHz * 1e6 * 30e-6 };
+  });
+  const profile = {
+    id: 'smk-' + suffix, name: coreName, size: { id: 'FT240', name: 'FT240', odMm: 61, idMm: 35.55, heightMm: 12.7 },
+    family: 'NiZn', mix: '#43', measuredAt: new Date().toISOString(),
+    setup: { turns: 8, strayPf: 0, stack: 1 }, sweep, curve: [],
+  };
+  await evaluate('localStorage.setItem("emws.balun.cores.v1", ' + JSON.stringify(JSON.stringify([profile])) + ')');
+  await evaluate('location.reload()');
+  await sleep(1500);
+
+  check(await until('document.querySelector(".community") !== null'), 'the site has a store, so the Community section exists');
+  await evaluate('document.querySelector(".community").scrollIntoView({ block: "center" })');
+  await signInAs('SMOKE-A' + suffix);
+  check(await until('[...document.querySelectorAll(".community-list li")].some((li) => li.textContent.includes(' + JSON.stringify(coreName) + '))'), 'the measured core is offered for keeping and sharing');
+  // The buttons sit disabled while the sign-in's own refresh is in flight.
+  check(await until('[...document.querySelectorAll(".community-list button")].length > 0 && ![...document.querySelectorAll(".community-list button")].some((b) => b.disabled)'), 'and its buttons are live');
+  check(await clickText('.community-list button', 'Share…'), 'Share…');
+  check(await until('document.querySelector(".community-dedication") !== null'), 'the dedication appears before anything is shared');
+  const dedication = await evaluate('document.querySelector(".community-dedication")?.textContent ?? ""');
+  check(/public domain/.test(dedication) && /CC0/.test(dedication), 'in words: CC0, public domain, callsign shown');
+  check(await clickText('.community-dedication button', 'Share it, CC0'), 'Share it, CC0');
+  check(await until('[...document.querySelectorAll(".community h4")].some((h) => h.textContent === "Shared by the community") && [...document.querySelectorAll(".community-list li")].filter((li) => li.textContent.includes("by SMOKE-A")).length === 1'), 'and it appears on the community shelf, with the callsign');
+
+  // The second visitor: fresh account, fresh (empty) local bin.
+  check(await clickText('.community button', 'Sign out'), 'sign out');
+  await evaluate('localStorage.removeItem("emws.balun.cores.v1")');
+  await evaluate('location.reload()');
+  await sleep(1500);
+  await evaluate('document.querySelector(".community")?.scrollIntoView({ block: "center" })');
+  await signInAs('SMOKE-B' + suffix);
+  const row = '[...document.querySelectorAll(".community-list li")].find((li) => li.textContent.includes(' + JSON.stringify(coreName) + ') && li.textContent.includes("by SMOKE-A"))';
+  check(await until(row + ' !== undefined'), 'the other visitor sees it, by SMOKE-A' + suffix);
+  check(await evaluate('(() => { const li = ' + row + '; const b = li && [...li.querySelectorAll("button")].find((x) => x.textContent.includes("Add to my cores")); if (!b) return false; b.click(); return true; })()'), 'Add to my cores');
+  check(await until('[...document.querySelectorAll(".bin .core-chip")].some((c) => (c.getAttribute("aria-label") ?? c.textContent).includes("SMOKE-A"))', 20_000), 'it lands in their bin, named with its measurer');
+  check(await evaluate('(() => { const c = [...document.querySelectorAll(".bin .core-chip")].find((x) => (x.getAttribute("aria-label") ?? x.textContent).includes("SMOKE-A")); if (!c) return false; c.click(); return true; })()'), 'and a click designs on it');
+  check(await until('/your measurement/.test(document.querySelector(".results-title + p")?.textContent ?? "")', 20_000), 'the results say they come from a measurement, as they must');
 }
 
 async function runVnaTest({ evaluate, send, log }) {
@@ -1254,6 +1341,7 @@ try {
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (communityTest) await runCommunityTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (process.env.SMOKE_PROBE) console.log('probe:', await evaluate(process.env.SMOKE_PROBE));
     const info = JSON.parse(
       await evaluate(

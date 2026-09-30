@@ -1,0 +1,26 @@
+# Every push and pull request gets what "done" means locally: the full test suite
+# through the real WASM engine, then a production build with its type-check.
+#
+# The browser smoke tests are not here: they need a headless Chromium driven over CDP
+# and a served build, and they are run by hand against the preview and the live sites
+# (see CLAUDE.md). What runs here is everything Node can see.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test-and-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run build

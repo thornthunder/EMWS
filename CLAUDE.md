@@ -15,7 +15,8 @@ npm run smoke          # headless Edge/Chrome solves a model against :4173 (or a
 npm run build:engine   # recompile nec2c -> WASM; needs Emscripten in .tools/emsdk
 ```
 
-Before calling a change done: `npm test && npm run build`. For anything touching the
+Before calling a change done: `npm test && npm run build` (CI runs the same two on every
+push and PR - `.github/workflows/ci.yml`; the browser smokes stay manual). For anything touching the
 worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview` +
 `npm run smoke` - the Node tests cannot see those paths. `npm test` goes through
 `scripts/test.mjs`, which normalises the drive-letter case first: started from `d:...`
@@ -56,7 +57,14 @@ delete them from a normal shell.
   WebAssembly traps (bad decks) become `{ exitCode: TRAPPED, trap }`, not exceptions.
 - `nec2.worker.ts` / `client.ts` - worker protocol; `cancel()` kills and replaces the worker.
 - `solver.ts` - where a model gets solved: this browser, a service on `127.0.0.1`, or the
-  site's proxy (`public/solver/index.php`, address from `EMWS_SOLVER_URL`). A remote solver
+  site's proxy (`public/solver/index.php`, address from `EMWS_SOLVER_URL`).
+  Three lessons a 2026-09-29 review taught, each now under test in `tests/solver.test.ts`:
+  `SolveOptions.workers` carries the modeller's memory-aware limit into `LocalSolver`
+  (recomputing it there knows no segment count and once overshot 2 workers as 16); a
+  cancelled remote fetch throws `SimulationCancelled`, NEVER `SolverUnavailable`, because
+  the page falls back to a local solve on the latter - cancelling once STARTED a solve;
+  and the page's Cancel/cleanup goes through `cancelSolvers()`, which stops the chosen
+  solver AND the local one a fallback may have running. A remote solver
   returns nec2c's report *text* only; it is parsed here, so it cannot change a result's
   meaning. **Every job carries a `kind`** (`nec2` today) and `/health` lists the kinds a
   service can do - the protocol is not NEC-specific on purpose, so a later engine needs no
@@ -190,7 +198,9 @@ delete them from a normal shell.
 - The Balun-loss card is coloured by `balunStrain()` (`through.ts`): green / orange / red on the
   temperature RISE (40 and 80 °C) and flux share of saturation (0.5 and 0.9), whichever is worse.
   These are EMWS's own rules of thumb, stated in the guide as such - not datasheet figures. Tokens
-  `--strain-{ok,hot,burn}-{bg,edge}`, light and dark; the card always carries a mark and a word.
+  `--strain-{ok,hot,burn}-{bg,edge}`, light and dark; the card always carries a mark and a word,
+  and the words claim no more than the estimate can: "Within expected range", "Risk of thermal
+  runaway", "Likely to burn out", with the small print saying "estimated at N W".
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
   and the refused design, then saves the design and looks through it from the modeler.
 
@@ -218,6 +228,43 @@ delete them from a normal shell.
 - Not yet: a "tune the coil to resonance" search and trap voltages at a given power in the
   modeler, band-pass, coax traps, capacitor voltage and coil current ratings.
 
+### Community store (`public/community/index.php`, `src/lib/community.ts`)
+
+- **Optional by construction, like the solver proxy**: PHP + FastCGI env vars
+  (`EMWS_DB_DSN`/`EMWS_DB_USER`/`EMWS_DB_PASS`, set by `enable-php-proxy.ps1 -DbDsn ...`
+  on the SAME registration as the solver's). No DSN → 503 → `probeCommunity()` returns
+  undefined → `CommunityPanel` renders NOTHING. The footer's promise depends on this:
+  "nothing leaves it unless you sign in and share".
+- **The licence line is the point**: shared items are user measurements, and the store
+  refuses `public` without `cc0` server-side; the UI's Share button always goes through
+  the dedication step first. Never weaken either half.
+- Accounts are callsign + password_hash, plus an OPTIONAL email used only for reset codes
+  (`EMWS_MAIL_*`; `mail.php` is a hand-written ~100-line SMTP client with STARTTLS/AUTH
+  LOGIN, because PHPMailer and friends are LGPL and stay out). No email = no reset, said in
+  the UI. Reset: 8 chars from a no-lookalike alphabet, hashed, 15 min, 5 guesses burn it,
+  one request a minute, and reset-request answers identically whether the account exists.
+  Login throttle 5 tries / 15 min. CSRF = SameSite=Strict cookie AND a required `X-EMWS`
+  header on POSTs. Payloads capped at 1 MB, kinds whitelisted (`core-profile` today; saved
+  baluns would be a new kind, not a new table).
+- **Zero-hand schema**: EMWS_DB_PORT is appended to a portless mysql DSN; an "Unknown
+  database" on connect makes the store CREATE DATABASE and reconnect (needs the grant);
+  tables are CREATE IF NOT EXISTS and later columns are ensured by probe-and-ALTER, so an
+  empty or older database heals on first contact. The MySQL-only branch (database
+  creation) is the one piece not covered by the SQLite tests - it runs first on a real site.
+- Payload = the owning tool's own export format, so import IS the file-import path
+  (validation, fresh ids, sweep-is-truth re-derivation). Imported cores are renamed
+  "<name> — <callsign>".
+- **Portability trap, earned**: PDO binds integers as strings, and SQLite says '1' = 1 is
+  FALSE where MySQL coerces - a CASE on a bound parameter silently never fired. Plain
+  UPDATEs, no cleverness in SQL.
+- `tests/community.test.ts` runs the real PHP over HTTP against SQLite (php -S spawned;
+  v8.4 needs `-d extension=pdo_sqlite`; suite skips loudly with no usable PHP), including
+  the whole reset flow against a fake SMTP server in Node (which does NOT offer STARTTLS,
+  so the TLS branch only runs against real mail servers). The same PDO code runs MySQL in
+  production. `npm run smoke -- --community` needs dist served by
+  `php -S` with a DSN and walks two visitors end to end; `--balun` (static preview)
+  asserts the section does NOT exist.
+
 ### NanoVNA over Web Serial (`src/lib/vna/`, `src/ui/MeasureWithVna.tsx`)
 
 - **Written from the published protocols only.** The NanoVNA firmware, nanovna-saver and the
@@ -238,7 +285,11 @@ delete them from a normal shell.
   own calibration and sends corrected data; the V2 sends raw readings, so `calibration.ts`
   does one-port SOL (three-term error model) and `MeasureWithVna` refuses to measure on a V2
   until short, open and load have been taken for the current range. Nothing leaves the
-  component uncalibrated.
+  component uncalibrated. **The three standards must share their frequencies**, not just
+  their length - the terms are solved point by point, and equal-length sweeps over
+  different ranges once combined into a "calibration" that meant nothing. `solveTerms`
+  refuses them, and `MeasureWithVna` clears collected ticks when the range changes and
+  drops any prior standard whose frequencies do not match a fresh sweep.
 - Web Serial exists only on secure pages (https:// or localhost) in desktop Chromium.
   `serialUnavailableReason()` says which is missing and the UI shows that instead of a dead
   button; the `.s1p` route is always there. `scripts/enable-https.ps1` gives an IIS site a

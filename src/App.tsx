@@ -73,7 +73,7 @@ export function App() {
       </main>
       <footer className="site-footer">
         EMWS by ZR1JT · public domain (<a href="#/about">Unlicense / CC0</a>) · everything runs in your
-        browser, nothing is uploaded · 73
+        browser, and nothing leaves it unless you sign in and share · 73
       </footer>
     </>
   );

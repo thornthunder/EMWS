@@ -9,7 +9,7 @@
 
 import { describe, expect, it } from 'vitest';
 import { cAbs, cSub } from '../src/lib/complex';
-import { applyCalibration, calibrationCovers, makeCalibration, solveTerms } from '../src/lib/vna/calibration';
+import { applyCalibration, calibrationCovers, makeCalibration, sameFrequencies, solveTerms } from '../src/lib/vna/calibration';
 import { identify, VnaError } from '../src/lib/vna';
 import { type Link, concat, decoder, text } from '../src/lib/vna/link';
 import { NanoVna, parsePairs, parseScan } from '../src/lib/vna/nanovna';
@@ -314,6 +314,19 @@ describe('one-port calibration', () => {
     open: freqs.map((f) => measure(f, { re: 1, im: 0 })),
     load: freqs.map((f) => measure(f, { re: 0, im: 0 })),
   };
+
+  it('refuses standards swept over different frequencies, even of equal length', () => {
+    // Three sweeps of the same LENGTH at different ranges once combined into a
+    // "calibration" that meant nothing, because only the lengths were checked.
+    const at = (fs: number[]) => fs.map((f) => measure(f, { re: 0, im: 0 }));
+    expect(() => solveTerms(at([1, 2]), at([10, 20]), at([30, 40]))).toThrow(/same frequencies/);
+    expect(() => solveTerms(at([1, 2]), at([1, 2]), at([1, 2.5]))).toThrow(/same frequencies/);
+    expect(() => solveTerms(at([1, 2]), at([1, 2]), at([1, 2, 3]))).toThrow(/same frequencies/);
+    expect(() => solveTerms([], [], [])).toThrow(/same frequencies/);
+    // Rounding-level differences are the same sweep; a real difference is not.
+    expect(sameFrequencies(at([1, 2]), at([1, 2 + 2e-10]))).toBe(true);
+    expect(sameFrequencies(at([1, 2]), at([1, 2.0001]))).toBe(false);
+  });
 
   it('recovers the error terms from the three standards', () => {
     for (const t of solveTerms(standards.short, standards.open, standards.load)) {

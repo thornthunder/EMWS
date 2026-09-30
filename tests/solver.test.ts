@@ -8,8 +8,10 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterEach, describe, expect, it } from 'vitest';
+import { SimulationCancelled } from '../src/engine/nec2/client';
 import {
   createSolver,
+  LocalSolver,
   describeChoice,
   engineFor,
   isAllowedSolverUrl,
@@ -334,11 +336,36 @@ describe('when the far end is not well', () => {
     expect(performance.now() - started).toBeLessThan(5500);
   }, 10_000);
 
-  it('stops a solve when it is cancelled', async () => {
+  it('stops a solve when it is cancelled - as a cancellation, never as the solver being down', async () => {
     const stub = await startStub({ delayMs: 3000 });
     const solver = createSolver({ kind: 'url', url: stub.url });
     const pending = solver.solve(deck);
     solver.cancel();
-    await expect(pending).rejects.toThrow(/cancelled/i);
+    // The class matters: SolverUnavailable is what makes the page fall back to solving
+    // in the browser, and a cancelled remote solve once STARTED a local one that way.
+    await expect(pending).rejects.toBeInstanceOf(SimulationCancelled);
+  });
+});
+
+describe('solving in this browser', () => {
+  it('uses the worker limit the caller worked out, not one guessed from the deck count', async () => {
+    // The caller computed the limit with the segment count against the memory budget;
+    // recalculating here would not know the segments and once overshot it.
+    const asked: (number | undefined)[] = [];
+    const fake = {
+      simulate: () => Promise.reject(new Error('not used')),
+      simulateAll: (_decks: readonly string[], options?: { workers?: number }) => {
+        asked.push(options?.workers);
+        return Promise.resolve([]);
+      },
+      cancel: () => {},
+    };
+    const solver = new LocalSolver(fake);
+    await solver.solveAll(['a', 'b', 'c'], { workers: 2 });
+    expect(asked).toEqual([2]);
+    // Without a limit from the caller it still caps by the deck count.
+    await solver.solveAll(['a', 'b', 'c']);
+    expect(asked[1]).toBeLessThanOrEqual(3);
+    expect(asked[1]).toBeGreaterThanOrEqual(1);
   });
 });

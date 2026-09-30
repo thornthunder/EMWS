@@ -18,6 +18,10 @@ export default defineConfig(({ mode }) => ({
   build: {
     target: 'es2022',
     sourcemap: true,
+    // scripts/clean-dist.mjs empties dist instead: it tolerates entries it cannot
+    // delete (a sandboxed session once left ACL-locked files there), where this
+    // option fails the whole build on the first one.
+    emptyOutDir: false,
   },
   test: {
     environment: 'node',

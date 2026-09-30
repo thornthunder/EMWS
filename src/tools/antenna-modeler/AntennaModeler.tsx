@@ -224,13 +224,19 @@ export function AntennaModeler() {
   const plan = useMemo(() => planRuns(model), [model]);
   const solvesHere = solverChoice.kind === 'local';
 
-  useEffect(() => {
+  /** Stops whichever solver is running: the chosen one, and the local one a fallback may have started. */
+  const cancelSolvers = useCallback(() => {
     client.current?.cancel();
+    localSolver.current?.cancel();
+  }, []);
+
+  useEffect(() => {
+    cancelSolvers();
     client.current = createSolver(solverChoice);
     saveSolverChoice(solverChoice);
     setFallbackNote(undefined);
-    return () => client.current?.cancel();
-  }, [solverChoice]);
+    return cancelSolvers;
+  }, [solverChoice, cancelSolvers]);
 
   /** Runs a deck on the chosen solver, and on this browser if that one lets us down. */
   const withSolver = useCallback(
@@ -347,6 +353,9 @@ export function AntennaModeler() {
       try {
         const runs = await withSolver((solver) =>
           solver.solveAll(decks, {
+            // The memory-aware limit: without it the local solver would guess from the
+            // deck count alone and could exhaust the browser on a big model.
+            workers: limit,
             onProgress: (done, total) => {
               if (token === mainToken.current) setProgress({ done, total });
             },
@@ -665,7 +674,7 @@ export function AntennaModeler() {
         <div className="run-bar">
           <div className="run-row">
           {busy ? (
-            <button type="button" className="danger" onClick={() => client.current?.cancel()}>
+            <button type="button" className="danger" onClick={cancelSolvers}>
               Cancel
             </button>
           ) : (
@@ -879,9 +888,9 @@ interface SummaryProps {
 }
 
 const STRAIN_WORDS = {
-  ok: { mark: '✓', word: 'Within range' },
+  ok: { mark: '✓', word: 'Within expected range' },
   hot: { mark: '!', word: 'Risk of thermal runaway' },
-  burn: { mark: '✕', word: 'Will burn out' },
+  burn: { mark: '✕', word: 'Likely to burn out' },
 } as const;
 
 /** The balun's loss, and a verdict on how hard it is working: green, orange or red, always with a word. */
@@ -896,7 +905,7 @@ function BalunLossCard({ through }: { through: RadioSide & { name: string; power
         <strong className="strain-word">
           <span aria-hidden="true">{words.mark}</span> {words.word}
         </strong>{' '}
-        at {through.powerW} W: {strain.reason}. {through.coreW.toFixed(2)} W heats the core.
+        — estimated at {through.powerW} W: {strain.reason}. {through.coreW.toFixed(2)} W heats the core.
       </small>
     </div>
   );

@@ -47,8 +47,9 @@ export function Home() {
       <h1>A public-domain electromagnetics workbench</h1>
       <p className="lede">
         Simulate your antenna and RF experiments before you cut wire. EMWS is free for anyone to use, copy,
-        re-host and change, in the amateur radio spirit. Every calculation runs in your own browser: no
-        account, no upload, and it keeps working offline.
+        re-host and change, in the amateur radio spirit. Every calculation runs in your own browser, no
+        account needed, and it keeps working offline; nothing leaves your machine unless a site offers
+        community sharing and you choose to use it.
       </p>
       <div className="cards">
         {TOOLS.map((tool) =>

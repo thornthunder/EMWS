@@ -110,7 +110,8 @@ $stamp = [ordered]@{
 $stampJson = $stamp | ConvertTo-Json
 [System.IO.File]::WriteAllText((Join-Path $dist $markerName), $stampJson, (New-Object System.Text.UTF8Encoding($false)))
 
-$robocopyArgs = @($dist, $SitePath, '/MIR', '/R:2', '/W:2', '/NFL', '/NDL', '/NP', '/NJH')
+# /XD: never mirror (or try to read) leftovers a sandboxed session may have locked in dist.
+$robocopyArgs = @($dist, $SitePath, '/MIR', '/XD', '.review-temp', 'emws-smoke-*', '/R:2', '/W:2', '/NFL', '/NDL', '/NP', '/NJH')
 if (-not $PSCmdlet.ShouldProcess($SitePath, "Mirror $dist (deleting anything else there)")) {
     # -WhatIf: let robocopy list what it would do, without doing it.
     $robocopyArgs += '/L'

@@ -37,6 +37,7 @@ import {
   wind,
   withCustomDimensions,
 } from './model';
+import { CommunityPanel } from './CommunityPanel';
 import type { SavedBalun } from './library';
 import { CORE_DRAG_TYPE } from './WindingPad';
 
@@ -114,6 +115,7 @@ export function DesignPanel(props: DesignPanelProps) {
       <MeasureSection {...props} />
       <LibrarySection {...props} />
       <SavedSection {...props} />
+      <CommunityPanel profiles={props.profiles} onAddProfiles={props.onAddProfiles} />
     </div>
   );
 }

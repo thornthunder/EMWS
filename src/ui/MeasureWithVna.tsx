@@ -12,7 +12,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { MeasuredPoint } from '../lib/touchstone';
 import { type Instrument, VnaError, connect, serialUnavailableReason } from '../lib/vna';
-import { type Calibration, applyCalibration, calibrationCovers, makeCalibration } from '../lib/vna/calibration';
+import { type Calibration, applyCalibration, calibrationCovers, makeCalibration, sameFrequencies } from '../lib/vna/calibration';
 import { NumberField } from './NumberField';
 
 export interface MeasureWithVnaProps {
@@ -48,6 +48,12 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
   // When the tool's own range changes - a different model, a different band - measure
   // that, not whatever was there when this first appeared.
   useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz })), [startMHz, stopMHz]);
+
+  // Standards taken so far belong to the range they were swept over. Change the range and
+  // they cannot be combined with what comes next, so their ticks are cleared rather than
+  // mixed into a calibration that means nothing. A COMPLETED calibration stays: it still
+  // covers whatever part of its range you sweep (calibrationCovers guards the rest).
+  useEffect(() => setStandards({}), [range.startMHz, range.stopMHz, range.points]);
 
   // Let go of the port when the tool goes away.
   useEffect(() => () => void live.current?.close().catch(() => {}), []);
@@ -101,7 +107,10 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
   const measureStandard = async (id: Standard) => {
     const raw = await sweepRaw(`Measuring the ${id}…`);
     if (!raw) return;
-    const next = { ...standards, [id]: raw };
+    // Belt and braces: keep only standards the instrument swept over these same
+    // frequencies, whatever changed in between. A dropped one loses its tick.
+    const compatible = Object.fromEntries(Object.entries(standards).filter(([, points]) => points && sameFrequencies(points, raw)));
+    const next = { ...compatible, [id]: raw };
     setStandards(next);
     if (next.short && next.open && next.load) {
       try {

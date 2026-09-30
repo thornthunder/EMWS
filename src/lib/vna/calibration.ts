@@ -51,8 +51,17 @@ export interface Calibration {
  *     Gm_open  - e00 =  e10e01 / (1 - e11)
  * from which e11 and e10e01 follow in closed form.
  */
+/** Whether two sweeps sampled the same frequencies, to within rounding. */
+export function sameFrequencies(a: readonly MeasuredPoint[], b: readonly MeasuredPoint[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((p, i) => Math.abs(p.fMHz - b[i]!.fMHz) <= Math.max(p.fMHz, b[i]!.fMHz) * 1e-9);
+}
+
 export function solveTerms(short: readonly MeasuredPoint[], open: readonly MeasuredPoint[], load: readonly MeasuredPoint[]): ErrorTerms[] {
-  if (short.length !== open.length || open.length !== load.length || load.length === 0) {
+  // Same length is not enough: the terms are solved point by point, so a short swept over
+  // one range and an open over another would be combined into corrections that mean
+  // nothing, while looking calibrated.
+  if (load.length === 0 || !sameFrequencies(short, open) || !sameFrequencies(open, load)) {
     throw new Error('The three standards must be swept over the same frequencies.');
   }
   const terms: ErrorTerms[] = [];

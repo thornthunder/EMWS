@@ -110,6 +110,20 @@ than looked up.
   coil Q, E24 capacitors - so a transmitter low-pass shows its true harmonic rejection and
   passband loss, and an even-order Chebyshev shows the mismatch it really has.
 
+**Share what you measured**: a site with a database can offer the community store —
+entirely optional, and EMWS works identically without one.
+
+- Register a callsign and a password (plus an email if you want password-reset codes,
+  on sites whose operator set mail up - it is used for that and nothing else), keep your
+  measured cores on the site, and share the ones you choose **dedicated CC0**, so anyone
+  may use them.
+  Sharing is the licence answer: nobody may republish a manufacturer's curves, but your
+  own measurement of your own core is yours to give away.
+- What others shared appears in the balun tool's core bin at a click, named with its
+  measurer, and imports through the same sweep-is-truth path as a profile file.
+- Nothing leaves your browser unless you sign in and share; browsing needs no account.
+  Hosting it: [docs/community-store.md](docs/community-store.md).
+
 **Measure it with a NanoVNA**: every tool that takes a measurement can take it straight
 from the instrument, over USB, using the browser's Web Serial API - no driver, no
 program in between.
@@ -157,7 +171,7 @@ npm run dev        # http://localhost:5173
 | `npm test` | Runs real antenna models through the real engine and checks the physics |
 | `npm run build` | Type-checks, then writes the deployable site to `dist/` |
 | `npm run preview` | Serves `dist/` locally, exactly as built |
-| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --lc` drives the coil, trap and filter tabs, checks the numbers, and follows a trap into the Antenna Modeler; `-- --page "#/guides"` checks any other page |
+| `npm run smoke` | Opens the built site in headless Edge/Chrome and checks that it solves a model. `-- --edit` drives the antenna editor with real mouse and keyboard input; `-- --smith` builds a matching network; `-- --balun` winds a transformer by dragging the wire round the core; `-- --solver` sends the model to the site's own solver and checks it comes back the same (add `--solver-url http://127.0.0.1:8073` to test a service on this machine too); `-- --vna` plugs a simulated NanoVNA into the page and measures with it from all three tools; `-- --lc` drives the coil, trap and filter tabs, checks the numbers, and follows a trap into the Antenna Modeler; `-- --community` walks two visitors through sharing a measured core (needs the base served by PHP with a database, see docs/community-store.md); `-- --page "#/guides"` checks any other page |
 | `npm run build:engine` | Recompiles nec2c to WebAssembly ([needs Emscripten](docs/building-the-engine.md)) |
 
 ## Hosting it
@@ -228,6 +242,8 @@ tests/                    engine, parser and maths tests
 scripts/                  engine build, IIS deploy, browser smoke test
 public/web.config         IIS configuration, copied into dist/
 public/solver/index.php   optional proxy to a NEC service (docs/solver-service.md)
+public/community/index.php  optional community store: accounts and CC0-shared measurements
+                          (docs/community-store.md)
 ```
 
 ## Know the limits

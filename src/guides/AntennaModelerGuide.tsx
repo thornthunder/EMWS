@@ -171,16 +171,16 @@ export function AntennaModelerGuide() {
       </p>
       <ul>
         <li>
-          <strong>Green, ✓ Within range</strong>: the core stays under 40 °C above the surrounding air and under half of
-          saturation.
+          <strong>Green, ✓ Within expected range</strong>: the core stays under 40 °C above the surrounding air and under
+          half of saturation.
         </li>
         <li>
           <strong>Orange, ! Risk of thermal runaway</strong>: 40 to 80 °C above the air, or half to nine-tenths of
           saturation. Ferrite's loss changes as it heats, so a core running this warm can keep getting warmer.
         </li>
         <li>
-          <strong>Red, ✕ Will burn out</strong>: 80 °C or more above the air, or nine-tenths of saturation. On a warm day
-          that is hotter than a ferrite core should ever be.
+          <strong>Red, ✕ Likely to burn out</strong>: 80 °C or more above the air, or nine-tenths of saturation. On a warm
+          day that is hotter than a ferrite core should ever be.
         </li>
       </ul>
       <p>

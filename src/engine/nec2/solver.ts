@@ -15,7 +15,7 @@
 // the same way and a remote one cannot quietly change how results are interpreted.
 // A service that does not offer solve-batch is used one deck at a time instead.
 
-import { Nec2Client, recommendedWorkers } from './client';
+import { Nec2Client, SimulationCancelled, recommendedWorkers } from './client';
 import { parseNec2Output } from './parse-output';
 import type { Nec2Run } from './types';
 
@@ -58,6 +58,13 @@ export function engineFor(info: SolverInfo, kind: string): SolverEngine | undefi
 
 export interface SolveOptions {
   onProgress?: (done: number, total: number) => void;
+  /**
+   * At most this many solves at once. The caller knows the model's size and worked this
+   * out against the memory budget (recommendedWorkers with the segment count); a solver
+   * recalculating it here would not know the segments and would overshoot. A remote
+   * solver ignores it - its machine, its budget.
+   */
+  workers?: number;
 }
 
 export interface Solver {
@@ -143,10 +150,12 @@ export function describeChoice(choice: SolverChoice): string {
   }
 }
 
-class LocalSolver implements Solver {
+/** Exported for its tests; everything else reaches it through createSolver. */
+export class LocalSolver implements Solver {
   readonly choice: SolverChoice = { kind: 'local' };
   readonly label = 'this browser';
-  private readonly client = new Nec2Client();
+
+  constructor(private readonly client: Pick<Nec2Client, 'simulate' | 'simulateAll' | 'cancel'> = new Nec2Client()) {}
 
   async describe(): Promise<SolverInfo> {
     return {
@@ -164,7 +173,7 @@ class LocalSolver implements Solver {
   solveAll(decks: readonly string[], options: SolveOptions = {}): Promise<Nec2Run[]> {
     return this.client.simulateAll(decks, {
       onProgress: options.onProgress,
-      workers: recommendedWorkers(decks.length),
+      workers: options.workers ?? recommendedWorkers(decks.length),
     });
   }
 
@@ -270,7 +279,10 @@ class RemoteSolver implements Solver {
       if (e instanceof SolverUnavailable) throw e;
       const name = e instanceof Error ? e.name : '';
       if (name === 'TimeoutError') throw new SolverUnavailable('The solver did not answer in time.');
-      if (name === 'AbortError') throw new SolverUnavailable('That solve was cancelled.');
+      // Only cancel() aborts this controller, so an AbortError is always the person
+      // stopping the run - not the solver letting them down. Classing it as unavailable
+      // once made cancelling a remote solve START a local one, via the fallback.
+      if (name === 'AbortError') throw new SimulationCancelled();
       throw new SolverUnavailable(
         `Could not reach the solver. ${e instanceof Error ? e.message : String(e)} ` +
           `Check that it is running, and that this page is allowed to connect to it.`,

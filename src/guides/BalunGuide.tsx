@@ -297,6 +297,30 @@ export function BalunGuide() {
         would only be a guess.
       </p>
 
+      <h2>Sharing what you measured</h2>
+      <p>
+        Some sites hosting EMWS offer a <strong>community store</strong>; if the one you are on does, a{' '}
+        <em>Community</em> section appears at the bottom of the panel (and if not, everything else works exactly the
+        same — EMWS never needs an account). Register a callsign and a password; on a site that can send email you may
+        add an address too, used for password-reset codes and nothing else. Skip it — or register on a site without
+        mail — and there is no reset, so pick a password you will keep. Signed in, you can keep your measured cores on
+        the site, and share the ones you choose.
+      </p>
+      <p>
+        Sharing always goes through one honest step: dedicating the measurement to the <strong>public domain
+        (CC0 1.0)</strong>. That is what makes the whole thing possible. Nobody may pass around a manufacturer's
+        datasheet curves, but a sweep you made of a core in your own hand is yours, and once you give it away anyone
+        may design on it. Your callsign is shown beside what you shared, and you can stop sharing or delete it at any
+        time; copies others already imported stay theirs, as public domain means.
+      </p>
+      <p>
+        What others shared sits under <em>Shared by the community</em> — no account needed to look. <em>Add to my
+        cores</em> puts one in your bin, named with its measurer, and it behaves exactly like a core you measured
+        yourself: the raw sweep is what travels, and the tool re-derives everything from it. The usual caution applies
+        twice over — a measurement describes the core that was measured, wound as it was measured, and someone else's
+        FT240 in #43 is close to yours, not identical.
+      </p>
+
       <h2>Working with the other tools</h2>
       <p>
         Model your antenna in the <a href="#/antenna">Antenna Modeler</a> — an end-fed half-wave, a few thousand
