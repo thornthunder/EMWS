@@ -86,6 +86,14 @@ delete them from a normal shell.
   skipped, integer fields reject decimals, 132-char line buffer.
 - `src/tools/<tool>/` - one folder per tool; `src/ui/` - shared SVG plots (no chart library).
 - Routing is hash-based and `base: './'` on purpose: no IIS URL Rewrite, works in any sub-folder.
+- **Tools are lazy chunks** (`App.tsx`: `React.lazy` + one `Suspense`). The main bundle is
+  React + home + guides; each tool is fetched on first open. Measured 2026-10-04: main chunk
+  579 -> 322 kB, modeler 129 kB, balun 49 kB, toolbox 35 kB, and the 500 kB warning is gone.
+  The fallback renders no `h1`: the smoke waits for `h1` to know a page is up. **After a
+  hash navigation the old page stays on screen until the new chunk arrives**, so a smoke
+  step must wait for the destination's own `h1` (or a selector only it has), never for
+  something both pages have - `--vna` once passed its "modeler solved" wait on the Smith
+  chart's summary cards.
 - **Two engine builds, picked at runtime.** `build:engine` emits `nec2c.{mjs,wasm}` and
   `nec2c-simd.{mjs,wasm}` from the same sources (`-O3 -fcx-limited-range`, plus `-msimd128`
   for the second); all four are generated but committed. `supportsWasmSimd()` in `run.ts`
@@ -136,6 +144,31 @@ delete them from a normal shell.
   within a few ohms and percent, and `npm run smoke -- --lc` sees the same 90.8 % in the browser.
 - The coil tool hands a coil or trap over through `emws.handoff.load` (`src/lib/handoff.ts`);
   the panel's Loads section offers it for the selected wire and reads it once per mount.
+- **Radial screens and materials** (2026-10-04, all MEASURED on nec2c before a word was
+  written): nec2c REFUSES a radial screen with Sommerfeld ("MAY NOT BE USED WITH SOMMERFELD
+  GROUND OPTION"), so `validate.ts` errors and the panel forces the reflection method. With a
+  screen, the feed impedance equals the perfect-ground figure EXACTLY and the screen's count,
+  radius and wire radius change nothing at all (1-120 radials, 2-40 m: identical to the last
+  digit); the soil moves only the far field. A wire ending at z=0 on real ground WITHOUT a
+  screen gives nonsense (267 - j770 Ω): `validate.ts` warns. Never write guide text implying
+  NEC-2 can size a radial system. `Ground.real.screen` <-> GN I2 + F3/F4; `Wire.conductivity`
+  <-> `LD 5 tag 0 0 σ` (tag 0 = every wire); partial-wire LD 5 stays in extraCards.
+  `WIRE_MATERIALS`: copper 5.95e7 (1/COPPER_OHM_M, consistent with the balun and coil tools),
+  aluminium 3.5e7, brass 1.5e7, stainless 1.4e6, steel as σ/μr with μr 200 - labelled an
+  estimate. Measured efficiencies for the 2 mm vertical: copper 98.43 %, aluminium 97.91 %,
+  steel 59.8 %. `tests/ground.test.ts` holds all of it.
+- **Tuning** (`tune.ts`): one variable (wire length from an end or about the middle, with
+  junctions following; height = min z of all ends; one field of one load), one goal
+  (resonance, swr, swr-band over the model's sweep, gain, front-to-back). `minimise1D` is a
+  9-point scan then golden section, cached by value - the scan is what survives a goal with
+  two dips (tested on paper). Each trial is `deckFor()` = one frequency, no pattern unless
+  the goal needs one, and then a 10° sphere. The page runs it through `withSolver`, so remote
+  solvers, fallback and Cancel all behave; the result is ONE undo step applied to whatever the
+  model is by then. `atEdge` (within 2% of the range) and `truncated` are reported in words,
+  never hidden. Engine tests find a 20 m dipole's length and a short dipole's loading coil.
+- **Ratings** (`ratings.ts`): NEC's segment currents are peak phasors and its power is average
+  (½ Re V I*), so volts are reported peak and current RMS; everything scales by
+  sqrt(P / inputW). A test holds the one-load case to NEC's own structure-loss figure.
 - Ids come from `newId()` (session-prefixed counter): `crypto.randomUUID` is unavailable on
   plain-HTTP origins like http://emws.local.
 - `npm run smoke -- --edit` drives the editor with real mouse/keyboard via CDP (drag, undo,
@@ -225,8 +258,57 @@ delete them from a normal shell.
   chart (moved out of the balun tool; `marks` draws vertical guides such as the cutoff and 2×, 3×).
 - The guide is `src/guides/CoilsGuide.tsx`; it states no regulatory or voltage figures, on
   purpose. `npm run smoke -- --lc` drives all three tabs and checks the numbers.
-- Not yet: a "tune the coil to resonance" search and trap voltages at a given power in the
-  modeler, band-pass, coax traps, capacitor voltage and coil current ratings.
+- Not yet: band-pass filters, coax traps. (Tuning a coil to resonance and load ratings at a
+  power now live in the Antenna Modeler.)
+
+### RF toolbox (`src/tools/toolbox/`)
+
+- Five tabs of pure maths, no solver; state in `emws.toolbox.v1`. Each module is held to
+  closed forms in `tests/toolbox.test.ts`: `wavelength.ts` (c/f, electrical length,
+  `HALF_WAVE_RULES` - free space 149.9/f, MEASURED 145.5/f for 2 mm wire via Tune, folklore
+  142.65/f), `coax.ts`, `attenuator.ts`, `levels.ts`. SWR conversions live in `src/lib/rf.ts`.
+- **No cable datasheet is copied.** `CATALOGUE` is nominal MIL-C-17 dimensions + dielectric;
+  loss is CALCULATED (skin effect in smooth solid copper + tan δ) and is a FLOOR - a braided,
+  stranded cable loses more (RG-213 at 100 MHz computes 4.1 dB/100 m in the conductors; makers
+  quote more). The UI says "at least" and offers "From its datasheet": two points fitted
+  exactly to k1√f + k2 f. `runLoss()` is the classic (a² − ρ²)/(a(1 − ρ²)): 1 dB matched +
+  SWR 3 = 1.504 dB total (a first hand figure of 1.295 was wrong; the test pins the formula).
+  Every catalogue entry's geometry must give Z0 within 12 % of nominal (stranded centres read
+  low) - that test catches a typo in a dimension.
+- `attenuator.ts`: closed-form Pi/T for any z1→z2; `minimumLossDb` (5.72 dB for 75↔50), at
+  which the pad IS the L pad - the Pi drops its HIGH-side shunt, the T its low-side series arm.
+  `evaluatePad` analyses the circuit as built, so an E24 pad reports its real dB, match and
+  heat (a 10 dB Pi built as 100/68/100 is 9.63 dB). Dissipations + load = power in, by test.
+- `levels.ts`: IARU R.1 S-meter (S9 = −73 dBm HF, −93 VHF, 6 dB/unit); −73 dBm is 50.06 µV
+  and 50.1 pW. Field strength is √(30P)/d, free-space far field; the page states NO
+  regulatory limits, on purpose.
+- Guide `src/guides/ToolboxGuide.tsx`; `npm run smoke -- --toolbox` drives all five tabs.
+
+### Field sandbox (`src/tools/fdtd/`)
+
+- `simulation.ts` is a 2-D FDTD engine, TMz (Ez out of the screen), Yee grid, leapfrog,
+  Berenger split-field PML (polynomial grading m = 3, R0 = 1e-8), Courant 0.7 (< 1/√2),
+  Float32 arrays, nothing allocated per step. Written from the textbook equations (Yee,
+  Berenger, Taflove); no other program's source was read. Sources are soft (added to both
+  split halves): a Ricker pulse (zero mean) or a sine ramped over two periods.
+- **The scene is the source of truth** (`scene.ts`, metres, y up; `src/lib/history.ts` is
+  the generic undo the modeler's `history.ts` now wraps). `rasterise()` paints shapes into
+  per-cell εr/σ/PEC, later shapes over earlier; the PML sits OUTSIDE the drawn world. Any
+  edit rebuilds the engine from t = 0 - say so in UI text ("the scene is the simulation").
+- `tests/fdtd.test.ts` holds the engine to physics: pulse peak arrives at d/c (±0.15 ns at
+  30 cells/λ), grid wavelength = c/f within 3 %, PEC reflection inverted with the round-trip
+  delay, εr = 4 doubles the travel time (±7 %), PML leaves < 1e-4 of the peak energy where a
+  PEC box keeps > 0.3, 3000 steps stay finite. Two-dimensional sources spread as 1/√r and
+  leave a slow "afterglow" tail - a 2-D fact, not a bug.
+- Honest limits the guide states: a cross-section (every object infinitely long into the
+  screen), fields relative to a source of 1 (never V/m), numerical dispersion below ~10
+  cells/λ (`limits()` warns), no currents/impedances/patterns. Painting: diverging
+  series-2 blue ↔ surface ↔ series-3 orange for Ez, one-hue green for the envelope (recent
+  peak, decay 0.998/step), conductors in ink, dielectrics tinted. React state updaters run
+  LATER: compute a rate before resetting its counters, not inside `setStatus`.
+- `npm run smoke -- --fdtd` plays a scene, checks both signs are painted and the wall is
+  ink, draws a sheet with real mouse input, undoes it with Ctrl+Z, buries a source and reads
+  the warning. Guide: `src/guides/FieldSandboxGuide.tsx`.
 
 ### Community store (`public/community/index.php`, `src/lib/community.ts`)
 

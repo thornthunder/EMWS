@@ -1,11 +1,18 @@
+import { Suspense, lazy } from 'react';
 import { About } from './pages/About';
 import { GuidePage, GuidesIndex } from './pages/Guides';
 import { Home } from './pages/Home';
 import { useHashPath } from './router';
-import { AntennaModeler } from './tools/antenna-modeler/AntennaModeler';
-import { BalunTool } from './tools/balun/BalunTool';
-import { LcTool } from './tools/lc/LcTool';
-import { SmithTool } from './tools/smith-chart/SmithTool';
+
+// Each tool is its own chunk, fetched the first time its page opens: the home page and the
+// guides need none of the solver, the Smith chart or the balun maths. The engine's WASM
+// is fetched by the worker separately, as before.
+const AntennaModeler = lazy(() => import('./tools/antenna-modeler/AntennaModeler').then((m) => ({ default: m.AntennaModeler })));
+const SmithTool = lazy(() => import('./tools/smith-chart/SmithTool').then((m) => ({ default: m.SmithTool })));
+const BalunTool = lazy(() => import('./tools/balun/BalunTool').then((m) => ({ default: m.BalunTool })));
+const LcTool = lazy(() => import('./tools/lc/LcTool').then((m) => ({ default: m.LcTool })));
+const ToolboxTool = lazy(() => import('./tools/toolbox/ToolboxTool').then((m) => ({ default: m.ToolboxTool })));
+const FdtdTool = lazy(() => import('./tools/fdtd/FdtdTool').then((m) => ({ default: m.FdtdTool })));
 
 const NAV = [
   { path: '/', label: 'Home' },
@@ -13,9 +20,16 @@ const NAV = [
   { path: '/smith', label: 'Smith Chart' },
   { path: '/balun', label: 'Baluns' },
   { path: '/lc', label: 'Coils & Filters' },
+  { path: '/toolbox', label: 'Toolbox' },
+  { path: '/fdtd', label: 'Fields' },
   { path: '/guides', label: 'Field Guides' },
   { path: '/about', label: 'About' },
 ];
+
+/** Shown while a tool's chunk loads: no heading, so nothing reads as the page before it is. */
+function Loading() {
+  return <p className="muted loading-tool">Loading the tool…</p>;
+}
 
 function Page({ path }: { path: string }) {
   if (path === '/guides') return <GuidesIndex />;
@@ -32,6 +46,10 @@ function Page({ path }: { path: string }) {
       return <BalunTool />;
     case '/lc':
       return <LcTool />;
+    case '/toolbox':
+      return <ToolboxTool />;
+    case '/fdtd':
+      return <FdtdTool />;
     case '/about':
       return <About />;
     default:
@@ -69,7 +87,9 @@ export function App() {
         </nav>
       </header>
       <main>
-        <Page path={path} />
+        <Suspense fallback={<Loading />}>
+          <Page path={path} />
+        </Suspense>
       </main>
       <footer className="site-footer">
         EMWS by ZR1JT · public domain (<a href="#/about">Unlicense / CC0</a>) · everything runs in your

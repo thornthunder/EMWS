@@ -256,6 +256,37 @@ export function AntennaModelerGuide() {
         it will not change.
       </p>
 
+      <h3>Standing a wire on real ground: the radial screen</h3>
+      <p>
+        NEC-2 cannot connect a wire to a lossy ground. Put the base of a vertical at Z = 0 over <em>Real ground</em> and
+        the feed impedance it reports - hundreds of ohms, wildly reactive - is an artefact, and the checks say so. The
+        way through is the <strong>radial screen</strong>: under <em>Connection to ground</em> choose it, and NEC treats
+        the base as connected to the ground through a screen of radials centred on the origin (so the vertical must stand
+        at X = 0, Y = 0). nec2c only allows this with the reflection-coefficient method, and the tool switches to it for
+        you.
+      </p>
+      <p>
+        Now the honest part, measured with this very engine. <strong>The screen's number of radials, their length and
+        their wire size change nothing in nec2c's answer</strong> - 1 radial or 120, 2 m or 40 m, the feed impedance and
+        the gain came out identical to the last digit. The base simply behaves as it would over perfect ground (36.6 Ω
+        for the <em>Quarter-wave vertical, 40 m, radials</em> example, the same figure as the perfect-ground example),
+        and what the real soil does change is the far field: about −0.1 dBi at 25° elevation over average ground against
+        5.1 dBi at the horizon over perfect ground. So the model will tell you what the soil does to your pattern, and it
+        will <em>not</em> tell you how many radials to lay or how much a thin radial system loses; that is beyond NEC-2,
+        and the sixteen radials in the example are a label, not a result.
+      </p>
+
+      <h3>What the wire is made of</h3>
+      <p>
+        Under each wire's properties, <em>Material</em> gives it a conductivity (copper, aluminium, brass, stainless, or
+        your own figure). NEC then counts the wire's own loss, and the efficiency card stops reading 100 %: the example
+        vertical loses 1.6 % in its 2 mm copper, aluminium a little more. Magnetic steel is a special case - NEC's loss
+        formula knows conductivity but not permeability, so <em>Steel wire</em> uses the conductivity that gives the same
+        surface resistance for a middling permeability of 200; real steel varies widely, and this is the one material
+        where the figure is an estimate rather than a constant. New wires are perfect conductors, as in NEC itself, until
+        you say otherwise.
+      </p>
+
       <h2>Where the solving happens</h2>
       <p>
         By default your models are solved <strong>in this browser</strong>, by the same NEC-2 engine compiled to
@@ -407,6 +438,39 @@ export function AntennaModelerGuide() {
         to 3.65 MHz: now each trap is only its 8.2 µH, the whole 35 m is in circuit and resonant where 39 m of plain wire
         would be, at 47 − j2 Ω, and the traps cost under 2 %. Raise the coil Q in the trap and watch the 40 m efficiency
         follow it; that is the number to spend money on.
+      </p>
+
+      <h2>Tune it for me</h2>
+      <p>
+        The modeller tells you what a wire does; usually what you want to know is how long it must be. The{' '}
+        <em>Tune</em> section under the loads turns the one question into the other. Choose one thing to change - the
+        length of a wire (stretched about its middle, or from one end, with whatever is joined to that end coming
+        along), the height of the whole antenna, or a part of a load such as a trap's capacitor or a loading coil's
+        inductance - give it a range, say what you want (resonance, the lowest SWR at a frequency or across the sweep,
+        the most gain, the best front-to-back) and press <em>Tune</em>.
+      </p>
+      <p>
+        Every trial is a real NEC solve, so the answer is the model's, not a formula's. The search scans the range
+        coarsely first, so a goal with two dips picks the deeper one, then closes in; it reports what it set, the result,
+        and how many solves it took. Two things it will tell you honestly: when the best value is at the edge of the
+        range (the real answer is probably outside it - widen the range and tune again), and when it ran out of solves
+        before settling. The change lands as one undo step, so <kbd>Ctrl</kbd>+<kbd>Z</kbd> puts the antenna back.
+      </p>
+      <p>
+        Try it on the <em>Dipole, 20 m, free space</em> example: tune the length of wire 1 until it is resonant at 14.2
+        MHz. It lands a little over 10 m - a half wave of 2 mm wire, shortened the few percent that a real wire's
+        thickness shortens it - and the feed reads a fraction of an ohm of reactance. Then shorten the dipole to 7 m, put
+        a coil at its centre, and tune the coil's L for resonance instead: that is how a loaded antenna is designed.
+      </p>
+
+      <h2>What the loads must survive</h2>
+      <p>
+        A trap at its own resonance sits at a current node with the antenna's end voltage across it; a loading coil
+        near the feed carries nearly the feed current. Whether the capacitor lives and the coil stays cool depends on
+        the power, and NEC already knows everything else. With loads in the model, a panel under the results, <em>What
+        the loads must survive</em>, takes the power you type and lists each load's current, the peak volts across it and
+        the watts it turns into heat, scaled from NEC's own currents. Peak volts are what a capacitor is rated for; the
+        heat is the average for a steady carrier, so speech and CW run cooler. Change the power and the numbers follow.
       </p>
 
       <h2>Compare with the real antenna</h2>

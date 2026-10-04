@@ -39,6 +39,10 @@ export function View3D({ scene, size, selection, onSelect }: View3DProps) {
   const bounds = useMemo(() => {
     const pts = scene.lines.flatMap((l) => [l.a, l.b]);
     if (scene.ground && pts.length > 0) pts.push({ ...pts[0]!, z: 0 });
+    if (scene.screen) {
+      const r = scene.screen.radiusM;
+      pts.push({ x: r, y: 0, z: 0 }, { x: -r, y: 0, z: 0 }, { x: 0, y: r, z: 0 }, { x: 0, y: -r, z: 0 });
+    }
     if (pts.length === 0) return { centre: { x: 0, y: 0, z: 0 }, radius: 1 };
     const lo = { x: Infinity, y: Infinity, z: Infinity };
     const hi = { x: -Infinity, y: -Infinity, z: -Infinity };
@@ -126,6 +130,14 @@ export function View3D({ scene, size, selection, onSelect }: View3DProps) {
       onPointerCancel={() => (drag.current = undefined)}
     >
       {ground && <polygon points={ground} className="ground-disc" />}
+      {scene.screen &&
+        Array.from({ length: Math.min(72, scene.screen.radials) }, (_, i) => {
+          const spokes = Math.min(72, scene.screen!.radials);
+          const a = (2 * Math.PI * i) / spokes;
+          const [x1, y1] = place({ x: 0, y: 0, z: 0 });
+          const [x2, y2] = place({ x: scene.screen!.radiusM * Math.cos(a), y: scene.screen!.radiusM * Math.sin(a), z: 0 });
+          return <line key={`radial${i}`} x1={x1} y1={y1} x2={x2} y2={y2} className="radial" />;
+        })}
       {lines.map(({ line, x1, y1, x2, y2 }) => (
         <line
           key={line.key}

@@ -17,7 +17,9 @@ import { saveImpedanceHandoff } from '../../lib/handoff';
 import type { Complex } from '../../lib/complex';
 import { DEFAULT_Z0, formatImpedance, returnLossDb, swr } from '../../lib/rf';
 import { Pattern3D } from './Pattern3D';
+import { loadName, loadRatings } from './ratings';
 import { type RadioSide, type ThroughOption, balunStrain, radioSide, throughOptions } from './through';
+import { type TuneRequest, applyVariable, describeVariable, formatTunedValue, tune } from './tune';
 import { PolarPlot } from '../../ui/PolarPlot';
 import { SweepChart } from '../../ui/SweepChart';
 import { deckToModel, modelToDeck, planRuns } from './deck';
@@ -206,6 +208,9 @@ export function AntennaModeler() {
   const [deckDraft, setDeckDraft] = useState<string | null>(null);
   const [solverChoice, setSolverChoice] = useState<SolverChoice>(loadSolverChoice);
   const [fallbackNote, setFallbackNote] = useState<string>();
+  /** Transmit power the load ratings are worked out for. */
+  const [powerW, setPowerW] = useState(100);
+  const [tuning, setTuning] = useState<{ busy: boolean; progress?: string; note?: string }>({ busy: false });
 
   const client = useRef<Solver | undefined>(undefined);
   /** Always here to fall back on, whatever the chosen solver does. */
@@ -404,6 +409,39 @@ export function AntennaModeler() {
       else void solveMain(runPlan.main, m);
     },
     [solveMain, solveSweep, solvesHere],
+  );
+
+  /** Changes one thing about the model, solve by solve, until the goal is met: one undo step. */
+  const tuneModel = useCallback(
+    (request: TuneRequest) => {
+      const start = model;
+      setTuning({ busy: true, progress: 'starting…' });
+      setPending((p) => p + 1);
+      tune(
+        start,
+        request,
+        (deck) => withSolver((solver) => solver.solve(deck)),
+        (done, best) => {
+          const bestText = best ? formatTunedValue(request.variable, best.value) + ': ' + best.readout : '…';
+          setTuning({ busy: true, progress: done + ' solves · best so far ' + bestText });
+        },
+      )
+        .then((result) => {
+          // Apply the found value to whatever the model is by now, not to a stale copy.
+          dispatch({ type: 'edit', recipe: (m) => (m === start ? result.model : applyVariable(m, request.variable, result.value)) });
+          const edge = result.atEdge ? ' That is at the edge of the range, so the real best is probably beyond it: widen the range and tune again.' : '';
+          const cut = result.truncated ? ' Stopped at the solve limit before settling.' : '';
+          setTuning({
+            busy: false,
+            note: 'Set ' + describeVariable(start, request.variable) + ' to ' + formatTunedValue(request.variable, result.value) + ': ' + result.readout + ', in ' + result.evaluations.length + ' solves.' + edge + cut,
+          });
+        })
+        .catch((e: unknown) => {
+          setTuning({ busy: false, note: e instanceof SimulationCancelled ? 'Tuning stopped; nothing was changed.' : 'Tuning failed: ' + (e instanceof Error ? e.message : String(e)) });
+        })
+        .finally(() => setPending((p) => p - 1));
+    },
+    [model, withSolver, dispatch],
   );
 
   // Re-solve shortly after every edit (not during a drag), while the model is sound.
@@ -614,7 +652,15 @@ export function AntennaModeler() {
         <div className="tab-body">
           {tab === 'model' &&
             (isModel ? (
-              <ModelPanel key={fitKey} model={model} dispatch={dispatch} selection={activeSelection} onSelect={setSelection} />
+              <ModelPanel
+                key={fitKey}
+                model={model}
+                dispatch={dispatch}
+                selection={activeSelection}
+                onSelect={setSelection}
+                z0={z0}
+                tune={{ busy: tuning.busy, progress: tuning.progress, note: tuning.note, run: tuneModel, cancel: cancelSolvers }}
+              />
             ) : (
               <div className="note">
                 <p>
@@ -748,6 +794,7 @@ export function AntennaModeler() {
                 through={through && radioAt ? { name: through.saved.name, powerW: through.saved.design.powerW, ...radioAt } : undefined}
               />
               {frequency.feeds.length > 1 && <FeedTable frequency={frequency} segments={report?.segments ?? []} z0={z0} />}
+              {isModel && model.loads.length > 0 && <LoadRatingsCard model={model} frequency={frequency} powerW={powerW} onPower={setPowerW} />}
               {frequencies.length > 1 && (
                 <SweepChart points={sweep} selected={index} onSelect={setSelectedIndex} z0={z0} measured={measuredSwr} measuredLabel="measured" />
               )}
@@ -997,5 +1044,45 @@ function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throug
         </div>
       )}
     </dl>
+  );
+}
+
+
+/** Volts across, current through and heat in every load, at the power you type. */
+function LoadRatingsCard({ model, frequency, powerW, onPower }: { model: AntennaModel; frequency: FrequencyResult; powerW: number; onPower: (watts: number) => void }) {
+  const ratings = loadRatings(model, frequency, powerW);
+  if (ratings.length === 0) return null;
+  return (
+    <details className="panel ratings" open>
+      <summary>What the loads must survive</summary>
+      <p className="muted">
+        With{' '}
+        <input className="z0" type="number" min={0} step={10} value={powerW} onChange={(e) => onPower(Math.max(0, Number(e.target.value) || 0))} aria-label="Power into the feed point, watts" />{' '}
+        W into the feed point at {frequency.frequencyMHz} MHz. Peak volts are what a capacitor is rated for; the heat is the average for a steady
+        carrier - speech and CW average less.
+      </p>
+      <table className="band-table ratings-table">
+        <thead>
+          <tr>
+            <th scope="col">Load</th>
+            <th scope="col">Where</th>
+            <th scope="col">Current, A rms</th>
+            <th scope="col">Volts, peak</th>
+            <th scope="col">Heat, W</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ratings.map((r) => (
+            <tr key={r.load.id}>
+              <th scope="row">{loadName(r.load)}</th>
+              <td>{r.where}</td>
+              <td>{r.ampsRms.toFixed(2)}</td>
+              <td>{Number.isFinite(r.voltsPeak) ? r.voltsPeak.toFixed(0) : '∞'}</td>
+              <td>{Number.isFinite(r.heatW) ? r.heatW.toFixed(2) : '∞'}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </details>
   );
 }

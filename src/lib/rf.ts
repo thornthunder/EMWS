@@ -38,6 +38,34 @@ export function mismatchLossDb(z: Complex, z0 = DEFAULT_Z0): number {
   return rho >= 1 ? Infinity : -10 * Math.log10(1 - rho * rho);
 }
 
+/** |Γ| for a standing wave ratio: (s - 1) / (s + 1). An infinite SWR is total reflection. */
+export function rhoFromSwr(s: number): number {
+  if (!(s >= 1)) return NaN;
+  return Number.isFinite(s) ? (s - 1) / (s + 1) : 1;
+}
+
+/** Standing wave ratio for a reflection magnitude; Infinity at |Γ| = 1. */
+export function swrFromRho(rho: number): number {
+  if (!(rho >= 0)) return NaN;
+  return rho >= 1 ? Infinity : (1 + rho) / (1 - rho);
+}
+
+/** What a directional wattmeter's two readings mean: |Γ| = sqrt(reflected / forward). */
+export function swrFromPowers(forwardW: number, reflectedW: number): number {
+  if (!(forwardW > 0) || !(reflectedW >= 0)) return NaN;
+  return swrFromRho(Math.sqrt(reflectedW / forwardW));
+}
+
+/** Return loss in dB, as a positive number, for a reflection magnitude. */
+export function returnLossFromRho(rho: number): number {
+  return rho <= 0 ? Infinity : -20 * Math.log10(rho);
+}
+
+/** Power lost to reflection, in dB, for a reflection magnitude. */
+export function mismatchLossFromRho(rho: number): number {
+  return rho >= 1 ? Infinity : -10 * Math.log10(1 - rho * rho);
+}
+
 /** "72.4 + j2.0" - the way hams write an impedance. */
 export function formatImpedance(z: Complex, digits = 1): string {
   const sign = z.im < 0 ? '−' : '+';

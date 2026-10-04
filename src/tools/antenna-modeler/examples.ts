@@ -7,6 +7,7 @@ import dipoleSweep from '../../../examples/dipole-20m-swr-sweep.nec?raw';
 import ocfDipole from '../../../examples/ocf-dipole-windom.nec?raw';
 import trapDipole from '../../../examples/trap-dipole-40-80m.nec?raw';
 import vertical from '../../../examples/vertical-40m-perfect-ground.nec?raw';
+import verticalRadials from '../../../examples/vertical-40m-radials.nec?raw';
 import yagi from '../../../examples/yagi-3el-2m.nec?raw';
 
 export interface Example {
@@ -32,4 +33,5 @@ export const EXAMPLES: Example[] = [
   { id: 'ocf-dipole-windom', label: 'Off-centre-fed dipole (Windom), 4:1 balun', deck: ocfDipole, z0: 200 },
   { id: 'trap-dipole-40-80m', label: 'Trap dipole, 40 and 80 m', deck: trapDipole },
   { id: 'vertical-40m-perfect-ground', label: 'Quarter-wave vertical, 40 m', deck: vertical },
+  { id: 'vertical-40m-radials', label: 'Quarter-wave vertical, 40 m, radials over real ground', deck: verticalRadials },
 ];

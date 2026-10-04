@@ -1911,14 +1911,16 @@ button.danger {
 
 /* ---- Coils, traps and filters ---- */
 
-.lc-tabs {
+.lc-tabs,
+.tool-tabs {
   display: flex;
   gap: 0.25rem;
   margin: 0 0 1rem;
   border-bottom: 1px solid var(--border);
 }
 
-.lc-tab {
+.lc-tab,
+.tool-tab {
   appearance: none;
   background: none;
   border: 0;
@@ -1931,13 +1933,140 @@ button.danger {
   cursor: pointer;
 }
 
-.lc-tab:hover {
+.lc-tab:hover,
+.tool-tab:hover {
   color: var(--text);
 }
 
-.lc-tab[aria-selected='true'] {
+.lc-tab[aria-selected='true'],
+.tool-tab[aria-selected='true'] {
   color: var(--text);
   border-bottom-color: var(--accent);
+}
+
+/* Field sandbox: the canvas the world is painted on, and its tools. */
+.field-figure {
+  margin: 0;
+}
+.field-canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  touch-action: none;
+  cursor: crosshair;
+}
+.field-canvas.tool-select {
+  cursor: pointer;
+}
+.field-legend {
+  margin-top: 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.legend-swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  margin: 0 2px -1px 0;
+  border-radius: 3px;
+}
+.legend-negative {
+  background: var(--series-2);
+}
+.legend-positive {
+  background: var(--series-3);
+}
+.legend-conductor {
+  background: var(--text);
+}
+.tool-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.tool-buttons button[aria-pressed='true'] {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--on-accent);
+  font-weight: 600;
+}
+.run-buttons {
+  margin-bottom: 8px;
+}
+.selected-item {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border-left: 3px solid var(--accent);
+  background: var(--bg);
+}
+.grid-note {
+  font-size: 12px;
+}
+.sandbox .summary dd,
+.sandbox .summary small {
+  white-space: normal;
+}
+
+/* RF toolbox: the attenuator schematic and the dipole-rules table. */
+.pad-figure {
+  display: block;
+  width: 100%;
+  max-width: 420px;
+  height: auto;
+  margin: 0 0 0.75rem;
+}
+.pad-wire,
+.pad-ground {
+  stroke: var(--text);
+  stroke-width: 1.5;
+  fill: none;
+}
+.pad-ground {
+  stroke: var(--muted);
+  stroke-dasharray: 4 3;
+}
+.pad-r {
+  fill: var(--surface);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+}
+.pad-label {
+  font-size: 10px;
+  fill: var(--text);
+}
+/* The toolbox's captions are sentences, so they may wrap; its tables mix figures and prose. */
+.toolbox .summary dd,
+.toolbox .summary small {
+  white-space: normal;
+}
+.rules-table td,
+.rules-table th {
+  white-space: nowrap;
+}
+.rules-table td.origin {
+  white-space: normal;
+  text-align: left;
+  color: var(--muted);
+  font-size: 0.9em;
+}
+.loading-tool {
+  padding: 2rem 0;
+}
+a.button-like {
+  padding: 4px 10px;
+  font-size: 13px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  text-decoration: none;
+}
+a.button-like:hover {
+  border-color: var(--accent);
 }
 
 .build-card {
@@ -2082,4 +2211,23 @@ select.z0.through {
 }
 .community-dedication p {
   margin: 0 0 0.5rem;
+}
+
+/* ---- tuning and ratings ---- */
+
+.tune-note {
+  white-space: normal;
+  line-height: 1.45;
+}
+.ratings p.muted input.z0 {
+  width: 5em;
+}
+
+/* ---- a radial ground screen, drawn as spokes ---- */
+
+.radial {
+  stroke: var(--ground-edge);
+  stroke-width: 1;
+  stroke-dasharray: 4 3;
+  opacity: 0.8;
 }

@@ -1,0 +1,21 @@
+CM 40 m quarter-wave vertical standing on average ground, with a radial screen.
+CM 10.26 m of 2 mm copper wire fed at its base; 16 radials of 10 m in nec2c's radial-screen
+CM approximation (the GN card: 16 radials, 10 m, 1 mm wire radius). The screen is what lets
+CM a wire reach real ground at all: without it nec2c cannot connect the base, and the feed
+CM reads hundreds of ohms of nonsense. With it: 36.6 - j0.2 ohms at 7.1 MHz - the same as
+CM over perfect ground, because that is how nec2c's screen works. The number, length and
+CM thickness of the radials change nothing in its answer (measured here: 1 to 120 radials,
+CM 2 to 40 m, identical to the last digit), so it cannot tell you how many radials to lay.
+CM What the real ground does change is the far field: about -0.1 dBi at 25 degrees
+CM elevation here, against 5.1 dBi at the horizon over perfect ground. The wire is copper
+CM (the LD 5 card), 98.4 % efficient; make it aluminium or steel and watch that fall.
+CM EMWS example by ZR1JT. CC0 1.0 - public domain.
+CE
+GW 1 21 0 0 0 0 0 10.26 0.001
+GE 1
+GN 0 16 0 0 13 0.005 10 0.001
+LD 5 1 0 0 59500000
+FR 0 1 0 0 7.1 0
+EX 0 1 1 0 1.0 0.0
+RP 0 19 72 1000 0 0 5 5
+EN

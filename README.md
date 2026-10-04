@@ -33,8 +33,13 @@ and nothing to abuse. Started by **ZR1JT**.
   runs cool, risks thermal runaway, or will burn out.
 - **Loads in the wires**: loading coils, traps and resistors on any segment, dragged along
   the wire like a feed point, carried in the deck as `LD` cards, and costed - what a trap
-  turns into heat shows in the efficiency. A trap dipole for 40 and 80 m is among the
+  turns into heat shows in the efficiency, and a table gives each load's current, peak
+  volts and heat at the power you type. A trap dipole for 40 and 80 m is among the
   examples, tuned with the engine itself.
+- **Tune it for me**: change one thing - a wire's length, the antenna's height, a coil or a
+  capacitor in a load - until a goal is met: resonance, lowest SWR at a frequency or across
+  a band, most gain, best front-to-back. Every trial is a real solve; it says how many it
+  took and when the answer is at the edge of the range.
 - Peak gain, front-to-back ratio, efficiency. Azimuth and elevation patterns on the
   ARRL log scale, cut automatically through the main lobe of the whole-sphere pattern, and
   the whole pattern in 3-D - drag to turn it - with the antenna drawn at its centre, so the
@@ -42,7 +47,10 @@ and nothing to abuse. Started by **ZR1JT**.
 - Frequency sweeps with an SWR curve; click a point to inspect that frequency. A sweep is
   shared across your processor's cores - measured 6.2 s down to 2.2 s on a four-core
   laptop - and counts the frequencies off as they come in.
-- Free space, perfect ground, and real (Sommerfeld-Norton) ground.
+- Free space, perfect ground, and real (Sommerfeld-Norton) ground - with a radial screen, so
+  a vertical can stand on real ground, and wire materials (copper, aluminium, brass, steel)
+  so efficiency means something. The radial screen is used honestly: measured on this engine,
+  its size changes nothing in nec2c's answer, and the guide says so.
 - Solves in a Web Worker, so the page never freezes. A 3-element Yagi solves in well
   under a tenth of a second.
 - **Compare with the real antenna.** Measure the antenna you built - with a NanoVNA
@@ -110,6 +118,31 @@ than looked up.
   coil Q, E24 capacitors - so a transmitter low-pass shows its true harmonic rejection and
   passband loss, and an even-order Chebyshev shows the mismatch it really has.
 
+**RF toolbox**: the back of the envelope, with the working shown.
+
+- **Wavelength and wire**: wavelength, half and quarter waves, the electrical length of a
+  run of line, and three figures for a dipole's length - the free-space half wave, the
+  length this engine measured for a thin wire (145.5 / f), and the handbook's 468 / f - with
+  the Antenna Modeler's Tune as the real answer.
+- **Coax loss**: the common cable types from their nominal dimensions, with the loss
+  *calculated* (skin effect in solid copper plus the dielectric) and labelled the floor it
+  is; or two lines from your own cable's datasheet, fitted exactly. Matched loss, the extra
+  for the SWR on the line, the SWR the radio sees, and the watts that reach the antenna.
+- **Attenuators**: Pi, T and minimum-loss L pads between any two impedances, then rounded
+  to E24 and analysed as built - real attenuation, match and heat per resistor.
+- **dB, watts and S-units**: dBm, watts, volts, dBµV, the IARU S-meter scale, EIRP and ERP,
+  and the free-space field strength at a distance (no regulatory limits stated).
+- **SWR and return loss**: from an SWR, from a wattmeter's two readings, or from R + jX in
+  any system impedance.
+
+**Field sandbox**: a two-dimensional FDTD world for looking at the physics the other tools
+rest on. Draw conductors, dielectrics and sources, press play, and watch Maxwell's equations
+play out cell by cell: two slits, a parabolic reflector, a corner reflector, a dielectric slab,
+a pair of plates. Honest about what it is - a cross-section, every object infinitely long
+into the screen, fields relative to the source - and held by its tests to the speed of light,
+the right wavelength, reflection from a conductor, slowing in a dielectric and absorption at
+the edges.
+
 **Share what you measured**: a site with a database can offer the community store —
 entirely optional, and EMWS works identically without one.
 
@@ -149,11 +182,8 @@ NEC2 by 5B4AZ, compiled unmodified to WebAssembly. Its results are checked again
 antenna theory by the test suite: a resonant half-wave dipole comes out at 72 Ω and
 2.14 dBi, a quarter-wave vertical over perfect ground at 37.6 Ω and 5.16 dBi.
 
-**Planned**: a "tune the coil to resonance" search and trap voltages at your power in the
-antenna editor · wire materials · Ruthroff transformers in the balun tool · band-pass filters
-and coax traps · RF toolbox (wire lengths, coax loss, L and Pi networks) · a 2-D
-FDTD field sandbox · loads and wire materials in the antenna editor · Pi and T networks
-and a tuning optimiser in the Smith chart.
+**Planned**: Ruthroff transformers in the balun tool · band-pass filters and coax traps · Pi
+and T networks and a tuning optimiser in the Smith chart.
 
 ## Quick start
 

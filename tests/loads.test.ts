@@ -145,13 +145,15 @@ describe('loads in the deck', () => {
   });
 
   it('leaves the LD forms it does not model exactly as written', () => {
-    const kept = ['LD 5 1 0 0 58000000', 'LD 0 1 2 4 0 0.000001 0', 'LD 2 1 0 0 0 0.000001 0', 'LD -1'];
-    const deck = ['CE', 'GW 1 5 0 -1 0 0 0 0 0.001', 'GE 0', ...kept, 'LD 0 1 3 3 0 0.000002 0', 'FR 0 1 0 0 14 0', 'EX 0 1 3 0 1 0', 'XQ', 'EN'].join('\n');
+    // A whole-wire LD 5 is the wire's material (tests/ground.test.ts); these three are not modelled and travel verbatim.
+    const kept = ['LD 0 1 2 4 0 0.000001 0', 'LD 2 1 0 0 0 0.000001 0', 'LD -1'];
+    const deck = ['CE', 'GW 1 5 0 -1 0 0 0 0 0.001', 'GE 0', 'LD 5 1 0 0 58000000', ...kept, 'LD 0 1 3 3 0 0.000002 0', 'FR 0 1 0 0 14 0', 'EX 0 1 3 0 1 0', 'XQ', 'EN'].join('\n');
     const model = imported(deck);
     expect(model.extraCards).toEqual(kept);
+    expect(model.wires[0]!.conductivity).toBe(5.8e7);
     expect(model.loads).toHaveLength(1);
     const out = modelToDeck(model);
-    for (const card of kept) expect(out).toContain(card);
+    for (const card of [...kept, 'LD 5 1 0 0 58000000']) expect(out).toContain(card);
   });
 
   it('refuses a load on a segment that does not exist, saying which', () => {

@@ -47,6 +47,10 @@ const smithTest = args.includes('--smith');
 const balunTest = args.includes('--balun');
 /** Drive the coil, trap and filter tabs and check the numbers against the closed forms. */
 const lcTest = args.includes('--lc');
+/** Drive the five RF toolbox tabs and check the figures against the closed forms. */
+const toolboxTest = args.includes('--toolbox');
+/** Play a scene in the field sandbox, draw into it with the mouse, undo, and check the checks. */
+const fdtdTest = args.includes('--fdtd');
 /**
  * Two people sharing a measured core through a site's community store. The base URL must
  * be served by PHP with EMWS_DB_DSN set - e.g. php -S 127.0.0.1:8090 -t dist - because a
@@ -64,7 +68,7 @@ const solverTest = args.includes('--solver');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : communityTest ? '#/balun' : undefined);
+const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : toolboxTest ? '#/toolbox' : fdtdTest ? '#/fdtd' : communityTest ? '#/balun' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -573,6 +577,273 @@ async function runLcTest({ evaluate, send, log }) {
 }
 
 
+/** Drives the five RF toolbox tabs and checks the figures against the closed forms. */
+async function runToolboxTest({ evaluate, send, log }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`Toolbox test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const click = async (selector, text) => {
+    const done = await evaluate(`(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => ${text === undefined ? 'true' : `e.textContent.trim().startsWith(${JSON.stringify(text)})`});
+      if (!el) return false;
+      el.click();
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  const choose = async (label, value) => {
+    const done = await evaluate(`(() => {
+      const select = [...document.querySelectorAll('select')].find((s) => s.closest('label')?.textContent.includes(${JSON.stringify(label)}));
+      if (!select) return false;
+      const option = [...select.options].find((o) => o.textContent.includes(${JSON.stringify(value)}));
+      if (!option) return false;
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  const until = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  /** Types into a number field and presses Enter, as a person does. */
+  const typeNumber = async (label, text) => {
+    const focused = await evaluate(`(() => {
+      const input = [...document.querySelectorAll('label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    })()`);
+    if (!focused) return false;
+    await send('Input.insertText', { text: String(text) });
+    for (const type of ['keyDown', 'keyUp']) {
+      await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+    }
+    await sleep(250);
+    return true;
+  };
+  const state = async () =>
+    JSON.parse(
+      await evaluate(`JSON.stringify({
+        tab: document.querySelector('.tool-tab[aria-selected="true"]')?.textContent.trim() ?? null,
+        panels: [...document.querySelectorAll('.workspace > .panel')].map((p) => ({
+          title: p.querySelector('.results-title')?.textContent.trim() ?? null,
+          summary: Object.fromEntries([...p.querySelectorAll('.summary > div')].map((d) =>
+            [(d.querySelector('dt')?.textContent ?? '').trim(), (d.querySelector('dd')?.textContent ?? '').trim()])),
+        })),
+        build: document.querySelector('.build-card')?.textContent ?? '',
+        rules: document.querySelectorAll('.rules-table tbody tr').length,
+        parts: [...document.querySelectorAll('.parts-table tbody tr')].map((r) => [...r.children].map((c) => c.textContent.trim())),
+        drawn: document.querySelectorAll('.pad-figure rect.pad-r').length,
+        charts: document.querySelectorAll('figure.chart').length,
+        issues: [...document.querySelectorAll('.issue-text')].map((e) => e.textContent),
+      })`),
+    );
+
+  // Start from the shipped figures whatever an earlier visit left behind. The tool is its
+  // own chunk now, so wait for it to arrive after the reload.
+  await evaluate(`(localStorage.removeItem('emws.toolbox.v1'), location.reload())`);
+  check(await until(`document.querySelector('.tool-tab') !== null && document.querySelectorAll('.summary > div').length > 0`, 15_000), 'the toolbox loads');
+
+  // ---- wavelength and wire ----
+  let now = await state();
+  check(now.tab === 'Wavelength & wire', `opens on the wavelength tab: ${now.tab}`);
+  check(now.panels[0]?.title === '21.112 m at 14.2 MHz', `20 m is 21.112 m: ${now.panels[0]?.title}`);
+  check(/^3\.48[34] m/.test(now.panels[0]?.summary['Quarter wave of that line'] ?? ''), `a quarter wave of VF 0.66 line: ${now.panels[0]?.summary['Quarter wave of that line']}`);
+  check(now.rules === 3, 'three figures for the dipole, not one');
+  check(await click('.band-buttons button', '40 m'), '40 m');
+  now = await state();
+  check(now.panels[0]?.title === '42.224 m at 7.1 MHz', `and 40 m is 42.224 m: ${now.panels[0]?.title}`);
+
+  // ---- coax ----
+  check(await click('.tool-tab', 'Coax loss'), 'Coax loss');
+  now = await state();
+  const coax = now.panels[0];
+  check((coax?.title ?? '').startsWith('At least ') && (coax?.title ?? '').includes('lost in 30 m of RG-58'), `the catalogue cable is a floor: ${coax?.title}`);
+  const radioSwr = parseFloat(coax?.summary['SWR at the radio'] ?? 'NaN');
+  check(radioSwr > 1 && radioSwr < 2, `the radio sees less than the antenna's 2 : 1: ${coax?.summary['SWR at the radio']}`);
+  check(now.issues.some((t) => t.includes('floor')), 'and the note says why');
+  check(now.charts === 1, 'with a loss-against-frequency chart');
+  check(await choose('Cable', 'From its datasheet'), 'From its datasheet…');
+  now = await state();
+  check(!(now.panels[0]?.title ?? '').startsWith('At least'), `a datasheet cable is not a floor: ${now.panels[0]?.title}`);
+  check(/^2\.40 dB/.test(now.panels[0]?.summary['Matched loss'] ?? ''), `4.6 dB at 10 MHz and 16 dB at 100 MHz fit to 8.01 dB/100 m at 28.5 MHz, 2.40 dB for 30 m: ${now.panels[0]?.summary['Matched loss']}`);
+  check(/^2\.7[45] dB/.test(now.panels[0]?.summary['Total loss'] ?? ''), `and SWR 2 makes it 2.75 dB: ${now.panels[0]?.summary['Total loss']}`);
+
+  // ---- attenuators ----
+  check(await click('.tool-tab', 'Attenuators'), 'Attenuators');
+  now = await state();
+  check(now.panels[0]?.title === '10 dB Pi pad, 50 → 50 Ω', `the shipped pad: ${now.panels[0]?.title}`);
+  check(now.drawn === 3, 'three resistors drawn');
+  const shunt = now.parts.find((r) => r[0] === 'Shunt, input side');
+  const series = now.parts.find((r) => r[0] === 'Series');
+  check(shunt?.[1] === '96.25 Ω' && shunt?.[2] === '100.0 Ω', `textbook shunt 96.25 Ω, E24 100 Ω: ${shunt?.slice(1, 3).join(' / ')}`);
+  check(series?.[1] === '71.15 Ω' && series?.[2] === '68.00 Ω', `textbook series 71.15 Ω, E24 68 Ω: ${series?.slice(1, 3).join(' / ')}`);
+  check(/^9\.6\d dB/.test(now.panels[0]?.summary['Attenuation as built'] ?? ''), `100 / 68 / 100 is really 9.63 dB: ${now.panels[0]?.summary['Attenuation as built']}`);
+  check(await typeNumber('Attenuation', '3'), 'ask for 3 dB');
+  check(await typeNumber('Output impedance', '75'), 'into 75 Ω');
+  now = await state();
+  check(now.issues.some((t) => t.includes('at least 5.72 dB')), 'refused: between 50 and 75 Ω a pad loses at least 5.72 dB');
+  check(await choose('Shape', 'Minimum-loss'), 'Minimum-loss L pad');
+  now = await state();
+  check((now.panels[0]?.title ?? '').startsWith('5.72 dB minimum-loss pad'), `the L pad: ${now.panels[0]?.title}`);
+  check(now.drawn === 2, 'two resistors drawn');
+
+  // ---- levels ----
+  check(await click('.tool-tab', 'dB, watts'), 'dB, watts & S-units');
+  now = await state();
+  check((now.panels[0]?.title ?? '').startsWith('-73 dBm is 50.1 pW') && (now.panels[0]?.title ?? '').includes('S9'), `-73 dBm is 50 pW, S9: ${now.panels[0]?.title}`);
+  check(await choose('S-meter scale', 'VHF'), 'VHF scale');
+  now = await state();
+  check((now.panels[0]?.summary['S-meter'] ?? '').startsWith('S9 + 20 dB'), `on VHF that is S9 + 20 dB: ${now.panels[0]?.summary['S-meter']}`);
+  check(now.panels[1]?.title === '130 W EIRP, 79.4 W ERP', `100 W less 1 dB into 2.15 dBi: ${now.panels[1]?.title}`);
+  check((now.panels[1]?.summary['Field strength'] ?? '').startsWith('6.25 V/m'), `sqrt(30 x 130) / 10 m: ${now.panels[1]?.summary['Field strength']}`);
+
+  // ---- swr ----
+  check(await click('.tool-tab', 'SWR'), 'SWR & return loss');
+  now = await state();
+  check(now.panels[0]?.title === 'SWR 2.00 : 1', `the shipped SWR: ${now.panels[0]?.title}`);
+  check(now.panels[0]?.summary['Return loss'] === '9.5 dB', `return loss 9.5 dB: ${now.panels[0]?.summary['Return loss']}`);
+  check((now.panels[0]?.summary['Power reflected'] ?? '').startsWith('11.1 %'), `11.1 % reflected: ${now.panels[0]?.summary['Power reflected']}`);
+  check(now.panels[1]?.title === 'The wattmeter says 2.00 : 1', `100 W forward, 11.1 W back: ${now.panels[1]?.title}`);
+  check((now.panels[2]?.title ?? '').startsWith('72 + j0 Ω in a 50 Ω system: SWR 1.44 : 1'), `72 ohms in 50: ${now.panels[2]?.title}`);
+  check(now.panels[2]?.summary['Return loss'] === '14.9 dB', `with a return loss of 14.9 dB: ${now.panels[2]?.summary['Return loss']}`);
+}
+
+/** Drives the field sandbox: a scene plays and paints, a sheet is drawn with the mouse and undone, a buried source is caught. */
+async function runFdtdTest({ evaluate, send, log }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`Field sandbox test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const click = async (selector, text) => {
+    const done = await evaluate(`(() => {
+      const el = [...document.querySelectorAll(${JSON.stringify(selector)})].find((e) => ${text === undefined ? 'true' : `e.textContent.trim().startsWith(${JSON.stringify(text)})`});
+      if (!el) return false;
+      el.click();
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  const choose = async (label, value) => {
+    const done = await evaluate(`(() => {
+      const select = [...document.querySelectorAll('select')].find((s) => s.closest('label')?.textContent.includes(${JSON.stringify(label)}));
+      if (!select) return false;
+      const option = [...select.options].find((o) => o.textContent.includes(${JSON.stringify(value)}));
+      if (!option) return false;
+      select.value = option.value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      return true;
+    })()`);
+    await sleep(250);
+    return done;
+  };
+  const until = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  const statusOf = (name) => `parseFloat([...document.querySelectorAll('.field-status > div')].find((d) => d.querySelector('dt')?.textContent === ${JSON.stringify(name)})?.querySelector('dd')?.textContent ?? '0')`;
+  const shapeCount = () => evaluate(`JSON.parse(localStorage.getItem('emws.fdtd.v1') ?? '{"shapes":[]}').shapes.length`);
+  const state = async () =>
+    JSON.parse(
+      await evaluate(`JSON.stringify({
+        tools: [...document.querySelectorAll('.tool-buttons button')].map((b) => b.textContent.trim()),
+        status: Object.fromEntries([...document.querySelectorAll('.field-status > div')].map((d) =>
+          [(d.querySelector('dt')?.textContent ?? '').trim(), (d.querySelector('dd')?.textContent ?? '').trim()])),
+        play: [...document.querySelectorAll('.run-buttons button')].map((b) => b.textContent.trim()),
+        issues: [...document.querySelectorAll('.issue-text')].map((e) => e.textContent),
+        legend: document.querySelector('.field-legend')?.textContent ?? '',
+        gridNote: document.querySelector('.grid-note')?.textContent ?? '',
+      })`),
+    );
+
+  // A fresh start: the first scene, paused.
+  await evaluate(`(localStorage.removeItem('emws.fdtd.v1'), location.reload())`);
+  check(await until(`document.querySelector('canvas.field-canvas') !== null && document.querySelectorAll('.tool-buttons button').length === 4`, 15_000), 'the sandbox loads');
+  let now = await state();
+  check(now.tools.join('|') === 'Conductor|Dielectric|Source|Select', `four tools: ${now.tools.join(', ')}`);
+  check(now.legend.includes('10.0 × 6.7 wavelengths'), `the world is ten wavelengths wide: ${now.legend.trim()}`);
+  check(now.gridNote.includes('200 × 133 cells'), `on a 200 x 133 grid: ${now.gridNote.trim()}`);
+  check(now.play[0] === 'Play', 'paused at the start');
+
+  // Play: the field must come up and time must pass.
+  check(await click('.run-buttons button', 'Play'), 'Play');
+  check(await until(`${statusOf('Peak |Ez|')} > 0.01`, 15_000), 'the field comes up');
+  check(await until(`${statusOf('Time')} > 3`, 30_000), 'and time passes: more than 3 ns of it');
+  now = await state();
+  log(`    ${now.status.Speed}`);
+  // Both signs of the field are painted, and the wall is drawn in ink.
+  const colours = JSON.parse(
+    await evaluate(`(() => {
+      const c = document.querySelector('canvas.field-canvas');
+      const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data;
+      let cool = 0, warm = 0, ink = 0;
+      for (let p = 0; p < d.length; p += 16) {
+        const r = d[p], g = d[p + 1], b = d[p + 2];
+        if (b > r + 40) cool++; else if (r > b + 40) warm++;
+        if (r < 70 && g < 70 && b < 80) ink++;
+      }
+      return JSON.stringify({ cool, warm, ink });
+    })()`),
+  );
+  check(colours.cool > 100 && colours.warm > 100, `both signs of the field are painted (${colours.cool} cool, ${colours.warm} warm samples)`);
+  check(colours.ink > 20, `and the wall is drawn in ink (${colours.ink} samples)`);
+
+  // Pause and draw a conductor with the mouse.
+  check(await click('.run-buttons button', 'Pause'), 'Pause');
+  const box = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('canvas.field-canvas').getBoundingClientRect())`));
+  const drag = async (fx1, fy1, fx2, fy2) => {
+    const x1 = box.left + box.width * fx1;
+    const y1 = box.top + box.height * fy1;
+    const x2 = box.left + box.width * fx2;
+    const y2 = box.top + box.height * fy2;
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x1, y: y1 });
+    await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: x1, y: y1, button: 'left', clickCount: 1 });
+    for (let s = 1; s <= 8; s++) await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: x1 + ((x2 - x1) * s) / 8, y: y1 + ((y2 - y1) * s) / 8, button: 'left' });
+    await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x2, y: y2, button: 'left', clickCount: 1 });
+    await sleep(350);
+  };
+  const before = await shapeCount();
+  await drag(0.7, 0.3, 0.7, 0.7);
+  let shapes = await shapeCount();
+  check(shapes === before + 1, `a drag draws one conductor (${before} -> ${shapes})`);
+  now = await state();
+  check((now.status.Time ?? '').startsWith('0.00 ns'), 'and the clock restarts, because the scene is the simulation');
+  for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', modifiers: 2, windowsVirtualKeyCode: 90 });
+  await sleep(300);
+  shapes = await shapeCount();
+  check(shapes === before, 'Ctrl+Z takes it away again');
+
+  // A source clicked into the wall is caught by the checks; deleting it clears them.
+  check(await click('.tool-buttons button', 'Source'), 'Source tool');
+  await drag(1.4 / 3, 0.75, 1.4 / 3, 0.75);
+  now = await state();
+  check(now.issues.some((t) => t.includes('inside a conductor')), 'a source clicked into the wall draws the warning');
+  check(await click('.selected-item button', 'Delete it'), 'Delete it');
+  now = await state();
+  check(!now.issues.some((t) => t.includes('inside a conductor')), 'and deleting it clears the warning');
+
+  // Another scene plays at once.
+  check(await choose('Start from', 'Corner reflector'), 'Start from: Corner reflector');
+  check(await until(`JSON.parse(localStorage.getItem('emws.fdtd.v1')).shapes.length === 2`), 'two sheets in the scene');
+  now = await state();
+  check(now.play[0] === 'Pause', 'and it plays');
+}
+
 /** One visitor measures and shares a core; another takes it and designs on it. */
 async function runCommunityTest({ evaluate, send, log }) {
   const check = (ok, message) => {
@@ -712,7 +983,9 @@ async function runVnaTest({ evaluate, send, log }) {
 
   // ---- Antenna Modeler: modelled against measured ----
   await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
-  check(await until(`document.querySelectorAll('.summary > div').length > 2`, 30_000), 'Antenna Modeler solves its example');
+  // A hash change keeps the Smith page on screen until the modeler's chunk has arrived, so
+  // wait for the modeler itself, not just for summary cards (the Smith chart has those too).
+  check(await until(`document.querySelector('h1')?.textContent !== 'Smith chart and matching' && document.querySelectorAll('.summary > div').length > 2`, 30_000), 'Antenna Modeler solves its example');
   await evaluate(`[...document.querySelectorAll('details.compare')].forEach((d) => d.setAttribute('open', ''))`);
   // A hash change is not a new document, so the V2 would still be the port picked: back to the H.
   await evaluate("window.__emwsVnaPick = 'h'");
@@ -1060,6 +1333,63 @@ async function runEditTest({ send, evaluate, loadExample, waitForResults, getSta
   check(getState().figures.some((f) => f.startsWith('3-D pattern at')), 'and a 3-D pattern of the whole sphere beside them');
   check(cuts.length === 2, `the automatic pattern plots two cuts through the main lobe: ${cuts.join(' | ')}`);
   check(getState().figures.some((f) => f.startsWith('SWR')), 'and the sweep keeps its SWR curve');
+
+  // 10. Tune: the 20 m dipole's length until it is resonant at 14.2 MHz - every trial a real solve.
+  await loadExample('dipole-20m-free-space');
+  const tuneReady = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  check(await tuneReady(`[...document.querySelectorAll('.tune select')].length > 0`), 'the Tune section offers something to change');
+  const choice = await evaluate(`document.querySelector('.tune select')?.selectedOptions[0]?.textContent ?? ''`);
+  check(choice === 'Length of wire 1', `it starts on the length of wire 1 (${choice})`);
+  const goalAt = await evaluate(`[...document.querySelectorAll('.tune label.field')].find((l) => l.textContent.startsWith('at'))?.querySelector('input')?.value ?? ''`);
+  check(goalAt === '14.2', `the goal frequency followed the example: ${goalAt} MHz`);
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.tune button')].find((x) => x.textContent.trim() === 'Tune'); if (!b) return false; b.click(); return true; })()`), 'Tune');
+  check(await tuneReady(`/Set the length of wire 1 .* solves\\./.test(document.querySelector('.tune-note')?.textContent ?? '')`, 60_000), 'it finishes and says what it did');
+  const note = await evaluate(`document.querySelector('.tune-note')?.textContent ?? ''`);
+  const metres = Number(/to (\d+\.\d+) m/.exec(note)?.[1]);
+  const reactance = Number(/j(\d+\.\d)/.exec(note)?.[1]);
+  check(metres > 9.8 && metres < 10.6 && reactance < 3, `a half wave of 2 mm wire, resonant: ${note}`);
+  check(!/edge of the range/.test(note), 'and not at the edge of its range');
+  await sleep(1200); // the re-solve of the tuned model
+  const tuned = await readState();
+  check(tuned.modelWires[0]?.includes(metres.toFixed(3).slice(0, 4)) ?? false, `the model took the new length: ${tuned.modelWires[0]}`);
+
+  // 11. Ratings: the trap dipole's traps at 100 W.
+  await loadExample('trap-dipole-40-80m');
+  check(await tuneReady(`document.querySelectorAll('.ratings-table tbody tr').length === 2`, 45_000), 'the trap dipole lists both traps under What the loads must survive');
+  const volts = await evaluate(`[...document.querySelectorAll('.ratings-table tbody tr')].map((r) => Number(r.children[3].textContent))`);
+  check(volts.length === 2 && volts.every((v) => v > 50 && v < 5000), `peak volts across the traps at 100 W: ${volts.join(' and ')} V`);
+
+  // 12. A vertical on real ground: the radial screen drawn as spokes, copper in the wire, and a change of metal.
+  await loadExample('vertical-40m-radials');
+  const efficiencyOf = `(() => { const d = [...document.querySelectorAll('.summary > div')].find((x) => x.querySelector('dt')?.textContent === 'Efficiency'); return parseFloat(d?.querySelector('dd')?.textContent ?? 'NaN'); })()`;
+  check(await tuneReady(`document.querySelector('.modeler')?.dataset.busy !== 'true' && Number.isFinite(${efficiencyOf}) && ${efficiencyOf} < 100`, 45_000), 'the vertical over radials solves');
+  const spokes = await evaluate(`document.querySelectorAll('line.radial').length`);
+  check(spokes >= 16, `the radial screen is drawn as spokes (${spokes} across the views)`);
+  const copperEff = await evaluate(efficiencyOf);
+  check(copperEff > 98 && copperEff < 99, `copper wire: ${copperEff} % efficient`);
+  const groundNoise = await evaluate(`[...document.querySelectorAll('.issue-text')].some((e) => /reaches the ground/.test(e.textContent))`);
+  check(groundNoise === false, 'and no warning about the wire reaching the ground, because the screen connects it');
+  // Select the wire, change its material to aluminium, and the efficiency must fall.
+  check(await evaluate(`(() => { const b = document.querySelector('.wire-list button'); if (!b) return false; b.click(); return true; })()`), 'select wire 1');
+  check(
+    await evaluate(`(() => { const s = [...document.querySelectorAll('select')].find((x) => [...x.options].some((o) => o.textContent === 'Aluminium')); if (!s) return false; s.value = [...s.options].find((o) => o.textContent === 'Aluminium').value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`),
+    'Material: Aluminium',
+  );
+  check(await tuneReady(`document.querySelector('.modeler')?.dataset.busy !== 'true' && ${efficiencyOf} < ${copperEff}`, 45_000), `and the efficiency falls: ${await evaluate(efficiencyOf)} %`);
+  // The card deck tab shows the LD 5 card for it; then back to the model tab for whatever follows.
+  const deckTab = (name) => `(() => { const b = [...document.querySelectorAll('button[role=tab]')].find((x) => x.textContent.trim() === '${name}'); if (!b) return false; b.click(); return true; })()`;
+  check(await evaluate(deckTab('Card deck')), 'open the card deck');
+  const deckText = await evaluate(`document.querySelector('textarea.deck-text')?.value ?? ''`);
+  check(/^LD 5 1 0 0 35000000$/m.test(deckText), 'written to the deck as an LD 5 card for the whole wire');
+  check(/^GN 0 16 0 0 13 0\.005 10 0\.001$/m.test(deckText), 'and the screen on the GN card');
+  check(await evaluate(deckTab('Model')), 'back to the model');
 }
 
 const browserPath = findBrowser();
@@ -1341,6 +1671,8 @@ try {
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (toolboxTest) await runToolboxTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (fdtdTest) await runFdtdTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (communityTest) await runCommunityTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (process.env.SMOKE_PROBE) console.log('probe:', await evaluate(process.env.SMOKE_PROBE));
     const info = JSON.parse(

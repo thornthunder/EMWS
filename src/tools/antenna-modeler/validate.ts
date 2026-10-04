@@ -93,6 +93,27 @@ export function validateModel(model: AntennaModel, options: ValidateOptions = {}
   const wavelength = wavelengthM(topMHz);
   const hasGround = model.ground.kind !== 'free-space';
 
+  // Real ground is where NEC-2 needs the most minding.
+  if (model.ground.kind === 'real') {
+    const screen = model.ground.screen;
+    const touching = model.wires.filter((w) => Math.min(Math.abs(w.a.z), Math.abs(w.b.z)) <= 1e-6);
+    if (screen) {
+      if (model.ground.method === 'sommerfeld') {
+        error('nec2c refuses a radial screen with the Sommerfeld-Norton ground. Choose the reflection-coefficient method, or take the screen away.');
+      }
+      if (!(screen.radials >= 1) || !(screen.radiusM > 0)) error('The radial screen needs at least one radial and a length.');
+      const atOrigin = model.wires.some((w) => [w.a, w.b].some((p) => Math.hypot(p.x, p.y) <= 1e-6 && Math.abs(p.z) <= 1e-6));
+      if (!atOrigin) {
+        warn('The radial screen is centred on the origin at ground level, and no wire ends there. Put the base of the vertical at X = 0, Y = 0, Z = 0.');
+      }
+    } else if (touching.length > 0) {
+      warn(
+        `${touching.map(label).join(', ')} ${touching.length === 1 ? 'reaches' : 'reach'} the ground (Z = 0), and NEC-2 cannot connect a wire to real ground: the feed impedance it gives is an artefact. Give the ground a radial screen, raise the wire, or use perfect ground.`,
+        ...touching,
+      );
+    }
+  }
+
   for (const w of model.wires) {
     const len = wireLength(w);
     if (len === 0) {

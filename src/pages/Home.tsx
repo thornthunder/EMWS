@@ -33,11 +33,15 @@ const TOOLS: Tool[] = [
   },
   {
     name: 'RF toolbox',
-    blurb: 'Wire lengths, coax loss, L and Pi networks, SWR and return loss.',
+    blurb:
+      'Wavelengths and wire lengths, coax loss with the SWR on it, Pi, T and L attenuators as you can build them, dBm to volts and S-units, SWR and return loss.',
+    href: '#/toolbox',
   },
   {
     name: 'Field sandbox',
-    blurb: 'A 2-D FDTD solver: draw conductors, dielectrics and sources, and watch the waves propagate.',
+    blurb:
+      'A two-dimensional FDTD world: draw conductors, dielectrics and sources, press play, and watch the waves go - two slits, a parabola, a corner reflector, a slab, a pair of plates.',
+    href: '#/fdtd',
   },
 ];
 

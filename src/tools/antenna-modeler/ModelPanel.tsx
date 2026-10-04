@@ -1,6 +1,6 @@
 // The form side of the editor: frequency, ground, wires, feeds, pattern and notes.
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { Vec3 } from '../../engine/nec2/types';
 import { tidy, withAxis } from '../../lib/vec3';
 import { loadLoadHandoff } from '../../lib/handoff';
@@ -14,6 +14,7 @@ import {
   type Load,
   type LoadKind,
   type Wire,
+  WIRE_MATERIALS,
   addFeed,
   addLoad,
   autoSegment,
@@ -30,6 +31,7 @@ import {
   segmentsForPosition,
   setFeedPosition,
   setLoadPosition,
+  setWireConductivity,
   setWireGeometry,
   suggestedSegments,
   updateFeed,
@@ -39,6 +41,7 @@ import {
   wireLength,
 } from './model';
 import { formatValue, NumberField } from '../../ui/NumberField';
+import { type TuneGoal, type TuneRequest, type TuneVariable, currentValue, suggestedRange } from './tune';
 
 /** Amateur bands, IARU Region 1 edges. Picking one sets up a sweep across it. */
 const BANDS: { name: string; from: number; to: number }[] = [
@@ -74,12 +77,15 @@ function sweepPlan(from: number, to: number, points: number): FrequencyPlan {
 
 export interface ModelPanelProps {
   model: AntennaModel;
+  /** The tuner, when the page offers one, and the reference impedance its SWR goals use. */
+  tune?: TuneHost;
+  z0?: number;
   dispatch: (action: HistoryAction) => void;
   selection: string | null;
   onSelect: (wireId: string | null) => void;
 }
 
-export function ModelPanel({ model, dispatch, selection, onSelect }: ModelPanelProps) {
+export function ModelPanel({ model, dispatch, selection, onSelect, tune, z0 = 50 }: ModelPanelProps) {
   const edit = (recipe: (m: AntennaModel) => AntennaModel) => dispatch({ type: 'edit', recipe });
   const selected = model.wires.find((w) => w.id === selection);
 
@@ -130,6 +136,7 @@ export function ModelPanel({ model, dispatch, selection, onSelect }: ModelPanelP
 
       <FeedSection model={model} edit={edit} onSelect={onSelect} />
       <LoadSection model={model} edit={edit} onSelect={onSelect} selection={selection} />
+      {tune && <TuneSection model={model} tune={tune} z0={z0} />}
       <PatternSection model={model} edit={edit} />
       <NotesSection comments={model.comments} onChange={(comments) => edit((m) => ({ ...m, comments }))} />
     </div>
@@ -232,11 +239,44 @@ function GroundSection({ ground, onChange }: { ground: Ground; onChange: (g: Gro
           <select
             value={ground.method}
             aria-label="Ground calculation"
+            disabled={ground.screen !== undefined}
+            title={ground.screen ? 'nec2c allows a radial screen only with the reflection-coefficient method' : undefined}
             onChange={(e) => onChange({ ...ground, method: e.target.value === 'reflection' ? 'reflection' : 'sommerfeld' })}
           >
             <option value="sommerfeld">Sommerfeld-Norton (accurate)</option>
             <option value="reflection">Reflection coefficient (quick, approximate)</option>
           </select>
+          <label className="field">
+            <span className="field-label">Connection to ground</span>
+            <select
+              value={ground.screen ? 'screen' : 'none'}
+              aria-label="Connection to ground"
+              onChange={(e) => {
+                const next = { ...ground };
+                if (e.target.value === 'screen') onChange({ ...next, method: 'reflection', screen: { radials: 16, radiusM: 10, wireRadiusM: 0.001 } });
+                else {
+                  delete next.screen;
+                  onChange(next);
+                }
+              }}
+            >
+              <option value="none">None: wires stay above the ground</option>
+              <option value="screen">Radial screen at the origin (a ground-mounted vertical)</option>
+            </select>
+          </label>
+          {ground.screen && (
+            <>
+              <div className="field-row">
+                <NumberField label="Radials" value={ground.screen.radials} min={1} integer onCommit={(v) => onChange({ ...ground, screen: { ...ground.screen!, radials: v } })} />
+                <NumberField label="Length" value={ground.screen.radiusM} above={0} unit="m" onCommit={(v) => onChange({ ...ground, screen: { ...ground.screen!, radiusM: v } })} />
+                <NumberField label="Wire Ø" value={Number((ground.screen.wireRadiusM * 2000).toPrecision(6))} above={0} unit="mm" onCommit={(v) => onChange({ ...ground, screen: { ...ground.screen!, wireRadiusM: v / 2000 } })} />
+              </div>
+              <p className="muted">
+                The screen connects a wire's base to the ground, which nec2c cannot do otherwise. Its count, length and wire size change nothing in
+                nec2c's answer - the base behaves as over perfect ground, and the soil shapes the far field. The guide explains.
+              </p>
+            </>
+          )}
           <p className="muted">Average ground is about εr 13, 0.005 S/m. Z = 0 is the ground surface.</p>
         </>
       )}
@@ -296,6 +336,28 @@ function WireProperties({ model, wire, edit, onDeleted }: EditProps & { wire: Wi
           integer
           onCommit={(v) => edit((m) => setWireGeometry(m, wire.id, { segments: Math.min(2000, v) }))}
         />
+      </div>
+      <div className="field-row">
+        <label className="field">
+          <span className="field-label">Material</span>
+          <select
+            value={WIRE_MATERIALS.find((m) => m.siemensPerM === wire.conductivity)?.id ?? 'custom'}
+            onChange={(e) => {
+              const picked = WIRE_MATERIALS.find((m) => m.id === e.target.value);
+              edit((m) => setWireConductivity(m, wire.id, picked ? picked.siemensPerM : (wire.conductivity ?? 1e7)));
+            }}
+          >
+            {WIRE_MATERIALS.map((m) => (
+              <option key={m.id} value={m.id}>
+                {m.name}
+              </option>
+            ))}
+            <option value="custom">Other conductivity…</option>
+          </select>
+        </label>
+        {wire.conductivity !== undefined && !WIRE_MATERIALS.some((m) => m.siemensPerM === wire.conductivity) && (
+          <NumberField label="Conductivity" value={Number(wire.conductivity.toPrecision(4))} above={0} unit="S/m" onCommit={(v) => edit((m) => setWireConductivity(m, wire.id, v))} />
+        )}
       </div>
       <p className="muted">
         Length {formatValue(Number(wireLength(wire).toFixed(4)))} m · segments{' '}
@@ -589,6 +651,154 @@ function NotesSection({ comments, onChange }: { comments: string[]; onChange: (c
           setDraft(null);
         }}
       />
+    </section>
+  );
+}
+
+
+// ---- tuning ----
+
+/** What the page gives the Tune section: a way to run, a way to stop, and what is happening. */
+export interface TuneHost {
+  busy: boolean;
+  progress?: string;
+  note?: string;
+  run: (request: TuneRequest) => void;
+  cancel: () => void;
+}
+
+/** The unit a person types a variable in; the request goes out in SI. */
+function unitFor(variable: TuneVariable): { label: string; factor: number } {
+  if (variable.kind !== 'load') return { label: 'm', factor: 1 };
+  if (variable.field === 'henries') return { label: 'µH', factor: 1e6 };
+  if (variable.field === 'farads') return { label: 'pF', factor: 1e12 };
+  return { label: 'Ω', factor: 1 };
+}
+
+const PART_NAMES = { henries: 'L', farads: 'C', ohms: 'R', reactance: 'X' } as const;
+
+/**
+ * Change one thing until a goal is met. The list of things is built from the model:
+ * every wire's length, the height of the lot, and each part of each load.
+ */
+function TuneSection({ model, tune, z0 }: { model: AntennaModel; tune: TuneHost; z0: number }) {
+  const choices: { key: string; label: string; variable: TuneVariable }[] = [];
+  for (const w of model.wires) choices.push({ key: 'wire:' + w.id, label: 'Length of wire ' + w.tag, variable: { kind: 'wire-length', wireId: w.id, ends: 'both' } });
+  if (model.wires.length > 0) choices.push({ key: 'height', label: 'Height of the antenna', variable: { kind: 'height' } });
+  for (const l of model.loads) {
+    const wire = model.wires.find((w) => w.id === l.wireId);
+    const name = l.label ? '"' + l.label + '"' : 'load on wire ' + (wire?.tag ?? '?');
+    const fields: ('henries' | 'farads' | 'ohms' | 'reactance')[] = l.kind === 'impedance' ? ['ohms', 'reactance'] : ['henries', 'farads', 'ohms'];
+    for (const field of fields) {
+      choices.push({ key: 'load:' + l.id + ':' + field, label: PART_NAMES[field] + ' of ' + name, variable: { kind: 'load', loadId: l.id, field } });
+    }
+  }
+
+  const [key, setKey] = useState(choices[0]?.key ?? '');
+  const [ends, setEnds] = useState<'both' | 'a' | 'b'>('both');
+  const [goalKind, setGoalKind] = useState<TuneGoal['kind']>('resonance');
+  const [fMHz, setFMHz] = useState(model.frequency.startMHz);
+  // A new model, a new band: the goal frequency follows it rather than staying where it was.
+  useEffect(() => setFMHz(model.frequency.startMHz), [model.frequency.startMHz]);
+  /** Typed in the display unit; undefined means "whatever is suggested". */
+  const [range, setRange] = useState<{ min: number; max: number } | undefined>(undefined);
+
+  const chosen = choices.find((c) => c.key === key) ?? choices[0];
+  const variable: TuneVariable | undefined = chosen && (chosen.variable.kind === 'wire-length' ? { ...chosen.variable, ends } : chosen.variable);
+  const unit = variable ? unitFor(variable) : { label: '', factor: 1 };
+  const suggested = variable ? suggestedRange(model, variable) : undefined;
+  const shown = range ?? (suggested ? { min: suggested.min * unit.factor, max: suggested.max * unit.factor } : { min: 0, max: 1 });
+  const now = variable ? currentValue(model, variable) : undefined;
+  const canBand = model.frequency.steps > 1;
+
+  const start = () => {
+    if (!variable) return;
+    const goal: TuneGoal =
+      goalKind === 'swr-band' ? { kind: 'swr-band', z0 }
+      : goalKind === 'swr' ? { kind: 'swr', fMHz, z0 }
+      : goalKind === 'gain' ? { kind: 'gain', fMHz }
+      : goalKind === 'front-to-back' ? { kind: 'front-to-back', fMHz }
+      : { kind: 'resonance', fMHz };
+    tune.run({ variable, range: { min: shown.min / unit.factor, max: shown.max / unit.factor }, goal });
+  };
+
+  return (
+    <section className="form-section tune">
+      <h3>Tune</h3>
+      {choices.length === 0 ? (
+        <p className="muted">Draw a wire first.</p>
+      ) : (
+        <>
+          <p className="muted">Change one thing until a goal is met. Every trial is a real solve, so the answer is the model's, not a formula's.</p>
+          <label className="field">
+            <span className="field-label">Change</span>
+            <select
+              value={chosen?.key}
+              onChange={(e) => {
+                setKey(e.target.value);
+                setRange(undefined);
+              }}
+            >
+              {choices.map((c) => (
+                <option key={c.key} value={c.key}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {variable?.kind === 'wire-length' && (
+            <label className="field">
+              <span className="field-label">Moving</span>
+              <select
+                value={ends}
+                onChange={(e) => {
+                  setEnds(e.target.value as 'both' | 'a' | 'b');
+                  setRange(undefined);
+                }}
+              >
+                <option value="both">both ends, about the middle</option>
+                <option value="b">end 2 only</option>
+                <option value="a">end 1 only</option>
+              </select>
+            </label>
+          )}
+          <div className="field-row">
+            <NumberField label="Between" value={Number(shown.min.toPrecision(5))} unit={unit.label} onCommit={(v) => setRange({ min: v, max: shown.max })} />
+            <NumberField label="and" value={Number(shown.max.toPrecision(5))} unit={unit.label} onCommit={(v) => setRange({ min: shown.min, max: v })} />
+          </div>
+          {now !== undefined && (
+            <p className="muted">
+              Now {formatValue(Number((now * unit.factor).toPrecision(5)))} {unit.label}.
+            </p>
+          )}
+          <div className="field-row">
+            <label className="field">
+              <span className="field-label">Until</span>
+              <select value={goalKind} onChange={(e) => setGoalKind(e.target.value as TuneGoal['kind'])}>
+                <option value="resonance">it is resonant (X = 0)</option>
+                <option value="swr">the SWR is lowest</option>
+                {canBand && <option value="swr-band">the worst SWR over the sweep is lowest</option>}
+                <option value="gain">the peak gain is highest</option>
+                <option value="front-to-back">the front-to-back is best</option>
+              </select>
+            </label>
+            {goalKind !== 'swr-band' && <NumberField label="at" value={fMHz} above={0} unit="MHz" onCommit={setFMHz} />}
+          </div>
+          <div className="button-row">
+            {tune.busy ? (
+              <button type="button" className="small danger" onClick={tune.cancel}>
+                Stop
+              </button>
+            ) : (
+              <button type="button" className="small" onClick={start} disabled={!(shown.min < shown.max)}>
+                Tune
+              </button>
+            )}
+            {tune.busy && tune.progress && <span className="muted">{tune.progress}</span>}
+          </div>
+          {!tune.busy && tune.note && <p className="muted tune-note">{tune.note}</p>}
+        </>
+      )}
     </section>
   );
 }

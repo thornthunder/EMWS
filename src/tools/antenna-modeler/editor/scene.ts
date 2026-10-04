@@ -39,6 +39,8 @@ export interface Scene {
   feeds: SceneFeed[];
   /** Coils, traps and the like on the wires. Only known for a model, not for a bare deck. */
   loads: SceneLoad[];
+  /** A radial ground screen at the origin, to draw as spokes. */
+  screen?: { radials: number; radiusM: number };
   ground: boolean;
   /** Whether the lines are coloured by current. */
   showsCurrent: boolean;
@@ -97,7 +99,8 @@ export function sceneFromModel(model: AntennaModel, currents?: readonly SegmentC
     if (wire) loads.push({ key: l.id, loadId: l.id, wireId: wire.id, at: segmentCentre(wire, l.segment), kind: l.kind, label: l.label ?? l.kind });
   }
 
-  return { editable: true, wires: model.wires, lines, feeds, loads, ground: model.ground.kind !== 'free-space', showsCurrent };
+  const screen = model.ground.kind === 'real' && model.ground.screen ? { radials: model.ground.screen.radials, radiusM: model.ground.screen.radiusM } : undefined;
+  return { editable: true, wires: model.wires, lines, feeds, loads, screen, ground: model.ground.kind !== 'free-space', showsCurrent };
 }
 
 /** Read-only scene from a solved deck, for decks the model can't represent. */

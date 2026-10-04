@@ -523,6 +523,15 @@ export function OrthoView({ plane }: { plane: Plane }) {
           );
         })}
 
+      {plane === 'top' &&
+        scene.screen &&
+        Array.from({ length: Math.min(72, scene.screen.radials) }, (_, i) => {
+          const spokes = Math.min(72, scene.screen!.radials);
+          const a = (2 * Math.PI * i) / spokes;
+          const [x1, y1] = screen({ x: 0, y: 0, z: 0 });
+          const [x2, y2] = screen({ x: scene.screen!.radiusM * Math.cos(a), y: scene.screen!.radiusM * Math.sin(a), z: 0 });
+          return <line key={`radial${i}`} x1={x1} y1={y1} x2={x2} y2={y2} className="radial" />;
+        })}
       {scene.feeds.map((f) => {
         const [x, y] = screen(f.at);
         return (

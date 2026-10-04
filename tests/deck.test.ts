@@ -11,6 +11,7 @@ const EXAMPLES = [
   'ocf-dipole-windom.nec',
   'trap-dipole-40-80m.nec',
   'vertical-40m-perfect-ground.nec',
+  'vertical-40m-radials.nec',
   'yagi-3el-2m.nec',
 ];
 
@@ -96,9 +97,12 @@ describe('deck <-> model', () => {
   });
 
   it('keeps cards it does not model, and refuses what it cannot represent', () => {
-    const loaded = imported('CE\nGW 1 11 0 -1 0 0 1 0 0.001\nGE 0\nLD 5 0 0 0 5.8E7\nFR 0 1 0 0 70 0\nEX 0 1 6 0 1 0\nXQ\nEN');
-    expect(loaded.extraCards).toEqual(['LD 5 0 0 0 5.8E7']);
-    expect(modelToDeck(loaded)).toContain('LD 5 0 0 0 5.8E7');
+    // A whole-wire LD 5 is now the wire's material; a per-metre load (LD 2) is still kept as written.
+    const loaded = imported('CE\nGW 1 11 0 -1 0 0 1 0 0.001\nGE 0\nLD 5 0 0 0 5.8E7\nLD 2 1 0 0 0 0.000001 0\nFR 0 1 0 0 70 0\nEX 0 1 6 0 1 0\nXQ\nEN');
+    expect(loaded.wires[0]!.conductivity).toBe(5.8e7);
+    expect(loaded.extraCards).toEqual(['LD 2 1 0 0 0 0.000001 0']);
+    expect(modelToDeck(loaded)).toContain('LD 5 1 0 0 58000000');
+    expect(modelToDeck(loaded)).toContain('LD 2 1 0 0 0 0.000001 0');
 
     const cases: [string, RegExp][] = [
       ['CE\nGA 1 12 1 0 90 0.001\nGE 0\nEN', /arcs/],

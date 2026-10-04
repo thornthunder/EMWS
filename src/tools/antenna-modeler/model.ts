@@ -18,6 +18,35 @@ export interface Wire {
   /** Metres. */
   radius: number;
   segments: number;
+  /**
+   * Siemens per metre (an LD 5 card); undefined is NEC's own default, a perfect conductor.
+   * See WIRE_MATERIALS for what real wire is worth.
+   */
+  conductivity?: number;
+}
+
+/**
+ * What wire is made of, for LD 5. NEC's skin-effect loss takes a conductivity and assumes
+ * the permeability of free space, so a magnetic metal is given the conductivity that has
+ * the same surface resistance: sigma / mu_r. Steel's mu_r varies widely with the alloy and
+ * the field; 200 is a middling value, and the name says so.
+ */
+export const WIRE_MATERIALS: { id: string; name: string; siemensPerM: number | undefined }[] = [
+  { id: 'perfect', name: 'Perfect conductor (no loss)', siemensPerM: undefined },
+  { id: 'copper', name: 'Copper', siemensPerM: 5.95e7 },
+  { id: 'aluminium', name: 'Aluminium', siemensPerM: 3.5e7 },
+  { id: 'brass', name: 'Brass', siemensPerM: 1.5e7 },
+  { id: 'stainless', name: 'Stainless steel (non-magnetic)', siemensPerM: 1.4e6 },
+  { id: 'steel', name: 'Steel wire (magnetic; μr taken as 200)', siemensPerM: 7e6 / 200 },
+];
+
+/** nec2c's radial-wire ground screen: centred on the origin, in the plane Z = 0. */
+export interface RadialScreen {
+  radials: number;
+  /** Length of each radial, metres. */
+  radiusM: number;
+  /** Radius of the radial wires, metres. */
+  wireRadiusM: number;
 }
 
 export type EndName = 'a' | 'b';
@@ -70,6 +99,14 @@ export type Ground =
       permittivity: number;
       /** Siemens per metre. */
       conductivity: number;
+      /**
+       * A radial screen at the origin, which is the only way nec2c lets a wire reach real
+       * ground. Only with the reflection-coefficient method: nec2c refuses it with
+       * Sommerfeld-Norton. Measured (2026-10-04): the screen's count, length and wire size
+       * change nothing in nec2c's result; the base simply connects as over perfect ground,
+       * and the soil shapes the far field. The guide says so.
+       */
+      screen?: RadialScreen;
       method: 'sommerfeld' | 'reflection';
     };
 
@@ -329,6 +366,17 @@ export function setWireGeometry(
       l.wireId === wireId ? { ...l, segment: remapSegment(l.segment, wire.segments, segments) } : l,
     ),
   };
+}
+
+/** What a wire is made of: a conductivity in S/m, or undefined for NEC's perfect conductor. */
+export function setWireConductivity(model: AntennaModel, wireId: string, siemensPerM: number | undefined): AntennaModel {
+  if (!wireById(model, wireId)) return model;
+  return replaceWire(model, wireId, (w) => {
+    const next = { ...w };
+    if (siemensPerM === undefined || !(siemensPerM > 0)) delete next.conductivity;
+    else next.conductivity = siemensPerM;
+    return next;
+  });
 }
 
 export function deleteWire(model: AntennaModel, wireId: string): AntennaModel {

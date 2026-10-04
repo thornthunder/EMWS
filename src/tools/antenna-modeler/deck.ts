@@ -66,10 +66,11 @@ function groundCard(ground: Ground): string | undefined {
     case 'perfect':
       return formatCard('GN', [1]);
     case 'real':
-      return formatCard('GN', [ground.method === 'sommerfeld' ? 2 : 0, 0, 0, 0], [
-        ground.permittivity,
-        ground.conductivity,
-      ]);
+      // With a screen: its count, then the soil, then the screen's radius and wire radius.
+      // Without: the trailing fields describe a second medium, which the model does not hold.
+      return ground.screen
+        ? formatCard('GN', [ground.method === 'sommerfeld' ? 2 : 0, ground.screen.radials, 0, 0], [ground.permittivity, ground.conductivity, ground.screen.radiusM, ground.screen.wireRadiusM])
+        : formatCard('GN', [ground.method === 'sommerfeld' ? 2 : 0, 0, 0, 0], [ground.permittivity, ground.conductivity]);
   }
 }
 
@@ -105,6 +106,10 @@ export function modelToDeck(model: AntennaModel, options: DeckOptions = {}): str
   for (const load of model.loads) {
     const wire = model.wires.find((w) => w.id === load.wireId);
     if (wire) lines.push(loadCard(load, wire.tag));
+  }
+  // What the wire is made of: an LD 5 over the whole wire (segments 0 to 0 = all of them).
+  for (const w of model.wires) {
+    if (w.conductivity !== undefined) lines.push(formatCard('LD', [5, w.tag, 0, 0], [w.conductivity]));
   }
   const setup = model.extraCards.filter((c) => !EXECUTION_CARDS.has(c.slice(0, 2).toUpperCase()));
   const after = model.extraCards.filter((c) => EXECUTION_CARDS.has(c.slice(0, 2).toUpperCase()));
@@ -332,7 +337,13 @@ function buildModel(cards: Card[], notes: string[]): AntennaModel {
       rawFeeds.push({ card, tag, segment, voltage: { re, im } });
     } else if (m === 'LD') {
       const [type = 0, tag = 0, first = 0, last = 0] = ints(card, 4);
-      if ((type === 0 || type === 1 || type === 4) && first > 0 && first === last) {
+      if (type === 5 && first === 0 && last === 0) {
+        // Wire conductivity over whole wires: the tag's, or every wire's when the tag is 0.
+        const [sigma = 0] = floats(card, 1);
+        const matching = wires.filter((w) => tag === 0 || w.tag === tag);
+        if (matching.length === 0) fail(card, `the conductivity is for tag ${tag}, which doesn't exist`);
+        wires = wires.map((w) => (matching.includes(w) ? { ...w, conductivity: sigma } : w));
+      } else if ((type === 0 || type === 1 || type === 4) && first > 0 && first === last) {
         const [a = 0, b = 0, c = 0] = floats(card, 3);
         const kind: LoadKind = type === 0 ? 'series' : type === 1 ? 'parallel' : 'impedance';
         rawLoads.push({ card, tag, segment: first, kind, values: [a, b, c] });
@@ -386,11 +397,20 @@ function readGround(card: Card | undefined, groundPlane: number): Ground {
   const [type = 0, radials = 0] = ints(card, 2);
   const [permittivity = 0, conductivity = 0, p3 = 0, p4 = 0, p5 = 0, p6 = 0] = floats(card, 6);
   if (type === -1) return { kind: 'free-space' };
-  if (radials !== 0) fail(card, 'radial-wire ground screens are not supported by the editor');
-  if (type === 1) return { kind: 'perfect' };
+  if (type === 1) {
+    if (radials !== 0) fail(card, 'a radial screen goes with a real ground, not a perfect one');
+    return { kind: 'perfect' };
+  }
   if (type !== 0 && type !== 2) fail(card, `ground type ${type} is not one nec2c knows`);
+  const method = type === 2 ? 'sommerfeld' : 'reflection';
+  if (radials > 0) {
+    // With a screen the third and fourth numbers are its radius and its wires' radius.
+    if (p5 !== 0 || p6 !== 0) fail(card, 'a second ground medium (a cliff) is not supported by the editor');
+    if (!(p3 > 0)) fail(card, 'the radial screen has no radius');
+    return { kind: 'real', permittivity, conductivity, method, screen: { radials, radiusM: p3, wireRadiusM: p4 } };
+  }
   if (p3 !== 0 || p4 !== 0 || p5 !== 0 || p6 !== 0) fail(card, 'a second ground medium (a cliff) is not supported by the editor');
-  return { kind: 'real', permittivity, conductivity, method: type === 2 ? 'sommerfeld' : 'reflection' };
+  return { kind: 'real', permittivity, conductivity, method };
 }
 
 /**

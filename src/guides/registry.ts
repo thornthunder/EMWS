@@ -7,7 +7,9 @@ import type { ComponentType } from 'react';
 import { AntennaModelerGuide } from './AntennaModelerGuide';
 import { BalunGuide } from './BalunGuide';
 import { CoilsGuide } from './CoilsGuide';
+import { FieldSandboxGuide } from './FieldSandboxGuide';
 import { SmithChartGuide } from './SmithChartGuide';
+import { ToolboxGuide } from './ToolboxGuide';
 
 export interface Guide {
   /** Used in the URL: #/guides/<id> */
@@ -56,6 +58,24 @@ export const GUIDES: Guide[] = [
     toolHref: '#/lc',
     toolName: 'Coils, traps and filters',
     Content: CoilsGuide,
+  },
+  {
+    id: 'rf-toolbox',
+    title: 'The RF toolbox',
+    summary:
+      'Wavelengths and wire lengths, coax loss with the SWR on it, Pi, T and L attenuators as you can build them, dBm to volts and S-units, and SWR in all its costumes - each with its working shown.',
+    toolHref: '#/toolbox',
+    toolName: 'RF toolbox',
+    Content: ToolboxGuide,
+  },
+  {
+    id: 'field-sandbox',
+    title: 'Watching the fields',
+    summary:
+      'A two-dimensional world where you draw conductors, dielectrics and sources and watch Maxwell\'s equations play out: two slits, a parabola, a corner reflector, a slab, a pair of plates. What it shows, and what it honestly cannot.',
+    toolHref: '#/fdtd',
+    toolName: 'Field sandbox',
+    Content: FieldSandboxGuide,
   },
 ];
 
