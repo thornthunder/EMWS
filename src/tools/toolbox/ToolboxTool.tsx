@@ -15,7 +15,7 @@ import { logFrequencies } from '../lc/filter';
 import { BANDS } from '../lc/model';
 import { formatSi } from '../smith-chart/units';
 import { type Pad, type Topology, designPad, evaluatePad, minimumLossDb, minimumLossPad, snapPad } from './attenuator';
-import { type Cable, CATALOGUE, cableById, dielectricById, fitDatasheet, lossOfRun, matchedLossPer100m, runPowers } from './coax';
+import { type Cable, CATALOGUE, cableById, catalogueGroups, dielectricById, fitDatasheet, lossOfRun, matchedLossPer100m, runPowers } from './coax';
 import { DIPOLE_GAIN_DBI, dBmToWatts, dBuV, dbToPowerRatio, dbToVoltageRatio, farFieldFromM, fieldStrength, radiatedPower, sMeter, voltsRms } from './levels';
 import { type CoaxInputs, type LevelsInputs, type PadInputs, type SwrInputs, type ToolboxState, type ToolboxTab, type WireInputs, loadState, saveState } from './model';
 import { HALF_WAVE_RULES, electricalLength, physicalLengthM, wavelengthM } from './wavelength';
@@ -276,10 +276,14 @@ function CoaxSection({ inputs, onChange }: { inputs: CoaxInputs; onChange: (p: P
           <label className="field">
             <span className="field-label">Cable</span>
             <select value={inputs.cableId} onChange={(e) => onChange({ cableId: e.target.value })}>
-              {CATALOGUE.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name}
-                </option>
+              {catalogueGroups().map(({ group, cables }) => (
+                <optgroup key={group} label={group}>
+                  {cables.map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.name}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
               <option value="datasheet">From its datasheet…</option>
             </select>

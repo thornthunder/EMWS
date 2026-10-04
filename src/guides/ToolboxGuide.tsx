@@ -48,7 +48,9 @@ export function ToolboxGuide() {
         EMWS is public domain, and a maker's attenuation table is not, so the catalogue copies none. Instead each cable is its
         <strong>nominal dimensions</strong> - centre conductor, diameter over the dielectric, the dielectric itself - and its loss
         is <strong>calculated</strong>: the skin-effect resistance of the two conductors as if they were smooth solid copper,
-        plus the dielectric's loss tangent. That calculation is a <em>floor</em>. A real cable has a braided shield and usually a
+        plus the dielectric's loss tangent. That goes for the RG types (MIL-C-17 designations) and for the LMR series alike:
+        LMR-195, -240, -400 and -600 are listed under their maker's names because that is what people ask for, with their
+        published dimensions and velocity factors, and their loss is still worked out here rather than read from a table. That calculation is a <em>floor</em>. A real cable has a braided shield and usually a
         stranded centre, both lossier than the smooth surfaces in the formula, and the figure on the datasheet is higher by an
         amount the geometry cannot tell you. So the catalogue figures are labelled "at least", and the honest way to get your
         cable's real loss is <em>From its datasheet…</em>: type the attenuation at two frequencies, one low and one high, and

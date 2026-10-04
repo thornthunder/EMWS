@@ -274,7 +274,12 @@ delete them from a normal shell.
   exactly to k1√f + k2 f. `runLoss()` is the classic (a² − ρ²)/(a(1 − ρ²)): 1 dB matched +
   SWR 3 = 1.504 dB total (a first hand figure of 1.295 was wrong; the test pins the formula).
   Every catalogue entry's geometry must give Z0 within 12 % of nominal (stranded centres read
-  low) - that test catches a typo in a dimension.
+  low) - that test catches a typo in a dimension. **LMR-195/240/400/600 are listed by name**
+  (ZR1JT asked for LMR-400, 2026-10-04): the maker's published nominal dimensions and
+  velocity factors (0.83/0.84/0.85/0.87), loss computed like every other entry, never the
+  maker's table; `epsilonOf(cable)` = 1/VF² is what Z0 and the dielectric term use, so a cable's
+  stated VF and its physics agree. LMR-400's dimensions give 49.5 Ω - the published figures
+  are coherent, which is the check that they were remembered right.
 - `attenuator.ts`: closed-form Pi/T for any z1→z2; `minimumLossDb` (5.72 dB for 75↔50), at
   which the pad IS the L pad - the Pi drops its HIGH-side shunt, the T its low-side series arm.
   `evaluatePad` analyses the circuit as built, so an E24 pad reports its real dB, match and

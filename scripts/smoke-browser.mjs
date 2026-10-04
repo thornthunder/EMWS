@@ -673,6 +673,13 @@ async function runToolboxTest({ evaluate, send, log }) {
   check(radioSwr > 1 && radioSwr < 2, `the radio sees less than the antenna's 2 : 1: ${coax?.summary['SWR at the radio']}`);
   check(now.issues.some((t) => t.includes('floor')), 'and the note says why');
   check(now.charts === 1, 'with a loss-against-frequency chart');
+  const rg58Matched = parseFloat(coax?.summary['Matched loss'] ?? 'NaN');
+  check(await choose('Cable', 'LMR-400'), 'LMR-400');
+  now = await state();
+  check((now.panels[0]?.title ?? '').startsWith('At least ') && (now.panels[0]?.title ?? '').includes('LMR-400'), `LMR-400 is in the catalogue, also as a floor: ${now.panels[0]?.title}`);
+  const lmrMatched = parseFloat(now.panels[0]?.summary['Matched loss'] ?? 'NaN');
+  check(lmrMatched > 0 && lmrMatched < rg58Matched / 2, `and loses well under half what RG-58 does: ${lmrMatched} against ${rg58Matched} dB`);
+  check(/VF 0\.85/.test(now.panels[0]?.summary['Electrical length'] ?? ''), `at its published velocity factor: ${now.panels[0]?.summary['Electrical length']}`);
   check(await choose('Cable', 'From its datasheet'), 'From its datasheet…');
   now = await state();
   check(!(now.panels[0]?.title ?? '').startsWith('At least'), `a datasheet cable is not a floor: ${now.panels[0]?.title}`);

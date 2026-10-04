@@ -124,9 +124,9 @@ than looked up.
   run of line, and three figures for a dipole's length - the free-space half wave, the
   length this engine measured for a thin wire (145.5 / f), and the handbook's 468 / f - with
   the Antenna Modeler's Tune as the real answer.
-- **Coax loss**: the common cable types from their nominal dimensions, with the loss
-  *calculated* (skin effect in solid copper plus the dielectric) and labelled the floor it
-  is; or two lines from your own cable's datasheet, fitted exactly. Matched loss, the extra
+- **Coax loss**: the common cable types - RG and LMR - from their nominal dimensions, with
+  the loss *calculated* (skin effect in solid copper plus the dielectric) and labelled the
+  floor it is; or two lines from your own cable's datasheet, fitted exactly. Matched loss, the extra
   for the SWR on the line, the SWR the radio sees, and the watts that reach the antenna.
 - **Attenuators**: Pi, T and minimum-loss L pads between any two impedances, then rounded
   to E24 and analysed as built - real attenuation, match and heat per resistor.

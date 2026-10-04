@@ -15,6 +15,7 @@ import {
   DB_PER_NEPER,
   ETA0,
   characteristicImpedance,
+  epsilonOf,
   fitDatasheet,
   lossOfRun,
   matchedLossPer100m,
@@ -67,12 +68,17 @@ describe('coaxial cable', () => {
     // Stranded centre conductors read a few percent low this way; a figure far off would be a typo.
     for (const cable of CATALOGUE) {
       if (cable.loss.kind !== 'geometry') continue;
-      const z = characteristicImpedance(cable.loss.geometry);
+      const z = characteristicImpedance(cable.loss.geometry, epsilonOf(cable));
       expect(Math.abs(z / cable.z0 - 1), `${cable.name}: ${z.toFixed(1)} ohms from its dimensions`).toBeLessThan(0.12);
       expect(cable.velocityFactor).toBeGreaterThan(0.6);
       expect(cable.velocityFactor).toBeLessThanOrEqual(1);
     }
     expect(new Set(CATALOGUE.map((c) => c.id)).size).toBe(CATALOGUE.length);
+    // The LMR entries carry their published velocity factors, and their dimensions agree with 50 ohms closely.
+    const lmr400 = CATALOGUE.find((c) => c.id === 'lmr400')!;
+    expect(lmr400.velocityFactor).toBe(0.85);
+    expect(characteristicImpedance((lmr400.loss as { geometry: Parameters<typeof characteristicImpedance>[0] }).geometry, epsilonOf(lmr400))).toBeCloseTo(50, 0);
+    expect(CATALOGUE.filter((c) => c.group === 'LMR, 50 Ω').map((c) => c.id)).toEqual(['lmr195', 'lmr240', 'lmr400', 'lmr600']);
   });
 
   it('loses nothing in a perfect conductor in air, and follows sqrt(f) for the conductors and f for the dielectric', () => {
@@ -99,8 +105,13 @@ describe('coaxial cable', () => {
     const loss = (id: string) => matchedLossPer100m(CATALOGUE.find((c) => c.id === id)!, 30).totalDb;
     expect(loss('rg174')).toBeGreaterThan(loss('rg58'));
     expect(loss('rg58')).toBeGreaterThan(loss('rg213'));
-    expect(loss('rg213')).toBeGreaterThan(loss('foam10'));
+    expect(loss('rg213')).toBeGreaterThan(loss('lmr400'));
     expect(loss('rg59')).toBeGreaterThan(loss('rg11'));
+    // The LMR family in size order, and the same-size foam cable below the solid-dielectric one.
+    expect(loss('lmr195')).toBeGreaterThan(loss('lmr240'));
+    expect(loss('lmr240')).toBeGreaterThan(loss('lmr400'));
+    expect(loss('lmr400')).toBeGreaterThan(loss('lmr600'));
+    expect(loss('lmr195')).toBeLessThan(loss('rg58'));
   });
 
   it('fits two datasheet points exactly and uses the fit', () => {

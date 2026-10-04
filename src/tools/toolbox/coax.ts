@@ -53,6 +53,8 @@ export type LossModel = { kind: 'geometry'; geometry: Geometry } | { kind: 'data
 export interface Cable {
   id: string;
   name: string;
+  /** For the picker: cables of a kind together. Absent on a datasheet cable. */
+  group?: string;
   /** Nominal characteristic impedance, ohms. */
   z0: number;
   velocityFactor: number;
@@ -62,40 +64,63 @@ export interface Cable {
 
 export const velocityFactorOf = (epsilon: number): number => 1 / Math.sqrt(epsilon);
 
-const type = (id: string, name: string, z0: number, innerMm: number, dielectricMm: number, dielectric: string, note?: string): Cable => ({
+/** A cable's permittivity as its velocity factor implies: the figure its loss and Z0 are worked from. */
+export const epsilonOf = (cable: Cable): number => 1 / (cable.velocityFactor * cable.velocityFactor);
+
+const type = (group: string, id: string, name: string, z0: number, innerMm: number, dielectricMm: number, dielectric: string, velocityFactor?: number, note?: string): Cable => ({
   id,
   name,
+  group,
   z0,
-  velocityFactor: velocityFactorOf(dielectricById(dielectric).epsilon),
+  velocityFactor: velocityFactor ?? velocityFactorOf(dielectricById(dielectric).epsilon),
   loss: { kind: 'geometry', geometry: { innerMm, dielectricMm, dielectric } },
   ...(note ? { note } : {}),
 });
 
+const LMR_NOTE = "Named as its maker names it. The dimensions and velocity factor are the published nominals; the loss is computed here, not taken from the maker's table, and a copper-clad centre is treated as copper.";
+
 /**
  * The common types, by their nominal dimensions. Overall diameters in the names are for
- * recognising the cable in the hand. Two entries are classes rather than MIL types and say so.
+ * recognising the cable in the hand. The RG types are MIL-C-17 designations; the LMR
+ * series is listed by its maker's names because that is what people ask for; Mini 8 is a
+ * class rather than a type and says so.
  */
 export const CATALOGUE: Cable[] = [
-  type('rg174', 'RG-174 (2.8 mm, 50 Ω)', 50, 0.48, 1.52, 'pe'),
-  type('rg316', 'RG-316 (2.5 mm, 50 Ω, PTFE)', 50, 0.51, 1.52, 'ptfe'),
-  type('rg58', 'RG-58 (5 mm, 50 Ω)', 50, 0.9, 2.95, 'pe'),
-  type('rg142', 'RG-142 (5 mm, 50 Ω, PTFE)', 50, 0.94, 2.95, 'ptfe'),
-  type('mini8', 'Mini 8 / RG-8X class (6.5 mm, 50 Ω, foam)', 50, 1.6, 4.7, 'foam', 'Not a MIL type: makers differ. Representative dimensions.'),
-  type('rg213', 'RG-213 (10.3 mm, 50 Ω)', 50, 2.26, 7.24, 'pe'),
-  type('foam10', '10 mm foam low-loss class (50 Ω)', 50, 2.74, 7.24, 'foam', 'Representative of the 10 mm foam-dielectric cables sold under several brand names.'),
-  type('rg59', 'RG-59 (6.1 mm, 75 Ω)', 75, 0.58, 3.7, 'pe'),
-  type('rg6', 'RG-6 (6.9 mm, 75 Ω, foam)', 75, 1.02, 4.57, 'foam'),
-  type('rg11', 'RG-11 (10.3 mm, 75 Ω)', 75, 1.2, 7.24, 'pe'),
+  type('RG, 50 Ω', 'rg174', 'RG-174 (2.8 mm, 50 Ω)', 50, 0.48, 1.52, 'pe'),
+  type('RG, 50 Ω', 'rg316', 'RG-316 (2.5 mm, 50 Ω, PTFE)', 50, 0.51, 1.52, 'ptfe'),
+  type('RG, 50 Ω', 'rg58', 'RG-58 (5 mm, 50 Ω)', 50, 0.9, 2.95, 'pe'),
+  type('RG, 50 Ω', 'rg142', 'RG-142 (5 mm, 50 Ω, PTFE)', 50, 0.94, 2.95, 'ptfe'),
+  type('RG, 50 Ω', 'mini8', 'Mini 8 / RG-8X class (6.5 mm, 50 Ω, foam)', 50, 1.6, 4.7, 'foam', undefined, 'Not a MIL type: makers differ. Representative dimensions.'),
+  type('RG, 50 Ω', 'rg213', 'RG-213 (10.3 mm, 50 Ω)', 50, 2.26, 7.24, 'pe'),
+  type('LMR, 50 Ω', 'lmr195', 'LMR-195 (5 mm, 50 Ω, foam)', 50, 0.94, 2.79, 'foam', 0.83, LMR_NOTE),
+  type('LMR, 50 Ω', 'lmr240', 'LMR-240 (6.1 mm, 50 Ω, foam)', 50, 1.42, 3.81, 'foam', 0.84, LMR_NOTE),
+  type('LMR, 50 Ω', 'lmr400', 'LMR-400 (10.3 mm, 50 Ω, foam)', 50, 2.74, 7.24, 'foam', 0.85, LMR_NOTE),
+  type('LMR, 50 Ω', 'lmr600', 'LMR-600 (15 mm, 50 Ω, foam)', 50, 4.47, 11.56, 'foam', 0.87, LMR_NOTE),
+  type('RG, 75 Ω', 'rg59', 'RG-59 (6.1 mm, 75 Ω)', 75, 0.58, 3.7, 'pe'),
+  type('RG, 75 Ω', 'rg6', 'RG-6 (6.9 mm, 75 Ω, foam)', 75, 1.02, 4.57, 'foam'),
+  type('RG, 75 Ω', 'rg11', 'RG-11 (10.3 mm, 75 Ω)', 75, 1.2, 7.24, 'pe'),
 ];
+
+/** The catalogue's groups, in order of first appearance, for an optgroup picker. */
+export function catalogueGroups(): { group: string; cables: Cable[] }[] {
+  const groups: { group: string; cables: Cable[] }[] = [];
+  for (const cable of CATALOGUE) {
+    const group = cable.group ?? 'Other';
+    const found = groups.find((g) => g.group === group);
+    if (found) found.cables.push(cable);
+    else groups.push({ group, cables: [cable] });
+  }
+  return groups;
+}
 
 export function cableById(id: string): Cable | undefined {
   return CATALOGUE.find((c) => c.id === id);
 }
 
-/** Z0 of a coaxial geometry: (eta0 / 2 pi sqrt(epsilon)) ln(D / d). */
-export function characteristicImpedance(g: Geometry): number {
-  if (!(g.innerMm > 0) || !(g.dielectricMm > g.innerMm)) return NaN;
-  return (ETA0 / (2 * Math.PI * Math.sqrt(dielectricById(g.dielectric).epsilon))) * Math.log(g.dielectricMm / g.innerMm);
+/** Z0 of a coaxial geometry: (eta0 / 2 pi sqrt(epsilon)) ln(D / d), with the dielectric's generic permittivity unless given. */
+export function characteristicImpedance(g: Geometry, epsilon = dielectricById(g.dielectric).epsilon): number {
+  if (!(g.innerMm > 0) || !(g.dielectricMm > g.innerMm) || !(epsilon >= 1)) return NaN;
+  return (ETA0 / (2 * Math.PI * Math.sqrt(epsilon))) * Math.log(g.dielectricMm / g.innerMm);
 }
 
 /** Surface resistance of a conductor at this frequency, sqrt(pi f mu0 rho), ohms. */
@@ -136,7 +161,8 @@ export function matchedLossPer100m(cable: Cable, fMHz: number): MatchedLoss {
   // Series resistance per metre of the two conductors, each carrying the current in one skin depth.
   const rPerM = (surfaceResistanceOhms(fMHz) / Math.PI) * (1 / (g.innerMm / 1000) + 1 / (g.dielectricMm / 1000));
   const conductorDb = (rPerM / (2 * cable.z0)) * DB_PER_NEPER * 100;
-  const dielectricDb = ((Math.PI * fMHz * 1e6 * Math.sqrt(material.epsilon) * material.tanDelta) / C0) * DB_PER_NEPER * 100;
+  // The permittivity the cable's own velocity factor implies, with the material family's loss tangent.
+  const dielectricDb = ((Math.PI * fMHz * 1e6 * Math.sqrt(epsilonOf(cable)) * material.tanDelta) / C0) * DB_PER_NEPER * 100;
   return { conductorDb, dielectricDb, totalDb: conductorDb + dielectricDb };
 }
 
