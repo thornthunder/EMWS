@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import type { Vec3 } from '../../engine/nec2/types';
 import { tidy, withAxis } from '../../lib/vec3';
+import { bandsUpTo } from '../../lib/bands';
 import { loadLoadHandoff } from '../../lib/handoff';
 import type { HistoryAction } from './history';
 import {
@@ -43,21 +44,8 @@ import {
 import { formatValue, NumberField } from '../../ui/NumberField';
 import { type TuneGoal, type TuneRequest, type TuneVariable, currentValue, suggestedRange } from './tune';
 
-/** Amateur bands, IARU Region 1 edges. Picking one sets up a sweep across it. */
-const BANDS: { name: string; from: number; to: number }[] = [
-  { name: '160 m', from: 1.81, to: 2.0 },
-  { name: '80 m', from: 3.5, to: 3.8 },
-  { name: '40 m', from: 7.0, to: 7.2 },
-  { name: '30 m', from: 10.1, to: 10.15 },
-  { name: '20 m', from: 14.0, to: 14.35 },
-  { name: '17 m', from: 18.068, to: 18.168 },
-  { name: '15 m', from: 21.0, to: 21.45 },
-  { name: '12 m', from: 24.89, to: 24.99 },
-  { name: '10 m', from: 28.0, to: 29.7 },
-  { name: '6 m', from: 50.0, to: 52.0 },
-  { name: '2 m', from: 144.0, to: 146.0 },
-  { name: '70 cm', from: 430.0, to: 440.0 },
-];
+/** Amateur bands through 23 cm, from the suite's one band list. Picking one sets up a sweep across it. */
+const BANDS = bandsUpTo(1300);
 
 /** Points a sweep starts with when you switch one on, or pick a band. */
 const SWEEP_POINTS = 21;

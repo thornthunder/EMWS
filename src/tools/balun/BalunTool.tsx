@@ -1,6 +1,7 @@
 // Baluns and ununs: choose a core, wind it, and see what it does before cutting wire.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { bandPairs } from '../../lib/bands';
 import { type Complex, cAbs } from '../../lib/complex';
 import { type ImpedanceHandoff, saveImpedanceHandoff } from '../../lib/handoff';
 import { formatImpedance } from '../../lib/rf';
@@ -16,18 +17,8 @@ import { WindingPad } from './WindingPad';
 
 const DESIGN_KEY = 'emws.balun.v1';
 
-/** A frequency to stand for each band, MHz. */
-const BANDS: [string, number][] = [
-  ['160 m', 1.85],
-  ['80 m', 3.6],
-  ['40 m', 7.1],
-  ['30 m', 10.12],
-  ['20 m', 14.2],
-  ['17 m', 18.1],
-  ['15 m', 21.2],
-  ['12 m', 24.94],
-  ['10 m', 28.5],
-];
+/** A frequency to stand for each band, MHz, from the suite's one band list; the table keeps those inside the sweep. */
+const BANDS: [string, number][] = bandPairs();
 
 function read<T>(key: string, ok: (value: unknown) => value is T): T | undefined {
   try {

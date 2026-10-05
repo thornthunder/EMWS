@@ -11,8 +11,8 @@ import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
 import { magnitude, mismatchLossFromRho, reflectionCoefficient, returnLossFromRho, rhoFromSwr, swrFromPowers, swrFromRho } from '../../lib/rf';
 import { LineChart } from '../../ui/LineChart';
 import { NumberField } from '../../ui/NumberField';
+import { BANDS } from '../../lib/bands';
 import { logFrequencies } from '../lc/filter';
-import { BANDS } from '../lc/model';
 import { formatSi } from '../smith-chart/units';
 import { type Pad, type Topology, designPad, evaluatePad, minimumLossDb, minimumLossPad, snapPad } from './attenuator';
 import { type Cable, CATALOGUE, cableById, catalogueGroups, dielectricById, fitDatasheet, lossOfRun, matchedLossPer100m, runPowers } from './coax';
@@ -102,9 +102,9 @@ function Notes({ notes }: { notes: Note[] }) {
 function BandButtons({ fMHz, onPick }: { fMHz: number; onPick: (f: number) => void }) {
   return (
     <div className="band-buttons">
-      {BANDS.map(([name, f]) => (
-        <button key={name} type="button" className="small" aria-pressed={Math.abs(fMHz - f) < 0.01} onClick={() => onPick(f)}>
-          {name}
+      {BANDS.map((b) => (
+        <button key={b.name} type="button" className="small" aria-pressed={Math.abs(fMHz - b.at) < 0.01} onClick={() => onPick(b.at)}>
+          {b.name}
         </button>
       ))}
     </div>
@@ -213,7 +213,11 @@ function WireSection({ inputs, onChange }: { inputs: WireInputs; onChange: (p: P
 
 // ---------------------------------------------------------------- coax
 
-const CHART_F = logFrequencies(1, 1000, 121);
+/** 1 MHz to 1 GHz, or further when the frequency in use is above that, so the mark stays on the chart. */
+function chartFrequencies(fMHz: number): number[] {
+  const top = fMHz > 700 ? 10 ** Math.ceil(Math.log10(fMHz * 1.5)) : 1000;
+  return logFrequencies(1, top, 121);
+}
 
 function cableOf(inputs: CoaxInputs): Cable {
   if (inputs.cableId === 'datasheet') {
@@ -246,6 +250,12 @@ export function coaxNotes(inputs: CoaxInputs, cable: Cable): Note[] {
       notes.push({ severity: 'warning', message: 'Those two figures do not follow the usual law (a √f part for the conductors plus an f part for the dielectric). Check them against the datasheet; the fit still passes through both.' });
     }
   }
+  if (inputs.fMHz > 3000 && cable.loss.kind === 'geometry') {
+    notes.push({
+      severity: 'warning',
+      message: `At ${inputs.fMHz} MHz the catalogue figure is a rough floor at best: the dielectric figures are generic, connectors and bends matter as much as the cable, and many types are not specified this high. Use the datasheet, and expect worse.`,
+    });
+  }
   if (inputs.loadSwr > 3) notes.push({ severity: 'warning', message: `With an SWR of ${inputs.loadSwr} on the cable the extra loss is real, but the bigger risk is the voltage at the peaks and the heat at the connectors. The modeller's Tune can bring the antenna nearer resonance.` });
   return notes;
 }
@@ -261,6 +271,7 @@ function CoaxSection({ inputs, onChange }: { inputs: CoaxInputs; onChange: (p: P
   const fromModel = handoff ? handoffSwr(handoff, inputs.fMHz, cable.z0) : undefined;
   const notes = coaxNotes(inputs, cable);
   const floor = cable.loss.kind === 'geometry';
+  const chartF = chartFrequencies(inputs.fMHz);
   const setDatasheet = (p: Partial<CoaxInputs['datasheet']>) => onChange({ datasheet: { ...inputs.datasheet, ...p } });
   const setPoint = (i: 0 | 1, p: Partial<{ fMHz: number; dbPer100m: number }>) => {
     const points: CoaxInputs['datasheet']['points'] = [{ ...inputs.datasheet.points[0] }, { ...inputs.datasheet.points[1] }];
@@ -396,8 +407,8 @@ function CoaxSection({ inputs, onChange }: { inputs: CoaxInputs; onChange: (p: P
         <section className="panel">
           <LineChart
             title={`Matched loss per 100 m${floor ? ' (floor)' : ''}`}
-            fMHz={CHART_F}
-            series={[{ label: cable.name, colour: 'var(--series-1)', values: CHART_F.map((f) => matchedLossPer100m(cable, f).totalDb) }]}
+            fMHz={chartF}
+            series={[{ label: cable.name, colour: 'var(--series-1)', values: chartF.map((f) => matchedLossPer100m(cable, f).totalDb) }]}
             unit="dB"
             marks={[{ fMHz: inputs.fMHz, label: `${inputs.fMHz} MHz` }]}
             hover={hover}

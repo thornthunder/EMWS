@@ -3,6 +3,7 @@
 // The coil is the common part. A trap's inductor and a filter's inductors are coils, so
 // the coil tab's former and wire are what "wind it" means everywhere else on the page.
 
+import { bandPairs, bandsUpTo } from '../../lib/bands';
 import { INSULATION, awgMm } from '../balun/catalog';
 import type { CoilSpec } from './coil';
 import type { FilterSpec } from './filter';
@@ -65,20 +66,8 @@ export const SPACINGS: { value: number; label: string }[] = [
   { value: 3, label: 'two wires apart' },
 ];
 
-/** The HF and 6 m amateur bands, at a frequency in the middle of each. */
-export const BANDS: [string, number][] = [
-  ['160 m', 1.9],
-  ['80 m', 3.65],
-  ['60 m', 5.36],
-  ['40 m', 7.1],
-  ['30 m', 10.12],
-  ['20 m', 14.175],
-  ['17 m', 18.1],
-  ['15 m', 21.2],
-  ['12 m', 24.94],
-  ['10 m', 28.5],
-  ['6 m', 50.5],
-];
+/** The bands a trap or filter is built for: HF through 70 cm, from the suite's one band list. */
+export const BANDS: [string, number][] = bandPairs(bandsUpTo(450));
 
 export function defaultState(): LcState {
   const henries = 8e-6;

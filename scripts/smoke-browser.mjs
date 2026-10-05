@@ -229,7 +229,7 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   let now = await state();
   check(now.title === '49:1 · 2 : 14 turns', `opens on the end-fed transformer: ${now.title}`);
   check(now.turnsDrawn === 14, `and draws its ${now.turnsDrawn} turns on the core`);
-  check(now.charts >= 4 && now.bands === 9, `with ${now.charts} charts and ${now.bands} bands in the table`);
+  check(now.charts >= 4 && now.bands === 10, `with ${now.charts} charts and ${now.bands} bands in the table (160 m to 10 m, 60 m included)`);
   check(/built-in estimate/.test(now.note), 'and says plainly that the ferrite is an estimate');
   const lossOn43 = now.summary['Lost inside'];
   check(lossOn43?.endsWith('dB'), `80 m on #43 loses ${lossOn43}, ${now.summary['Heat in the core']} in the core`);

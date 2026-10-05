@@ -401,3 +401,7 @@ delete them from a normal shell.
 - No new runtime dependencies without a good reason; plots are hand-written SVG.
 - `public/web.config`: every `<add>`/`<mimeMap>` is preceded by a `<remove>` (IIS 500s on duplicates).
 - NEC angles: theta from +Z (zenith), phi from +X. Elevation = 90 - |theta|.
+- **One band list**: `src/lib/bands.ts` (IARU Region 1 edges + a standing frequency each,
+  160 m through 3 cm - ZR1JT's club talks 2 m / 70 cm / 23 cm / QO-100 as much as HF). Tools
+  take a slice: modeler picker `bandsUpTo(1300)`, coil/filter `bandsUpTo(450)`, balun and
+  toolbox all of it. Never add a second list; `tests/bands.test.ts` checks the slices.
