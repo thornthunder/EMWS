@@ -25,6 +25,11 @@ export function ToolboxGuide() {
         <li>
           On <em>dB, watts &amp; S-units</em>, −73 dBm reads as S9, 50 µV. Change the band to VHF and watch S9 move 20 dB.
         </li>
+        <li>
+          On <em>Microwave &amp; link budget</em>, the page opens on the club's standing example: a few watts at 2.4 GHz into a
+          1.2 m dish, 35,786 km up to a geostationary satellite. Read the EIRP, what the path costs, and why the preamp belongs
+          at the antenna.
+        </li>
       </ol>
 
       <h2>Wavelength and wire</h2>
@@ -122,11 +127,35 @@ export function ToolboxGuide() {
         cable costs almost nothing; the same SWR at the end of a long thin one costs plenty.
       </p>
 
+      <h2>Microwave and the link budget</h2>
+      <p>
+        Everything on this tab is textbook arithmetic with the working shown. <strong>Free-space path loss</strong> is
+        (4πd/λ)²: 20 dB for every tenfold of distance or frequency, and <em>free space</em> means exactly that — no ground
+        gain, no rain, no trees, so a terrestrial path does both better and worse. A <strong>dish's gain</strong> is η (πD/λ)²
+        with the efficiency typed in (0.5 to 0.6 covers most amateur dishes), and its beamwidth about 70 λ/D degrees — at
+        10 GHz a 1.2 m dish is a two-degree torch, and the mount matters more than the metal. The{' '}
+        <strong>radio horizon</strong> is √(2kRh) over a 4/3 earth, which is average refraction, not a promise.
+      </p>
+      <p>
+        The noise side is the other Friis formula. The floor is <strong>kTB</strong> — −174 dBm in every hertz at 290 K, from
+        Boltzmann's constant, which the SI now defines exactly — and the receiver adds its noise figure on top. The{' '}
+        <strong>cascade</strong> panel works F = F₁ + (F₂ − 1)/G₁ + … for your preamp, feeder and rig, both ways round: put
+        the preamp at the antenna and the feeder's loss lands after its gain, where it barely counts. That one comparison is
+        the whole case for a mast-head preamp, in your own numbers.
+      </p>
+      <p>
+        The budget itself is honest about what it cannot know. For a satellite uplink it gives you <em>your</em> half — EIRP
+        and path loss; what the transponder makes of it depends on the satellite's receive system, and this page states no
+        satellite's figures. The SNR and margin are for a far end whose gain and receiver <em>you</em> typed, and the SNR a
+        mode needs is yours to set.
+      </p>
+
       <h2>What this tool does not do</h2>
       <ul>
         <li>It does not solve an antenna, a match or a filter; the Antenna Modeler, the Smith chart and Coils, traps and filters do.</li>
         <li>It does not know your cable's real loss unless you type it from the datasheet; the catalogue is a floor.</li>
         <li>It states no regulatory limits, exposure or otherwise, and no component voltage ratings.</li>
+        <li>It states no satellite's transponder figures, and no mode's required SNR: both are typed in.</li>
         <li>Everything it remembers (the last figures on each tab) stays in this browser.</li>
       </ul>
     </>

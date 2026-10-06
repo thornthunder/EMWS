@@ -1,0 +1,195 @@
+// "Measure what you built": a NanoVNA's port 1 into the filter, port 2 out of it.
+//
+// MeasureWithVna's sibling for S21. A NanoVNA-V2 sends raw readings, so for one of these
+// the component insists on a THRU (the two cables joined) before it hands anything on,
+// and offers an ISOLATION (both cables terminated) for measurements deeper than the
+// instrument's own leakage - a notch's floor. The classic NanoVNA applies its own
+// calibration, thru included, and its readings go straight through.
+//
+// Public domain (The Unlicense). By ZR1JT.
+
+import { useEffect, useRef, useState } from 'react';
+import { type Instrument, VnaError, connect, serialUnavailableReason } from '../lib/vna';
+import { type ThruCalibration, type TransmissionPoint, applyThru, makeThruCalibration, sameTransmissionFrequencies, thruCovers } from '../lib/vna/transmission';
+import { NumberField } from './NumberField';
+
+export interface MeasureTransmissionProps {
+  startMHz: number;
+  stopMHz: number;
+  points?: number;
+  action: string;
+  onMeasured: (points: TransmissionPoint[], source: string) => void;
+}
+
+export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, onMeasured }: MeasureTransmissionProps) {
+  const unavailable = serialUnavailableReason();
+  const [instrument, setInstrument] = useState<Instrument | undefined>();
+  const [range, setRange] = useState({ startMHz, stopMHz, points });
+  const [busy, setBusy] = useState<string | undefined>();
+  const [progress, setProgress] = useState<[number, number] | undefined>();
+  const [error, setError] = useState<string | undefined>();
+  const [thru, setThru] = useState<TransmissionPoint[] | undefined>();
+  const [isolation, setIsolation] = useState<TransmissionPoint[] | undefined>();
+  const [calibration, setCalibration] = useState<ThruCalibration | undefined>();
+  const [lastSweep, setLastSweep] = useState<{ points: number; at: string } | undefined>();
+  const live = useRef<Instrument | undefined>(undefined);
+
+  useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz })), [startMHz, stopMHz]);
+  // Standards belong to the range they were swept over; a new range starts them again.
+  useEffect(() => {
+    setThru(undefined);
+    setIsolation(undefined);
+  }, [range.startMHz, range.stopMHz, range.points]);
+  useEffect(() => () => void live.current?.close().catch(() => {}), []);
+
+  const say = (e: unknown) => setError(e instanceof VnaError ? e.message : e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+
+  const open = async () => {
+    setError(undefined);
+    setBusy('Asking for the port…');
+    try {
+      const found = await connect();
+      live.current = found;
+      setInstrument(found);
+    } catch (e) {
+      say(e);
+    } finally {
+      setBusy(undefined);
+    }
+  };
+
+  const close = async () => {
+    await live.current?.close().catch(() => {});
+    live.current = undefined;
+    setInstrument(undefined);
+    setThru(undefined);
+    setIsolation(undefined);
+    setCalibration(undefined);
+    setLastSweep(undefined);
+  };
+
+  const sweepRaw = async (what: string): Promise<TransmissionPoint[] | undefined> => {
+    const vna = live.current;
+    if (!vna) return undefined;
+    setError(undefined);
+    setBusy(what);
+    setProgress(undefined);
+    try {
+      return await vna.sweepTransmission({ ...range, onProgress: (done, total) => setProgress([done, total]) });
+    } catch (e) {
+      say(e);
+      return undefined;
+    } finally {
+      setBusy(undefined);
+      setProgress(undefined);
+    }
+  };
+
+  const needsCalibration = instrument?.kind === 'nanovna-v2';
+  const coverage = calibration ? thruCovers(calibration, range.startMHz, range.stopMHz) : true;
+  const calibrated = !needsCalibration || (calibration !== undefined && coverage);
+
+  const takeThru = async () => {
+    const raw = await sweepRaw('Measuring the thru…');
+    if (!raw) return;
+    setThru(raw);
+    // An isolation from another range cannot be combined with this thru.
+    const iso = isolation && sameTransmissionFrequencies(raw, isolation) ? isolation : undefined;
+    if (!iso) setIsolation(undefined);
+    setCalibration(makeThruCalibration(raw, iso));
+  };
+
+  const takeIsolation = async () => {
+    const raw = await sweepRaw('Measuring the isolation…');
+    if (!raw) return;
+    setIsolation(raw);
+    if (thru && sameTransmissionFrequencies(thru, raw)) setCalibration(makeThruCalibration(thru, raw));
+  };
+
+  const measure = async () => {
+    const raw = await sweepRaw('Sweeping…');
+    if (!raw) return;
+    const points = needsCalibration && calibration ? applyThru(raw, calibration) : raw;
+    setLastSweep({ points: points.length, at: new Date().toLocaleTimeString() });
+    onMeasured(points, `${instrument?.name ?? 'NanoVNA'}, ${range.startMHz}–${range.stopMHz} MHz`);
+  };
+
+  if (unavailable) {
+    return (
+      <p className="muted vna-unavailable">
+        <strong>Measure with a NanoVNA:</strong> {unavailable}
+      </p>
+    );
+  }
+
+  if (!instrument) {
+    return (
+      <div className="vna vna-s21">
+        <div className="button-row">
+          <button type="button" className="small" onClick={open} disabled={busy !== undefined}>
+            {busy ?? 'Connect a NanoVNA…'}
+          </button>
+          <span className="muted">Port 1 into the filter, port 2 out of it.</span>
+        </div>
+        {error && <p className="alert-inline">{error}</p>}
+      </div>
+    );
+  }
+
+  return (
+    <div className="vna vna-s21">
+      <p className="vna-status">
+        <strong>{instrument.name}</strong> connected.{' '}
+        <button type="button" className="link" onClick={close}>
+          Disconnect
+        </button>
+      </p>
+      <div className="field-row">
+        <NumberField label="Sweep from" value={range.startMHz} above={0} unit="MHz" onCommit={(v) => setRange({ ...range, startMHz: Math.min(v, range.stopMHz * 0.99) })} />
+        <NumberField label="to" value={range.stopMHz} above={0} unit="MHz" onCommit={(v) => setRange({ ...range, stopMHz: Math.max(v, range.startMHz * 1.01) })} />
+        <NumberField label="Points" value={range.points} min={2} integer onCommit={(v) => setRange({ ...range, points: Math.min(v, instrument.kind === 'nanovna-v2' ? 1024 : 401) })} />
+      </div>
+      {needsCalibration ? (
+        <div className="vna-calibration">
+          <p className="muted">
+            A NanoVNA-V2 sends <strong>raw</strong> readings. Join the two cables with a barrel and press <em>Thru</em>. For a deep notch,
+            also put a 50 Ω load on the end of each cable and press <em>Isolation</em>: it takes out the leakage inside the instrument.
+          </p>
+          <div className="button-row">
+            <button type="button" className="small" aria-pressed={thru !== undefined} disabled={busy !== undefined} onClick={takeThru}>
+              {thru ? '✓ ' : ''}Thru
+            </button>
+            <button type="button" className="small" aria-pressed={isolation !== undefined} disabled={busy !== undefined} onClick={takeIsolation}>
+              {isolation ? '✓ ' : ''}Isolation (optional)
+            </button>
+            {calibration && (
+              <span className="muted">
+                Calibrated {new Date(calibration.madeAt).toLocaleTimeString()}
+                {calibration.isolation ? ', with isolation' : ', thru only'}
+                {coverage ? '' : ' — but not over this range. Calibrate again for it.'}
+              </span>
+            )}
+          </div>
+        </div>
+      ) : (
+        <p className="muted">Readings carry the NanoVNA's own calibration: calibrate it on the instrument with its thru, at the ends of your two cables.</p>
+      )}
+      <div className="button-row">
+        <button type="button" className="small" onClick={measure} disabled={busy !== undefined || !calibrated} title={!calibrated ? 'Measure the thru first' : undefined}>
+          {busy ?? action}
+        </button>
+        {progress && (
+          <span className="muted">
+            {progress[0]} of {progress[1]}
+          </span>
+        )}
+        {!busy && lastSweep && (
+          <span className="muted">
+            {lastSweep.points} points at {lastSweep.at}.
+          </span>
+        )}
+      </div>
+      {error && <p className="alert-inline">{error}</p>}
+    </div>
+  );
+}

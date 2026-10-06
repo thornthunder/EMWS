@@ -55,6 +55,12 @@ export function Home() {
         account needed, and it keeps working offline; nothing leaves your machine unless a site offers
         community sharing and you choose to use it.
       </p>
+      <p className="muted">
+        On an https site you can <strong>install EMWS as an app</strong> — look for "Install" in the browser's
+        menu or address bar — and it opens in its own window and works with no connection at all, on the bench
+        or on a hilltop. Ctrl+P on any tool prints the results cleanly, charts and patterns included, for a
+        club newsletter or the shack wall.
+      </p>
       <div className="cards">
         {TOOLS.map((tool) =>
           tool.href ? (

@@ -18,6 +18,8 @@ export interface Series {
   /** Second design in a comparison: same hue family is not enough, so it is dashed too. */
   dashed?: boolean;
   values: number[];
+  /** Its own frequencies, when it was not sampled at the chart's - a measurement laid over a design. */
+  fMHz?: number[];
 }
 
 export interface LineChartProps {
@@ -34,6 +36,14 @@ export interface LineChartProps {
   format?: (value: number) => string;
   hover: number | undefined;
   onHover: (index: number | undefined) => void;
+}
+
+/** A series' value at the hovered point: by index on the chart's frequencies, by nearest frequency on its own. */
+function valueAt(s: Series, index: number, fMHz: number): number | undefined {
+  if (!s.fMHz) return s.values[index];
+  let best = -1;
+  for (let i = 0; i < s.fMHz.length; i++) if (best < 0 || Math.abs(s.fMHz[i]! - fMHz) < Math.abs(s.fMHz[best]! - fMHz)) best = i;
+  return best < 0 ? undefined : s.values[best];
 }
 
 /** Frequencies worth labelling: the amateur bands, plus round numbers around them. */
@@ -64,11 +74,14 @@ export function LineChart({ title, fMHz, series, unit, ceiling, floor = 0, guide
   };
 
   let lastTickX = -Infinity;
-  const ticks = TICKS.filter((t) => t >= first * 0.999 && t <= last * 1.001).filter((t) => {
+  const banded = TICKS.filter((t) => t >= first * 0.999 && t <= last * 1.001).filter((t) => {
     if (x(t) - lastTickX < 44) return false;
     lastTickX = x(t);
     return true;
   });
+  // A narrow sweep (one band in the Antenna Modeler, say) holds no band tick at all:
+  // label its ends instead of leaving the axis mute.
+  const ticks = banded.length >= 2 ? banded : [Number(first.toPrecision(4)), Number(last.toPrecision(4))];
   // Grid lines on round numbers - 1, 2, 3 for SWR - rather than quarters of whatever the
   // range happens to be.
   const span = top - floor;
@@ -111,13 +124,16 @@ export function LineChart({ title, fMHz, series, unit, ceiling, floor = 0, guide
         {at !== undefined && hover !== undefined && (
           <span className="chart-readout">
             {at.toFixed(at < 10 ? 2 : 1)} MHz:{' '}
-            {series.map((s, i) => (
-              <span key={s.label}>
-                {i > 0 ? ' · ' : ''}
-                {series.length > 1 ? `${s.label} ` : ''}
-                <strong>{Number.isFinite(s.values[hover]!) ? show(s.values[hover]!) : '—'}</strong>
-              </span>
-            ))}
+            {series.map((s, i) => {
+              const v = valueAt(s, hover, at);
+              return (
+                <span key={s.label}>
+                  {i > 0 ? ' · ' : ''}
+                  {series.length > 1 ? `${s.label} ` : ''}
+                  <strong>{v !== undefined && Number.isFinite(v) ? show(v) : '—'}</strong>
+                </span>
+              );
+            })}
           </span>
         )}
       </figcaption>
@@ -171,22 +187,28 @@ export function LineChart({ title, fMHz, series, unit, ceiling, floor = 0, guide
             </g>
           ))}
 
-        {series.map((s) => (
-          <path
-            key={s.label}
-            className="chart-line"
-            style={{ stroke: s.colour }}
-            strokeDasharray={s.dashed ? '7 5' : undefined}
-            d={s.values.map((v, i) => `${i === 0 ? 'M' : 'L'}${x(fMHz[i]!).toFixed(1)},${y(v).toFixed(1)}`).join(' ')}
-          />
-        ))}
+        {series.map((s) => {
+          // A series with frequencies of its own is clipped to the chart's span.
+          const fs = s.fMHz ?? fMHz;
+          const pts = s.values.flatMap((v, i) => (fs[i] !== undefined && fs[i]! >= first && fs[i]! <= last ? [`${x(fs[i]!).toFixed(1)},${y(v).toFixed(1)}`] : []));
+          return (
+            <path
+              key={s.label}
+              className="chart-line"
+              style={{ stroke: s.colour }}
+              strokeDasharray={s.dashed ? '7 5' : undefined}
+              d={pts.map((p, i) => `${i === 0 ? 'M' : 'L'}${p}`).join(' ')}
+            />
+          );
+        })}
 
         {at !== undefined && hover !== undefined && (
           <g>
             <line className="chart-crosshair" x1={x(at)} x2={x(at)} y1={PAD.top} y2={HEIGHT - PAD.bottom} />
-            {series.map((s) => (
-              <circle key={s.label} className="chart-dot" style={{ fill: s.colour }} cx={x(at)} cy={y(s.values[hover]!)} r={4.5} />
-            ))}
+            {series.map((s) => {
+              const v = valueAt(s, hover, at);
+              return v === undefined ? null : <circle key={s.label} className="chart-dot" style={{ fill: s.colour }} cx={x(at)} cy={y(v)} r={4.5} />;
+            })}
           </g>
         )}
       </svg>

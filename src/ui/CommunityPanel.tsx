@@ -1,17 +1,23 @@
-// Sharing measured cores with the community, where the site offers it.
+// The club library: sharing measured cores, balun designs and antenna models, where the
+// site offers it.
 //
-// The section only exists on a site whose operator set a database up: one probe on
-// mount decides, and on a static host or a downloaded copy this renders nothing at all,
-// keeping EMWS the standalone tool it was built as. Accounts are a callsign and a
-// password, nothing more. Browsing what others shared needs no account; keeping and
-// sharing your own does, and sharing always goes through the CC0 dedication - a
-// measurement only becomes everyone's when its owner gives it away.
+// The section only exists on a site whose operator set a database up: one probe on mount
+// decides, and on a static host or a downloaded copy this renders nothing at all, keeping
+// EMWS the standalone tool it was built as. Accounts are a callsign and a password, nothing
+// more. Browsing what others shared needs no account; keeping and sharing your own does,
+// and sharing always goes through the CC0 dedication - a measurement or a design only
+// becomes everyone's when its owner gives it away.
+//
+// One account, several SHELVES: each tool says what it keeps (its kind), how one of its
+// own becomes a file, and what taking a shared one means. The file is always the owning
+// tool's own format, so taking one is that tool's file import and nothing else.
 //
 // Public domain (The Unlicense). By ZR1JT.
 
-import { type FormEvent, useCallback, useEffect, useState } from 'react';
+import { type FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
   type CommunityItem,
+  type CommunityKind,
   type SharedItem,
   browseShared,
   deleteItem,
@@ -27,14 +33,39 @@ import {
   saveItem,
   setEmail,
   shareItem,
-} from '../../lib/community';
-import { type CoreProfile, exportProfiles, importProfiles } from './profiles';
+} from '../lib/community';
+
+/** Something of yours a shelf can keep or share. */
+export interface LocalItem {
+  id: string;
+  name: string;
+  summary: string;
+  /** The tool's own file for it. May throw, with a reason, when it cannot be shared faithfully. */
+  payload: () => string;
+}
+
+export interface CommunityShelf {
+  kind: CommunityKind;
+  /** "Measured cores", "Balun designs", "Antenna models". */
+  title: string;
+  local: LocalItem[];
+  /** What to say when there is nothing of yours to keep yet. */
+  emptyLocal: string;
+  /** The button on a shared item: "Add to my cores", "Open it". */
+  takeLabel: string;
+  /** Takes a shared item's file in, by the tool's own import. May throw, with a reason. */
+  onTake: (payload: string, item: SharedItem) => void;
+}
 
 export interface CommunityPanelProps {
-  /** The cores measured and kept in this browser. */
-  profiles: CoreProfile[];
-  /** Takes imported community cores into the local bin. */
-  onAddProfiles: (profiles: CoreProfile[]) => void;
+  shelves: CommunityShelf[];
+  /** The section's heading. */
+  title?: string;
+  /** A share asked for elsewhere (a core chip's menu): scroll here and start the dedication. */
+  shareRequest?: { kind: CommunityKind; id: string };
+  onShareHandled?: () => void;
+  /** Told once the probe has answered, so menus offer Share only where a store exists. Keep it stable. */
+  onReady?: (ready: boolean) => void;
 }
 
 /** What a share means, said before it happens. */
@@ -43,27 +74,31 @@ interface Pending {
   action: () => Promise<void>;
 }
 
-const describeProfile = (p: CoreProfile) => `${p.size.name} in ${p.mix}, ${p.setup.turns} turns, ${p.sweep.length} points`;
-
-export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps) {
+export function CommunityPanel({ shelves, title = 'Community', shareRequest, onShareHandled, onReady }: CommunityPanelProps) {
   const [store, setStore] = useState<'probing' | 'none' | 'ready'>('probing');
   const [mail, setMail] = useState(false);
   const [callsign, setCallsign] = useState<string | null>(null);
   const [email, setEmailShown] = useState<string | null>(null);
   const [mine, setMine] = useState<CommunityItem[]>([]);
-  const [shared, setShared] = useState<SharedItem[]>([]);
+  const [shared, setShared] = useState<Partial<Record<CommunityKind, SharedItem[]>>>({});
   const [form, setForm] = useState({ callsign: '', password: '', email: '' });
   /** The forgot-password walk: hidden, asking for the callsign, or typing the mailed code. */
   const [forgot, setForgot] = useState<'no' | 'ask' | 'code'>('no');
   const [reset, setReset] = useState({ callsign: '', code: '', password: '' });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | undefined>();
+  const [taken, setTaken] = useState<string | undefined>();
   const [pending, setPending] = useState<Pending | undefined>();
+  const kinds = shelves.map((s) => s.kind).join(',');
 
-  const refresh = useCallback(async (who: string | null) => {
-    setShared(await browseShared('core-profile'));
-    setMine(who ? await myItems() : []);
-  }, []);
+  const refresh = useCallback(
+    async (who: string | null) => {
+      const lists = await Promise.all(kinds.split(',').map(async (k) => [k, await browseShared(k as CommunityKind)] as const));
+      setShared(Object.fromEntries(lists));
+      setMine(who ? await myItems() : []);
+    },
+    [kinds],
+  );
 
   useEffect(() => {
     let current = true;
@@ -72,9 +107,11 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
       if (!current) return;
       if (!probe) {
         setStore('none');
+        onReady?.(false);
         return;
       }
       setStore('ready');
+      onReady?.(true);
       setMail(probe.mail);
       try {
         const who = await me();
@@ -89,9 +126,7 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
     return () => {
       current = false;
     };
-  }, [refresh]);
-
-  if (store !== 'ready') return null;
+  }, [refresh, onReady]);
 
   const run = (work: () => Promise<void>) => {
     setError(undefined);
@@ -100,6 +135,42 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setBusy(false));
   };
+
+  /** The CC0 step: nothing is shared until the dedication is confirmed. */
+  const askToShare = (what: string, action: () => Promise<void>) => setPending({ what, action });
+  const confirmShare = () => {
+    const p = pending;
+    setPending(undefined);
+    if (p) run(p.action);
+  };
+  const keep = (shelf: CommunityShelf, item: LocalItem, share: boolean) => {
+    const save = async () => {
+      await saveItem({ kind: shelf.kind, name: item.name, summary: item.summary, payload: item.payload(), public: share, cc0: share });
+      await refresh(callsign);
+    };
+    if (share) askToShare(item.name, save);
+    else run(save);
+  };
+
+  // A share asked for elsewhere: walk the eye here, then the same dedication step as the
+  // panel's own Share button - or, signed out, say what to do.
+  const rootRef = useRef<HTMLElement>(null);
+  const requestKey = shareRequest ? `${shareRequest.kind}:${shareRequest.id}` : undefined;
+  useEffect(() => {
+    if (!shareRequest || store !== 'ready') return;
+    rootRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    const shelf = shelves.find((s) => s.kind === shareRequest.kind);
+    const item = shelf?.local.find((l) => l.id === shareRequest.id);
+    if (shelf && item) {
+      if (callsign !== null) keep(shelf, item, true);
+      else setError(`Sign in or register here first, then press Share… beside ${item.name}.`);
+    }
+    onShareHandled?.();
+    // The handlers above are recreated every render; the request's identity is what matters.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [requestKey, store]);
+
+  if (store !== 'ready') return null;
 
   const signIn = (how: 'login' | 'register') => (e: FormEvent) => {
     e.preventDefault();
@@ -147,26 +218,6 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
       setPending(undefined);
     });
 
-  const keepPrivately = (profile: CoreProfile) =>
-    run(async () => {
-      await saveItem({ kind: 'core-profile', name: profile.name, summary: describeProfile(profile), payload: exportProfiles([profile]), public: false, cc0: false });
-      await refresh(callsign);
-    });
-
-  /** The CC0 step: nothing is shared until the dedication is confirmed. */
-  const askToShare = (what: string, action: () => Promise<void>) => setPending({ what, action });
-  const confirmShare = () => {
-    const p = pending;
-    setPending(undefined);
-    if (p) run(p.action);
-  };
-
-  const shareProfile = (profile: CoreProfile) =>
-    askToShare(profile.name, async () => {
-      await saveItem({ kind: 'core-profile', name: profile.name, summary: describeProfile(profile), payload: exportProfiles([profile]), public: true, cc0: true });
-      await refresh(callsign);
-    });
-
   const setPublic = (item: CommunityItem, isPublic: boolean) => {
     const flip = async () => {
       await shareItem(item.id, isPublic, isPublic);
@@ -182,24 +233,16 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
       await refresh(callsign);
     });
 
-  const take = (item: SharedItem) =>
+  const take = (shelf: CommunityShelf, item: SharedItem) =>
     run(async () => {
       const full = await fetchShared(item.id);
-      // The community payload goes through exactly the file-import path: its validation,
-      // its fresh ids, and the re-derivation that keeps the sweep the truth.
-      const imported = importProfiles(full.payload).map((p) => ({
-        ...p,
-        name: p.name.includes(item.callsign) ? p.name : `${p.name} — ${item.callsign}`,
-        notes: [p.notes, `Shared CC0 by ${item.callsign}.`].filter(Boolean).join(' '),
-      }));
-      onAddProfiles(imported);
+      shelf.onTake(full.payload, item);
+      setTaken(`${item.name}, shared by ${item.callsign}, is yours to use.`);
     });
 
-  const onShelf = new Set(mine.map((m) => m.name));
-
   return (
-    <section className="form-section community">
-      <h3>Community</h3>
+    <section ref={rootRef} className="form-section community">
+      <h3>{title}</h3>
       {callsign === null && forgot !== 'no' ? (
         <>
           {forgot === 'ask' ? (
@@ -248,8 +291,8 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
       ) : callsign === null ? (
         <>
           <p className="muted">
-            This site can keep your measured cores under your callsign and, if you choose, share them with everyone. Browsing what others
-            shared needs no account.
+            This site can keep your work under your callsign and, if you choose, share it with everyone. Browsing what others shared
+            needs no account.
           </p>
           <form className="field-row community-signin" onSubmit={signIn('login')}>
             <label className="field">
@@ -305,50 +348,14 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
               </button>
             </div>
           )}
-          {profiles.length === 0 && <p className="muted">Measure a core (above) and it can be kept here, or shared.</p>}
-          {profiles.length > 0 && (
-            <ul className="community-list">
-              {profiles.map((p) => (
-                <li key={p.id}>
-                  <span className="community-name">{p.name}</span>
-                  <button type="button" className="small" disabled={busy} onClick={() => keepPrivately(p)}>
-                    {onShelf.has(p.name) ? 'Save again' : 'Keep on this site'}
-                  </button>
-                  <button type="button" className="small" disabled={busy} onClick={() => shareProfile(p)}>
-                    Share…
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-          {mine.length > 0 && (
-            <>
-              <h4>On this site</h4>
-              <ul className="community-list">
-                {mine.map((m) => (
-                  <li key={m.id}>
-                    <span className="community-name">
-                      {m.name} <span className="muted">{m.public ? '· shared' : '· private'}</span>
-                    </span>
-                    <button type="button" className="small" disabled={busy} onClick={() => setPublic(m, !m.public)}>
-                      {m.public ? 'Stop sharing' : 'Share…'}
-                    </button>
-                    <button type="button" className="small" disabled={busy} aria-label={`Delete ${m.name} from this site`} onClick={() => remove(m)}>
-                      Delete
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </>
-          )}
         </>
       )}
 
       {pending && (
         <div className="community-dedication" role="alertdialog" aria-label="Public domain dedication">
           <p>
-            Sharing <strong>{pending.what}</strong> offers your measurement to everyone, dedicated to the public domain
-            (CC0 1.0) so the project may pass it on. Your callsign is shown beside it.
+            Sharing <strong>{pending.what}</strong> offers your work to everyone, dedicated to the public domain (CC0 1.0) so the
+            project may pass it on. Your callsign is shown beside it.
           </p>
           <div className="button-row">
             <button type="button" className="small" onClick={confirmShare}>
@@ -361,23 +368,72 @@ export function CommunityPanel({ profiles, onAddProfiles }: CommunityPanelProps)
         </div>
       )}
 
-      <h4>Shared by the community</h4>
-      {shared.length === 0 ? (
-        <p className="muted">Nothing shared here yet.</p>
-      ) : (
-        <ul className="community-list">
-          {shared.map((s) => (
-            <li key={s.id}>
-              <span className="community-name">
-                {s.name} <span className="muted">by {s.callsign} · {s.summary}</span>
-              </span>
-              <button type="button" className="small" disabled={busy} onClick={() => take(s)}>
-                Add to my cores
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
+      {shelves.map((shelf) => {
+        const ours = mine.filter((m) => m.kind === shelf.kind);
+        const onShelf = new Set(ours.map((m) => m.name));
+        const theirs = shared[shelf.kind] ?? [];
+        return (
+          <div key={shelf.kind} className="community-shelf" data-kind={shelf.kind}>
+            {shelves.length > 1 && <h4 className="community-shelf-title">{shelf.title}</h4>}
+            {callsign !== null &&
+              (shelf.local.length === 0 ? (
+                <p className="muted">{shelf.emptyLocal}</p>
+              ) : (
+                <ul className="community-list">
+                  {shelf.local.map((item) => (
+                    <li key={item.id}>
+                      <span className="community-name">{item.name}</span>
+                      <button type="button" className="small" disabled={busy} onClick={() => keep(shelf, item, false)}>
+                        {onShelf.has(item.name) ? 'Save again' : 'Keep on this site'}
+                      </button>
+                      <button type="button" className="small" disabled={busy} onClick={() => keep(shelf, item, true)}>
+                        Share…
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ))}
+            {ours.length > 0 && (
+              <>
+                <h4>On this site</h4>
+                <ul className="community-list">
+                  {ours.map((m) => (
+                    <li key={m.id}>
+                      <span className="community-name">
+                        {m.name} <span className="muted">{m.public ? '· shared' : '· private'}</span>
+                      </span>
+                      <button type="button" className="small" disabled={busy} onClick={() => setPublic(m, !m.public)}>
+                        {m.public ? 'Stop sharing' : 'Share…'}
+                      </button>
+                      <button type="button" className="small" disabled={busy} aria-label={`Delete ${m.name} from this site`} onClick={() => remove(m)}>
+                        Delete
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            )}
+            <h4>Shared by the community</h4>
+            {theirs.length === 0 ? (
+              <p className="muted">Nothing shared here yet.</p>
+            ) : (
+              <ul className="community-list">
+                {theirs.map((s) => (
+                  <li key={s.id}>
+                    <span className="community-name">
+                      {s.name} <span className="muted">by {s.callsign} · {s.summary}</span>
+                    </span>
+                    <button type="button" className="small" disabled={busy} onClick={() => take(shelf, s)}>
+                      {shelf.takeLabel}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        );
+      })}
+      {taken && !error && <p className="muted community-taken">{taken}</p>}
       {error && <p className="alert-inline">{error}</p>}
     </section>
   );

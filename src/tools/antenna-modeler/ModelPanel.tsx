@@ -42,7 +42,8 @@ import {
   wireLength,
 } from './model';
 import { formatValue, NumberField } from '../../ui/NumberField';
-import { type TuneGoal, type TuneRequest, type TuneVariable, currentValue, suggestedRange } from './tune';
+import { type TuneGoal, type TuneRequest, type TuneVariable, currentValue, suggestedRange, variableChoices } from './tune';
+import { FB_CAP_DB, type OptimiseGoal, type OptimiseVariable } from './optimise';
 
 /** Amateur bands through 23 cm, from the suite's one band list. Picking one sets up a sweep across it. */
 const BANDS = bandsUpTo(1300);
@@ -67,13 +68,17 @@ export interface ModelPanelProps {
   model: AntennaModel;
   /** The tuner, when the page offers one, and the reference impedance its SWR goals use. */
   tune?: TuneHost;
+  /** The mesh-refinement check, when the page offers one. */
+  convergence?: ConvergenceHost;
+  /** The multi-variable optimiser, when the page offers one. */
+  optimiser?: OptimiseHost;
   z0?: number;
   dispatch: (action: HistoryAction) => void;
   selection: string | null;
   onSelect: (wireId: string | null) => void;
 }
 
-export function ModelPanel({ model, dispatch, selection, onSelect, tune, z0 = 50 }: ModelPanelProps) {
+export function ModelPanel({ model, dispatch, selection, onSelect, tune, convergence, optimiser, z0 = 50 }: ModelPanelProps) {
   const edit = (recipe: (m: AntennaModel) => AntennaModel) => dispatch({ type: 'edit', recipe });
   const selected = model.wires.find((w) => w.id === selection);
 
@@ -125,6 +130,8 @@ export function ModelPanel({ model, dispatch, selection, onSelect, tune, z0 = 50
       <FeedSection model={model} edit={edit} onSelect={onSelect} />
       <LoadSection model={model} edit={edit} onSelect={onSelect} selection={selection} />
       {tune && <TuneSection model={model} tune={tune} z0={z0} />}
+      {optimiser && model.wires.length > 0 && <OptimiseSection model={model} host={optimiser} z0={z0} />}
+      {convergence && model.wires.length > 0 && <ConvergenceSection model={model} host={convergence} />}
       <PatternSection model={model} edit={edit} />
       <NotesSection comments={model.comments} onChange={(comments) => edit((m) => ({ ...m, comments }))} />
     </div>
@@ -655,6 +662,168 @@ export interface TuneHost {
   cancel: () => void;
 }
 
+/** What the page gives the optimiser: run, stop, and what is happening. */
+export interface OptimiseHost {
+  busy: boolean;
+  progress?: string;
+  note?: string;
+  run: (request: OptimiseRequest) => void;
+  cancel: () => void;
+}
+
+export interface OptimiseRequest {
+  vars: OptimiseVariable[];
+  goal: OptimiseGoal;
+  maxEvaluations: number;
+}
+
+const MAX_OPTIMISE_VARIABLES = 6;
+
+/**
+ * Several things at once against a weighted goal. Every ticked thing gets its own range;
+ * the search never leaves them, and the result is one undo step.
+ */
+function OptimiseSection({ model, host, z0 }: { model: AntennaModel; host: OptimiseHost; z0: number }) {
+  const choices = variableChoices(model);
+  const [ticked, setTicked] = useState<string[]>([]);
+  const [ranges, setRanges] = useState<Record<string, { min: number; max: number }>>({});
+  const [fMHz, setFMHz] = useState(model.frequency.startMHz);
+  useEffect(() => setFMHz(model.frequency.startMHz), [model.frequency.startMHz]);
+  const [gainWeight, setGainWeight] = useState(1);
+  const [fbWeight, setFbWeight] = useState(0.5);
+  const [swrWeight, setSwrWeight] = useState(1);
+  const [swrTarget, setSwrTarget] = useState(1.5);
+  const [swrOver, setSwrOver] = useState<'frequency' | 'sweep'>('frequency');
+  const [maxEvaluations, setMaxEvaluations] = useState(150);
+  const canBand = model.frequency.steps > 1;
+
+  const live = ticked.map((k) => choices.find((c) => c.key === k)).filter((c): c is NonNullable<typeof c> => c !== undefined);
+  const shownRange = (c: (typeof choices)[number]) => {
+    const u = unitFor(c.variable);
+    const s = suggestedRange(model, c.variable);
+    return ranges[c.key] ?? { min: s.min * u.factor, max: s.max * u.factor };
+  };
+  const toggle = (k: string) => setTicked((t) => (t.includes(k) ? t.filter((x) => x !== k) : t.length >= MAX_OPTIMISE_VARIABLES ? t : [...t, k]));
+  const ready = live.length > 0 && live.every((c) => shownRange(c).min < shownRange(c).max) && gainWeight + fbWeight + swrWeight > 0;
+
+  const start = () => {
+    host.run({
+      vars: live.map((c) => {
+        const u = unitFor(c.variable);
+        const r = shownRange(c);
+        return { variable: c.variable, range: { min: r.min / u.factor, max: r.max / u.factor } };
+      }),
+      goal: { fMHz, gainWeight, fbWeight, swrWeight, swrTarget, swrOver: canBand ? swrOver : 'frequency', z0 },
+      maxEvaluations,
+    });
+  };
+
+  return (
+    <section className="form-section optimise">
+      <h3>Optimise</h3>
+      <p className="muted">
+        Change several things at once - a Yagi's element lengths and their places on the boom, say - against gain, front-to-back and SWR
+        together, weighed as you choose. Every trial is a real solve.
+      </p>
+      <ul className="optimise-list">
+        {choices.map((c) => {
+          const on = ticked.includes(c.key);
+          const u = unitFor(c.variable);
+          const r = shownRange(c);
+          return (
+            <li key={c.key}>
+              <label className="check">
+                <input type="checkbox" checked={on} disabled={!on && ticked.length >= MAX_OPTIMISE_VARIABLES} onChange={() => toggle(c.key)} /> {c.label}
+              </label>
+              {on && (
+                <div className="field-row">
+                  <NumberField label="Between" value={Number(r.min.toPrecision(5))} unit={u.label} onCommit={(v) => setRanges({ ...ranges, [c.key]: { min: v, max: r.max } })} />
+                  <NumberField label="and" value={Number(r.max.toPrecision(5))} unit={u.label} onCommit={(v) => setRanges({ ...ranges, [c.key]: { min: r.min, max: v } })} />
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {ticked.length >= MAX_OPTIMISE_VARIABLES && <p className="muted">Six at most: each one more makes the search slower and less sure.</p>}
+      <NumberField label="At" value={fMHz} above={0} unit="MHz" onCommit={setFMHz} />
+      <div className="field-row">
+        <NumberField label="Gain, per dB" value={gainWeight} min={0} onCommit={setGainWeight} />
+        <NumberField label="Front to back, per dB" value={fbWeight} min={0} onCommit={setFbWeight} />
+      </div>
+      <div className="field-row">
+        <NumberField label="SWR weight" value={swrWeight} min={0} onCommit={setSwrWeight} />
+        <NumberField label="SWR target" value={swrTarget} min={1} onCommit={setSwrTarget} />
+        {canBand && (
+          <label className="field">
+            <span className="field-label">SWR</span>
+            <select value={swrOver} onChange={(e) => setSwrOver(e.target.value === 'sweep' ? 'sweep' : 'frequency')}>
+              <option value="frequency">at that frequency</option>
+              <option value="sweep">worst across the sweep</option>
+            </select>
+          </label>
+        )}
+      </div>
+      <p className="muted">
+        Each 0.1 of SWR over the target costs as much as 1 dB of gain, times its weight. Front-to-back counts up to {FB_CAP_DB} dB and no
+        further: past that the search would chase a razor-thin null no real antenna keeps.
+      </p>
+      <NumberField label="At most" value={maxEvaluations} min={10} integer unit="trials" onCommit={(v) => setMaxEvaluations(Math.min(1000, v))} />
+      <div className="button-row">
+        {host.busy ? (
+          <button type="button" className="small danger" onClick={host.cancel}>
+            Stop
+          </button>
+        ) : (
+          <button type="button" className="small" disabled={!ready} onClick={start}>
+            Optimise
+          </button>
+        )}
+        {host.busy && host.progress && <span className="muted">{host.progress}</span>}
+      </div>
+      {!host.busy && host.note && <p className="muted tune-note optimise-note">{host.note}</p>}
+    </section>
+  );
+}
+
+/** What the page gives the convergence check: run, stop, and the verdict in words. */
+export interface ConvergenceHost {
+  busy: boolean;
+  note?: string;
+  run: () => void;
+  cancel: () => void;
+}
+
+/**
+ * The numerical analyst's oldest test, as one button: solve again with every wire at
+ * twice the segments and report whether the feed impedance and peak gain move.
+ */
+function ConvergenceSection({ model, host }: { model: AntennaModel; host: ConvergenceHost }) {
+  const total = model.wires.reduce((n, w) => n + w.segments, 0);
+  return (
+    <section className="form-section convergence">
+      <h3>Is the model converged?</h3>
+      <p className="muted">
+        Solves it again with every wire at twice the segments ({total} → {total * 2}) and reports whether the feed impedance and
+        the peak gain move. If they barely move, the answers do not depend on how finely the wires were chopped.
+      </p>
+      <div className="button-row">
+        {host.busy ? (
+          <button type="button" className="small danger" onClick={host.cancel}>
+            Stop
+          </button>
+        ) : (
+          <button type="button" className="small" onClick={host.run}>
+            Check it
+          </button>
+        )}
+        {host.busy && <span className="muted">solving at both densities…</span>}
+      </div>
+      {!host.busy && host.note && <p className="muted tune-note convergence-note">{host.note}</p>}
+    </section>
+  );
+}
+
 /** The unit a person types a variable in; the request goes out in SI. */
 function unitFor(variable: TuneVariable): { label: string; factor: number } {
   if (variable.kind !== 'load') return { label: 'm', factor: 1 };
@@ -663,24 +832,13 @@ function unitFor(variable: TuneVariable): { label: string; factor: number } {
   return { label: 'Ω', factor: 1 };
 }
 
-const PART_NAMES = { henries: 'L', farads: 'C', ohms: 'R', reactance: 'X' } as const;
 
 /**
  * Change one thing until a goal is met. The list of things is built from the model:
  * every wire's length, the height of the lot, and each part of each load.
  */
 function TuneSection({ model, tune, z0 }: { model: AntennaModel; tune: TuneHost; z0: number }) {
-  const choices: { key: string; label: string; variable: TuneVariable }[] = [];
-  for (const w of model.wires) choices.push({ key: 'wire:' + w.id, label: 'Length of wire ' + w.tag, variable: { kind: 'wire-length', wireId: w.id, ends: 'both' } });
-  if (model.wires.length > 0) choices.push({ key: 'height', label: 'Height of the antenna', variable: { kind: 'height' } });
-  for (const l of model.loads) {
-    const wire = model.wires.find((w) => w.id === l.wireId);
-    const name = l.label ? '"' + l.label + '"' : 'load on wire ' + (wire?.tag ?? '?');
-    const fields: ('henries' | 'farads' | 'ohms' | 'reactance')[] = l.kind === 'impedance' ? ['ohms', 'reactance'] : ['henries', 'farads', 'ohms'];
-    for (const field of fields) {
-      choices.push({ key: 'load:' + l.id + ':' + field, label: PART_NAMES[field] + ' of ' + name, variable: { kind: 'load', loadId: l.id, field } });
-    }
-  }
+  const choices = variableChoices(model);
 
   const [key, setKey] = useState(choices[0]?.key ?? '');
   const [ends, setEnds] = useState<'both' | 'a' | 'b'>('both');

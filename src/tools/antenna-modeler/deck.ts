@@ -39,16 +39,33 @@ function loadCard(load: Load, tag: number): string {
   return formatCard('LD', [type, tag, load.segment, load.segment], values);
 }
 
+// nec2c's line buffer is 132 BYTES and the deck reaches it as UTF-8, where "µ", "Ω", "°"
+// and every Cyrillic letter take two. Wrapping by characters once let a long Russian
+// comment from an imported .maa overflow the buffer; nec2c then read the overflow as a
+// card and stopped with "INCORRECT LABEL FOR A COMMENT CARD". So width is counted in bytes.
+const utf8 = new TextEncoder();
+const byteLength = (s: string) => utf8.encode(s).length;
+
+/** The longest start of `s` that fits in `limit` bytes, never cutting a character in two. */
+function cutToBytes(s: string, limit: number): string {
+  let out = '';
+  for (const ch of s) {
+    if (byteLength(out + ch) > limit) break;
+    out += ch;
+  }
+  return out;
+}
+
 function wrapComment(text: string): string[] {
   const words = text.split(/\s+/).filter((w) => w !== '');
   const lines: string[] = [];
   let line = '';
   for (const word of words) {
-    if (line !== '' && line.length + 1 + word.length > COMMENT_WIDTH) {
+    if (line !== '' && byteLength(`${line} ${word}`) > COMMENT_WIDTH) {
       lines.push(line);
       line = '';
     }
-    line = line === '' ? word.slice(0, COMMENT_WIDTH) : `${line} ${word}`;
+    line = line === '' ? cutToBytes(word, COMMENT_WIDTH) : `${line} ${word}`;
   }
   if (line !== '') lines.push(line);
   return lines;

@@ -7,6 +7,7 @@
 // Public domain (The Unlicense). By ZR1JT.
 
 import type { MeasuredPoint } from '../touchstone';
+import type { TransmissionPoint } from './transmission';
 
 export interface SweepRequest {
   startMHz: number;
@@ -26,5 +27,10 @@ export interface Instrument {
    * this side (see calibration.ts).
    */
   sweep(request: SweepRequest): Promise<MeasuredPoint[]>;
+  /**
+   * Sweeps port 1 to port 2: S21 at each frequency. Calibrated by the instrument on a
+   * classic NanoVNA; raw on a V2, for a thru calibration (transmission.ts) to correct.
+   */
+  sweepTransmission(request: SweepRequest): Promise<TransmissionPoint[]>;
   close(): Promise<void>;
 }

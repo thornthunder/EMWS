@@ -3,9 +3,10 @@
 //
 // The scene is the source of truth, as the AntennaModel is in the modeler: every edit is a
 // pure function returning a new scene, and the grid is derived from it. World coordinates
-// are metres with y up; the PML sits outside the world, so nothing drawn can touch it.
+// are metres with y up; the PML sits outside the world, and whatever touches the world's
+// edge runs on through it, so a ground or a wall drawn to the edge has no end to reflect from.
 
-import { C0, type SourceCell, type SourceKind } from './simulation';
+import { C0, EPS0, type PlaneWaveSpec, type Polarisation, type Side, type SourceCell, type SourceKind, planeWaveBoundary } from './simulation';
 
 export type MaterialKind = 'conductor' | 'dielectric';
 
@@ -37,15 +38,30 @@ export interface Source {
   phaseDeg: number;
 }
 
+/** A plane wave coming in through one side of the world, at the scene's frequency. */
+export interface ScenePlaneWave {
+  side: Side;
+  /** Degrees from square on; positive tilts towards +y (left and right sides) or +x (top and bottom). */
+  angleDeg: number;
+  kind: SourceKind;
+  amplitude: number;
+}
+
 export interface Scene {
   fMHz: number;
   widthM: number;
   heightM: number;
   cellsPerWavelength: number;
   pmlCells: number;
+  /** Which field points out of the screen: Ez ('tm') or Hz ('te'). */
+  polarisation: Polarisation;
+  planeWave: ScenePlaneWave | null;
   shapes: Shape[];
   sources: Source[];
 }
+
+/** A plane wave's tilt is kept short of grazing, where it would run along its own side. */
+export const MAX_PLANE_WAVE_ANGLE = 85;
 
 export const CONDUCTOR: Material = { kind: 'conductor', epsr: 1, sigma: 0 };
 
@@ -62,7 +78,7 @@ export function sceneId(kind: string): string {
 
 /** Three metres by two at 1 GHz: ten wavelengths by six or so, at 20 cells a wavelength. */
 export function emptyScene(): Scene {
-  return { fMHz: 1000, widthM: 3, heightM: 2, cellsPerWavelength: 20, pmlCells: 10, shapes: [], sources: [] };
+  return { fMHz: 1000, widthM: 3, heightM: 2, cellsPerWavelength: 20, pmlCells: 10, polarisation: 'tm', planeWave: null, shapes: [], sources: [] };
 }
 
 export interface Grid {
@@ -128,13 +144,19 @@ export function contains(geometry: Geometry, x: number, y: number, minWidthM: nu
 
 export interface Raster {
   grid: Grid;
+  polarisation: Polarisation;
   epsr: Float32Array;
   sigma: Float32Array;
   pec: Uint8Array;
   sources: SourceCell[];
+  planeWave?: PlaneWaveSpec;
 }
 
-/** Paints the scene's shapes into per-cell materials, later shapes over earlier ones. */
+/**
+ * Paints the scene's shapes into per-cell materials, later shapes over earlier ones, then
+ * carries the world's outermost cells on out through the absorbing edge, so a ground drawn
+ * to the edge continues to infinity instead of ending in a step the waves would see.
+ */
 export function rasterise(scene: Scene): Raster {
   const grid = gridFor(scene);
   const { nx, ny, pml, dx } = grid;
@@ -160,13 +182,31 @@ export function rasterise(scene: Scene): Raster {
       }
     }
   }
+  if (pml > 0) {
+    const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
+    for (let j = 0; j < ny; j++) {
+      for (let i = 0; i < nx; i++) {
+        if (i >= pml && i < nx - pml && j >= pml && j < ny - pml) continue;
+        const k = i + j * nx;
+        const from = clamp(i, pml, nx - pml - 1) + clamp(j, pml, ny - pml - 1) * nx;
+        pec[k] = pec[from]!;
+        epsr[k] = epsr[from]!;
+        sigma[k] = sigma[from]!;
+      }
+    }
+  }
+  const fHz = scene.fMHz * 1e6;
   const sources: SourceCell[] = [];
   for (const source of scene.sources) {
     const cell = cellOf(grid, source.x, source.y);
     if (!cell) continue;
-    sources.push({ ...cell, kind: source.kind, fHz: scene.fMHz * 1e6, amplitude: source.amplitude, phaseRad: (source.phaseDeg * Math.PI) / 180 });
+    sources.push({ ...cell, kind: source.kind, fHz, amplitude: source.amplitude, phaseRad: (source.phaseDeg * Math.PI) / 180 });
   }
-  return { grid, epsr, sigma, pec, sources };
+  const pw = scene.planeWave;
+  const planeWave: PlaneWaveSpec | undefined = pw
+    ? { side: pw.side, angleDeg: Math.max(-MAX_PLANE_WAVE_ANGLE, Math.min(MAX_PLANE_WAVE_ANGLE, pw.angleDeg)), kind: pw.kind, fHz, amplitude: pw.amplitude }
+    : undefined;
+  return { grid, polarisation: scene.polarisation, epsr, sigma, pec, sources, planeWave };
 }
 
 // ---- editing ----
@@ -227,7 +267,19 @@ export const COMFORTABLE_CELLS_PER_WAVELENGTH = 10;
 /** Above this many cells a laptop stops keeping up. */
 export const COMFORTABLE_CELLS = 300_000;
 
-export function limits(scene: Scene): Limits {
+/**
+ * How many times shorter a wave is inside a material than in free space: the real part of
+ * sqrt(εr - jσ/(ωε0)). A lossy ground at HF is mostly conductivity: average ground (εr 13,
+ * 5 mS/m) at 7.1 MHz is 3.95.
+ */
+export function shortening(material: Pick<Material, 'epsr' | 'sigma'>, fHz: number): number {
+  const re = Math.max(1, material.epsr);
+  const im = Math.max(0, material.sigma) / (2 * Math.PI * fHz * EPS0);
+  const modulus = Math.hypot(re, im);
+  return Math.sqrt((modulus + re) / 2);
+}
+
+export function limits(scene: Scene, raster?: Raster): Limits {
   const notes: Limits['notes'] = [];
   const grid = gridFor(scene);
   const lambdaM = wavelengthM(scene);
@@ -242,8 +294,40 @@ export function limits(scene: Scene): Limits {
       message: `At ${scene.cellsPerWavelength} cells a wavelength the grid itself slows and spreads the waves (numerical dispersion). Use ${COMFORTABLE_CELLS_PER_WAVELENGTH} or more; 20 is comfortable.`,
     });
   }
+  else {
+    // The wave is shorter inside a material, so the grid can be fine in air and coarse there.
+    let worst: { n: number; material: Material } | undefined;
+    for (const shape of scene.shapes) {
+      if (shape.material.kind !== 'dielectric') continue;
+      const n = shortening(shape.material, scene.fMHz * 1e6);
+      if (!worst || n > worst.n) worst = { n, material: shape.material };
+    }
+    if (worst && scene.cellsPerWavelength / worst.n < COMFORTABLE_CELLS_PER_WAVELENGTH) {
+      const inside = scene.cellsPerWavelength / worst.n;
+      const what = worst.material.sigma > 0 ? `εr ${worst.material.epsr}, σ ${worst.material.sigma} S/m` : `εr ${worst.material.epsr}`;
+      notes.push({
+        severity: 'warning',
+        message: `Inside the material of ${what} a wavelength is ${worst.n.toFixed(1)} times shorter - only ${inside.toFixed(1)} cells - so the grid bends the physics there and its reflections drift from the true ones (about ten per cent at five cells a wavelength). About ${Math.ceil(COMFORTABLE_CELLS_PER_WAVELENGTH * worst.n)} cells a wavelength fixes it.`,
+      });
+    }
+  }
   if (cells > COMFORTABLE_CELLS) notes.push({ severity: 'warning', message: `${cells.toLocaleString()} cells will step slowly. A smaller world, a higher frequency or fewer cells a wavelength all help.` });
-  if (scene.sources.length === 0) notes.push({ severity: 'warning', message: 'There is no source yet, so nothing will happen when it runs. Choose the Source tool and click where the wave should start.' });
+  if (scene.sources.length === 0 && !scene.planeWave) {
+    notes.push({ severity: 'warning', message: 'There is no source yet, so nothing will happen when it runs. Choose the Source tool and click where the wave should start, or bring in a plane wave.' });
+  }
+  if (scene.planeWave && scene.fMHz > 0 && scene.cellsPerWavelength >= 4) {
+    const r = raster ?? rasterise(scene);
+    const empty = (k: number) => !r.pec[k] && r.epsr[k] === 1 && r.sigma[k] === 0;
+    const boundary = planeWaveBoundary(r.planeWave!, r.grid.nx, r.grid.ny, r.grid.dx, r.grid.pml, empty);
+    if (boundary.links === 0) notes.push({ severity: 'error', message: 'The plane wave has no empty space to start in: whatever is drawn fills the sides it comes in by.' });
+    else if (boundary.buried > 0) {
+      notes.push({
+        severity: 'warning',
+        message:
+          'Something drawn reaches a side the plane wave comes in by. The wave starts in empty space only, so it is left out there - and anything it would have lit by way of that stretch, such as the reflection off a ground near that edge, is missing from a wedge of the world.',
+      });
+    }
+  }
   const minWidth = grid.dx;
   for (const source of scene.sources) {
     if (source.x < 0 || source.y < 0 || source.x >= scene.widthM || source.y >= scene.heightM) {
@@ -268,9 +352,14 @@ export function loadScene(): Scene | undefined {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return undefined;
     const stored = JSON.parse(raw) as Partial<Scene>;
+    // A scene saved before polarisation and plane waves existed has neither: Ez and none.
     const scene = { ...emptyScene(), ...stored };
     if (![scene.fMHz, scene.widthM, scene.heightM, scene.cellsPerWavelength, scene.pmlCells].every(finite)) return undefined;
     if (!Array.isArray(scene.shapes) || !Array.isArray(scene.sources)) return undefined;
+    if (scene.polarisation !== 'tm' && scene.polarisation !== 'te') scene.polarisation = 'tm';
+    const pw = scene.planeWave;
+    const sides: Side[] = ['left', 'right', 'top', 'bottom'];
+    if (pw && !(sides.includes(pw.side) && finite(pw.angleDeg) && finite(pw.amplitude) && (pw.kind === 'sine' || pw.kind === 'pulse'))) scene.planeWave = null;
     return scene;
   } catch {
     return undefined;

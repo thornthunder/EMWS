@@ -38,6 +38,7 @@ import type { MeasuredPoint } from '../touchstone';
 import { impedanceFromGamma } from '../touchstone';
 import { type Link, VnaError, concat, readUntil } from './link';
 import type { Instrument, SweepRequest } from './instrument';
+import type { TransmissionPoint } from './transmission';
 
 const OP = { NOP: 0x00, INDICATE: 0x0d, READ: 0x10, READ2: 0x11, READ4: 0x12, READFIFO: 0x18, WRITE: 0x20, WRITE2: 0x21, WRITE8: 0x23 } as const;
 const REG = { START: 0x00, STEP: 0x10, POINTS: 0x20, VALUES_PER_POINT: 0x22, FIFO: 0x30, VARIANT: 0xf0, FW_MAJOR: 0xf3, FW_MINOR: 0xf4 } as const;
@@ -113,6 +114,23 @@ export class NanoVnaV2 implements Instrument {
   }
 
   async sweep(request: SweepRequest): Promise<MeasuredPoint[]> {
+    const { entries, startHz, stepHz, points } = await this.collect(request);
+    const out: MeasuredPoint[] = [];
+    for (let i = 0; i < points; i++) {
+      const gamma = entries.get(i)!.s11;
+      out.push({ fMHz: (startHz + i * stepHz) / 1e6, gamma, z: impedanceFromGamma(gamma, 50) });
+    }
+    return out;
+  }
+
+  /** The same FIFO, the other receiver: what arrived at port 2 over what was sent. Raw. */
+  async sweepTransmission(request: SweepRequest): Promise<TransmissionPoint[]> {
+    const { entries, startHz, stepHz, points } = await this.collect(request);
+    return Array.from({ length: points }, (_, i) => ({ fMHz: (startHz + i * stepHz) / 1e6, s21: entries.get(i)!.s21 }));
+  }
+
+  /** One sweep's worth of FIFO entries, both receivers, collected by index. */
+  private async collect(request: SweepRequest): Promise<{ entries: Map<number, FifoEntry>; startHz: number; stepHz: number; points: number }> {
     const points = Math.max(2, Math.min(request.points, MAX_POINTS));
     const startHz = Math.round(request.startMHz * 1e6);
     const stopHz = Math.round(request.stopMHz * 1e6);
@@ -127,7 +145,7 @@ export class NanoVnaV2 implements Instrument {
     // Clear the FIFO, so nothing measured with the old settings is taken for new.
     await this.write(OP.WRITE, REG.FIFO, 0, 1);
 
-    const entries = new Map<number, { re: number; im: number }>();
+    const entries = new Map<number, FifoEntry>();
     /** Bytes of a reply that do not yet make a whole entry; the next reply continues them. */
     let pending: Uint8Array = new Uint8Array(0);
     request.onProgress?.(0, points);
@@ -140,19 +158,13 @@ export class NanoVnaV2 implements Instrument {
       const bytes = concat([pending, chunk]);
       const whole = bytes.length - (bytes.length % ENTRY_BYTES);
       for (const entry of decodeFifo(bytes.subarray(0, whole))) {
-        if (entry.index < points) entries.set(entry.index, entry.s11);
+        if (entry.index < points) entries.set(entry.index, entry);
       }
       pending = bytes.slice(whole);
       request.onProgress?.(entries.size, points);
     }
     if (entries.size < points) throw new VnaError(`The NanoVNA-V2 delivered ${entries.size} of ${points} points before timing out.`);
-
-    const out: MeasuredPoint[] = [];
-    for (let i = 0; i < points; i++) {
-      const gamma = entries.get(i)!;
-      out.push({ fMHz: (startHz + i * stepHz) / 1e6, gamma, z: impedanceFromGamma(gamma, 50) });
-    }
-    return out;
+    return { entries, startHz, stepHz, points };
   }
 
   async close(): Promise<void> {

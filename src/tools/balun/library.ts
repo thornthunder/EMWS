@@ -11,7 +11,7 @@
 
 import { MATERIALS, type Material } from './catalog';
 import type { Design } from './model';
-import { type CoreProfile, profileMaterial } from './profiles';
+import { type CoreProfile, ProfileFileError, exportProfiles, importProfiles, profileMaterial } from './profiles';
 
 export interface SavedBalun {
   id: string;
@@ -56,6 +56,46 @@ export function saveSavedBaluns(list: readonly SavedBalun[]): void {
   } catch {
     // Storage can be blocked; the design still works, it just will not be there next time.
   }
+}
+
+/**
+ * A saved design as a file - what the club library shares. A design wound on a measured
+ * core carries that core with it: without it, on anyone else's machine, the design would
+ * only ever be greyed out. On the way in the core is imported like any core file (fresh
+ * id, the sweep re-derived) and the design is pointed at it.
+ */
+export interface BalunFile {
+  emws: 'balun-design';
+  version: 1;
+  balun: SavedBalun;
+  /** The core-profiles file of the one core the design is wound on, if it is a measured one. */
+  core?: unknown;
+}
+
+export function exportSavedBalun(saved: SavedBalun, profiles: readonly CoreProfile[]): string {
+  const profile = saved.design.profileId ? profiles.find((p) => p.id === saved.design.profileId) : undefined;
+  if (saved.design.profileId && !profile) throw new ProfileFileError(`${saved.name} was wound on a measured core that is no longer here, so it cannot be shared faithfully.`);
+  const file: BalunFile = { emws: 'balun-design', version: 1, balun: saved, ...(profile ? { core: JSON.parse(exportProfiles([profile])) as unknown } : {}) };
+  return JSON.stringify(file);
+}
+
+export function importSavedBalun(text: string): { saved: SavedBalun; core?: CoreProfile } {
+  let file: Partial<BalunFile>;
+  try {
+    file = JSON.parse(text) as Partial<BalunFile>;
+  } catch {
+    throw new ProfileFileError('This is not a balun design file: it is not JSON.');
+  }
+  if (file.emws !== 'balun-design' || !isSavedBalun(file.balun)) throw new ProfileFileError('This is not an EMWS balun design.');
+  const design = file.balun.design;
+  if (!design.profileId) return { saved: { ...file.balun, id: newSavedBalunId() } };
+  if (file.core === undefined) throw new ProfileFileError(`${file.balun.name} was wound on a measured core the file does not carry.`);
+  const [core] = importProfiles(JSON.stringify(file.core));
+  if (!core) throw new ProfileFileError(`The core ${file.balun.name} was wound on could not be read.`);
+  return {
+    saved: { ...file.balun, id: newSavedBalunId(), design: { ...design, profileId: core.id, materialId: profileMaterial(core).id } },
+    core,
+  };
 }
 
 /**

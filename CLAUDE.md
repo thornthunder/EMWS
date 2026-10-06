@@ -94,6 +94,22 @@ delete them from a normal shell.
   step must wait for the destination's own `h1` (or a selector only it has), never for
   something both pages have - `--vna` once passed its "modeler solved" wait on the Smith
   chart's summary cards.
+- **Installable + offline** (2026-10-05): `public/manifest.webmanifest` (+ `icon-maskable.svg`
+  in the safe zone), and `dist/sw.js` GENERATED after `vite build` by `scripts/build-sw.mjs`
+  (hand-written, no workbox): precache every built file except PHP, `.map`, `web.config`;
+  cache-first for assets, network-first for navigations (a deploy shows on the next online
+  reload); `/solver/` and `/community/` never cached. **The worker caches ONE engine pair** -
+  it runs the same `i8x16.splat` validate probe as `supportsWasmSimd()` - because "a visitor
+  fetches only the engine they run" is a rule the default smoke enforces; the generator
+  fails the build if either engine pair is not exactly one .js + one .wasm. Registered in
+  `main.tsx` only in a real build on a secure page, so http://emws.local is untouched.
+  `npm run smoke -- --pwa` cuts the network, reloads, and SOLVES a model from the cache.
+  **Harness lesson, earned:** the smoke auto-attaches every target paused
+  (`waitForDebuggerOnStart`); it once released a target only after `Network.enable` and
+  `Runtime.enable` answered - a service worker paused at start never answers, so `register()`
+  hung forever with no error. Release unconditionally; never gate `runIfWaitingForDebugger`.
+- **Print** (`@media print` in `styles.css`): Ctrl+P on any tool prints results only - panels,
+  buttons, pickers hidden; inputs inside readouts flattened to text; light palette pinned.
 - **Two engine builds, picked at runtime.** `build:engine` emits `nec2c.{mjs,wasm}` and
   `nec2c-simd.{mjs,wasm}` from the same sources (`-O3 -fcx-limited-range`, plus `-msimd128`
   for the second); all four are generated but committed. `supportsWasmSimd()` in `run.ts`
@@ -144,6 +160,18 @@ delete them from a normal shell.
   within a few ohms and percent, and `npm run smoke -- --lc` sees the same 90.8 % in the browser.
 - The coil tool hands a coil or trap over through `emws.handoff.load` (`src/lib/handoff.ts`);
   the panel's Loads section offers it for the selected wire and reads it once per mount.
+- **Feed line to the radio** (2026-10-05, `feedline.ts`): a run of coax from the toolbox's
+  catalogue (or its datasheet cable, read via `loadState()` so the two tools cannot
+  disagree) hangs between the radio and the feed - or the balun, when one is looked
+  through: antenna → balun → line → radio. The transform is the lossy-line ABCD with
+  cosh/sinh (NEVER tanh - the Smith chart's quarter-wave lesson), the loss an exact power
+  walk from the load; for real Z0 it reproduces the classic (a²−ρ²)/(a(1−ρ²)) to the last
+  digit and `tests/feedline.test.ts` holds it there, plus the lossless quarter-wave
+  Z0²/ZL case. UI: picker row under the Summary, a "Feed line loss" card (matched +
+  mismatch split, watts at the ratings power), and with a sweep a "Where the power goes"
+  LineChart (reaches antenna / heats cable / heats balun). The SWR at the radio is
+  flattered by the loss - the card says so rather than hiding it. LineChart gained a
+  narrow-range tick fallback (first/last) for single-band sweeps.
 - **Radial screens and materials** (2026-10-04, all MEASURED on nec2c before a word was
   written): nec2c REFUSES a radial screen with Sommerfeld ("MAY NOT BE USED WITH SOMMERFELD
   GROUND OPTION"), so `validate.ts` errors and the panel forces the reflection method. With a
@@ -166,6 +194,67 @@ delete them from a normal shell.
   solvers, fallback and Cancel all behave; the result is ONE undo step applied to whatever the
   model is by then. `atEdge` (within 2% of the range) and `truncated` are reported in words,
   never hidden. Engine tests find a 20 m dipole's length and a short dipole's loading coil.
+- **"Is the model converged?"** (`convergence.ts`, 2026-10-05): one button under Tune
+  solves the model again with every wire at twice the segments (via `setWireGeometry`, so
+  feeds and loads keep their place) at the on-screen frequency with tune's 10° sphere, and
+  reports the movement of feed Z and peak gain in words. Verdict thresholds (5 % of |Z|,
+  0.25 dB) were set AFTER measuring: the shipped 21-seg dipole moves 0.31 Ω (0.43 %) and
+  0.00 dB when doubled - `tests/convergence.test.ts` runs the real engine and holds it
+  there, and the --edit smoke presses the button. Solves run sequentially on purpose: the
+  doubled matrix is 4× the memory.
+- **RF exposure map** (`exposure.ts`, `ExposurePanel.tsx`, 2026-10-05): `parse-output.ts` now
+  reads NE/NH tables (`nearElectric` / `nearMagnetic` on a FrequencyResult; several cards
+  append). `exposureDeck` = the model at one frequency with pattern `{kind:'cards', cards:[NE,
+  NH]}` - one solution, no extra XQ, user NE/NH/RP/XQ extra cards stripped so their tables
+  cannot merge into the grid. Fields are PEAK phasors; RMS = sqrt(½Σ|Ei|²); scaled by
+  sqrt(P_avg / NEC inputW), P_avg = tx × duty × on-air × feed-line/balun delivery. MEASURED
+  against theory (`tests/exposure.test.ts`): broadside at 10/15/20 λ, E·r = 0.9979/0.9981/
+  0.9982 of sqrt(60 P G) at G = 2.15 dBi (the dipole is 2.14), |E|/|H| = 0.99974→0.99992 of η0;
+  works over Sommerfeld ground, a radial screen and perfect ground. Cells nearer a wire than
+  its segment length are greyed: EMWS's OWN caution, said so in UI and guide. EMWS states NO
+  limits - typed, kept in `emws.exposure.v1`. Colour: reference blue sequential ramp
+  (`--exposure-0..6`, flipped in dark), validated monotone/single-hue with the dataviz
+  checker; the limit is a STATE (red boundary + ✕/✓ status line + words), never colour
+  alone; cells butt together (no gaps on a continuous field). `npm run smoke -- --exposure`
+  types limits either side of the found peak, checks SSB scales by sqrt(0.2) exactly.
+- **Optimiser + parameter sweep** (`optimise.ts`, `SweepPanel.tsx`, `src/ui/XYChart.tsx`,
+  2026-10-05). `variableChoices()` in tune.ts is THE list of tunable things for Tune, the
+  optimiser and the sweep; it gained `wire-position` (a horizontal wire's midpoint along the
+  axis across it - a Yagi element's place on the boom; joined ends follow, as a drag).
+  Nelder-Mead from the paper's rules in the unit cube (each range scaled to [0,1]), clamped
+  to the faces, cached, capped; on paper: bowl, Rosenbrock, a minimum outside the box, the
+  cap. Score = -wG·gain - wF·min(F/B, 30) + wS·10·max(0, SWR - target) ("0.1 SWR over = 1 dB").
+  Starts from the model as it is and only ever improves (`improved: false` = unchanged);
+  result = ONE undo step applied to the model as it is by then (as Tune). MEASURED: the 2 m
+  Yagi for gain alone 8.73 -> 9.53 dBi, F/B 16.0 -> 8.2 dB (35 trials in Node, 42 in the page
+  with its suggested ranges) - the textbook trade, said in the guide. Gain prints to 0.01 dB,
+  so near an optimum the score has plateaus: ties shrink the simplex, which is fine. Sweep:
+  2°×10° pattern per point (`sweepDeck`); MEASURED take-off angle vs sin(el) = λ/4h over the
+  example's real ground: within 2.5° from 12 m (0.57 λ) up; 6 m reads 50 vs 61.6 (real
+  ground). XYChart = linear-x sibling of LineChart: ticks ON the solved values, axis decimals
+  from the grid step, x title under the axis. `npm run smoke -- --optimise` ticks and runs,
+  undoes, sweeps, reads every angle back through the hover readout, and Uses a point.
+- **MMANA-GAL .maa in and out** (`maa.ts`, 2026-10-05). Written from MMANA-GAL basic's own
+  help (its sample file, wire/source/load tables) and 935 real files (github.com/handiko/
+  AntennaFiles-OLD, scratch only - never in the repo); OpenNEC's MIT format notes read for
+  orientation, NO text or code taken, and they were WRONG on the load line. Facts: radius in
+  the FILE is metres (GUI shows mm); negative R = stepped-diameter taper pointer (refused);
+  R = 0 insulator (refused); seg > 0 exact, 0/-1/-2/-3 automatic; pulse W<n><C|B|E>[±k];
+  load `pulse, type, …` - 0 = L µH, C pF, Q (L AND C = PARALLEL trap), 1 = R + jX, 2 = Laplace
+  "S" (refused); ground line G (0/1/2) / H = add height / M = material (code table
+  UNPUBLISHED - never guessed, noted) / R = Z0. Russian edition: windows-1251, Cyrillic
+  headers like "* Провода *" - sections are found by POSITION, never by name. MMANA = MININEC,
+  not NEC; MMANA's real ground computes impedance over PERFECT ground (its help), so a
+  grounded wire on G=2 imports as reflection-method real ground + radial screen (nec2c then
+  gives exactly the perfect-ground Z - same split). Auto-segmented wires: λ/20, MIN 3 -
+  MEASURED: one segment per wire at a junction (a 160 m tower) stopped nec2c with "memory
+  allocation request has failed". Survey: 877/935 open, 877/877 solve and round-trip; the
+  58 refusals all have reasons (40 tapers). Export refuses rather than drops (series L+C,
+  extra cards); text written in 1251 if Cyrillic else 1252. `npm run smoke -- --maa` feeds a
+  cp1251 file to the real Open button and reads Save .maa's bytes back.
+  **Deck-writer fix found by this data:** CM lines are wrapped by UTF-8 BYTES now (nec2c's
+  buffer is 132 bytes; Cyrillic/µ/Ω/° are two) - a long non-ASCII comment used to stop nec2c
+  with "INCORRECT LABEL FOR A COMMENT CARD". `deck.test.ts` holds it.
 - **Ratings** (`ratings.ts`): NEC's segment currents are peak phasors and its power is average
   (½ Re V I*), so volts are reported peak and current RMS; everything scales by
   sqrt(P / inputW). A test holds the one-load case to NEC's own structure-loss figure.
@@ -217,7 +306,13 @@ delete them from a normal shell.
   trusted it; a test now plants exactly that and checks the numbers.) A profile pick copies
   its size into `customCore` and sets `profileId`; picking a catalogue core or editing
   dimensions clears `profileId` (`withProfile` / `withCatalogueCore` / `withCustomDimensions`).
-- Nothing in it has been checked against a bench measurement yet. Do not claim otherwise.
+- Bench status (2026-10-05): the MEASUREMENT path (VNA → SOL → profile → μ curve) is
+  validated on real hardware - ZR1JT measured a Fair-Rite 2631828302 (#31, 61 mm) at 1/2/3
+  turns on their V2_2; the windings scale as N² within ~4 % and agree on μ′/μ″ within ~5 %.
+  The same data measured the Debye limit above: the built-in #31 estimate is 1.7-7× LOW on
+  that core's 1-turn |Z| over 1-52 MHz (estimate plateaus at 26 Ω; the core reaches 190 Ω).
+  The simulator's PREDICTIONS (balun loss, SWR, strain) still have no bench check - do not
+  claim otherwise; a measured 49:1 against the tool remains the acceptance test.
 - **Component library, first shelf** (`library.ts`): a `SavedBalun` is a name + summary + the
   whole `Design`, in `emws.balun.designs.v1`. A design on a measured core carries only the
   `profileId`; `materialFor(design, profiles)` resolves it at use time (so a corrected
@@ -257,13 +352,36 @@ delete them from a normal shell.
   nearest half turn). State persists as `emws.lc.v1`. `src/ui/LineChart.tsx` is the shared log-axis
   chart (moved out of the balun tool; `marks` draws vertical guides such as the cutoff and 2×, 3×).
 - The guide is `src/guides/CoilsGuide.tsx`; it states no regulatory or voltage figures, on
-  purpose. `npm run smoke -- --lc` drives all three tabs and checks the numbers.
-- Not yet: band-pass filters, coax traps. (Tuning a coil to resonance and load ratings at a
-  power now live in the Antenna Modeler.)
+  purpose. `npm run smoke -- --lc` drives all four tabs and checks the numbers.
+- **Stubs & cavities tab** (`stub.ts`, `StubSection.tsx`, 2026-10-05): stub Zin with cosh/sinh
+  written out (never tanh/coth), loss from the toolbox cable model (`savedDatasheetCable()`
+  now lives in toolbox/model.ts; the modeller's feedline delegates to it); shunt S21 =
+  2/(2 + z0/Z). Band-pass = Matthaei-style capacitively coupled shorted-stub resonators: J
+  inverters from `prototype()`, end caps sized against 50 Ω (with their effective shunt C),
+  each stub shortened until −Yr cot θ = −ω0ΣC, slope b recomputed from the shortened stub
+  and iterated to convergence; the CURVE is the exact ABCD of the parts, so the narrow-band
+  formulas' limits show (warned > 10 %). `cavityLine(z0, Q, f)` = air line whose loss gives
+  exactly that unloaded Q (test: shorted λ/4 Rp = Z0·4Q/π). MEASURED: Butterworth n3 145 ± 1
+  MHz lossless edges -3.07/-2.94 dB; Chebyshev 0.1 dB edges -0.10; the same on LMR-400 stubs
+  -3.5 dB mid-band (RG-213 -3.4), on Q 1500 cavities -0.8 - the page warns coax is not high-Q
+  enough. Open λ/4 notch at 145: RG-58 -39.8, RG-213 -47.1 dB, but 1 MHz off still ~-32 dB:
+  a plain stub is BROAD, said in the guide (not for repeater splits). RG-213's VF is
+  1/√2.25 = 0.667 from the catalogue's dielectric, not 0.66 - the smoke's 345 mm says so.
+  Interdigital/comb-line NOT designed (needs coupling charts we don't carry) - guide says so.
+- **S21 / port 2** (`src/lib/vna/transmission.ts`, `src/ui/MeasureTransmission.tsx`): both
+  drivers gained `sweepTransmission`: classic = `scan a b n 5` (mask 1 freq | 4 S21), old
+  firmware `data 1`; V2 = the same FIFO entries' rev1/fwd0 (the collection loop is shared).
+  Two-term response cal S21a = (S21m − iso)/(thru − iso); isolation optional; a V2 will not
+  measure before a thru; thru/iso must share frequencies. Overlay: LineChart and XYChart
+  series take their own x (`fMHz` / `x`) and draw dashed; XYChart got `floor` (a notch's -∞)
+  and round-number ticks for dense traces. `--vna` smoke: the simulated V2's port 2 is raw
+  through known leakage + tracking, and the page must read a 145 MHz low-pass at -3.0 dB.
+- Not yet: coax traps. (Tuning a coil to resonance and load ratings at a power now live in
+  the Antenna Modeler.)
 
 ### RF toolbox (`src/tools/toolbox/`)
 
-- Five tabs of pure maths, no solver; state in `emws.toolbox.v1`. Each module is held to
+- Six tabs of pure maths, no solver; state in `emws.toolbox.v1`. Each module is held to
   closed forms in `tests/toolbox.test.ts`: `wavelength.ts` (c/f, electrical length,
   `HALF_WAVE_RULES` - free space 149.9/f, MEASURED 145.5/f for 2 mm wire via Tune, folklore
   142.65/f), `coax.ts`, `attenuator.ts`, `levels.ts`. SWR conversions live in `src/lib/rf.ts`.
@@ -287,19 +405,49 @@ delete them from a normal shell.
 - `levels.ts`: IARU R.1 S-meter (S9 = −73 dBm HF, −93 VHF, 6 dB/unit); −73 dBm is 50.06 µV
   and 50.1 pW. Field strength is √(30P)/d, free-space far field; the page states NO
   regulatory limits, on purpose.
-- Guide `src/guides/ToolboxGuide.tsx`; `npm run smoke -- --toolbox` drives all five tabs.
+- `link.ts` (2026-10-05): Friis path loss, dish gain η(πD/λ)² with the efficiency TYPED
+  (default 0.55, said to be typical not promised), beamwidth ≈ 70λ/D, 4/3-earth horizon
+  √(2kRh), kTB from the exact SI Boltzmann constant, and Friis's NF cascade - the
+  preamp-at-the-antenna comparison is computed both ways round. GEO altitude 35,786 km is
+  a constant; the horizon-slant 41,679 km is DERIVED (`GEO_SLANT_MAX_KM`), not stated. The
+  budget's far end is always typed: the page states no satellite's transponder figures and
+  no mode's required SNR. Held to identities in `tests/link.test.ts` (path loss 0 dB at
+  d = λ/4π, dish 20 dBi at πD/λ=10, −174 dBm/Hz from Boltzmann, two-stage cascade by hand).
+- Guide `src/guides/ToolboxGuide.tsx`; `npm run smoke -- --toolbox` drives all six tabs.
 
 ### Field sandbox (`src/tools/fdtd/`)
 
-- `simulation.ts` is a 2-D FDTD engine, TMz (Ez out of the screen), Yee grid, leapfrog,
-  Berenger split-field PML (polynomial grading m = 3, R0 = 1e-8), Courant 0.7 (< 1/√2),
-  Float32 arrays, nothing allocated per step. Written from the textbook equations (Yee,
-  Berenger, Taflove); no other program's source was read. Sources are soft (added to both
-  split halves): a Ricker pulse (zero mean) or a sine ramped over two periods.
+- `simulation.ts` is a 2-D FDTD engine in BOTH polarisations (`makeEngine`): `Simulation`
+  = TMz (Ez out of the screen = horizontal over a ground, s-pol, NO Brewster angle) and
+  `SimulationTE` = TEz (Hz; Ex at j+½, Ey at i+½ with averaged ε/σ, zeroed beside PEC = vertical,
+  p-pol). Both expose `field` (the out-of-screen one). Yee grid, leapfrog, Berenger split-field
+  PML (m = 3, R0 = 1e-8, `PML_ORDER`/`PML_REFLECTION`), Courant 0.7, Float32, nothing
+  allocated per step. Written from the textbook equations (Yee, Berenger, Taflove); no other
+  program's source was read. Point sources are soft (added to both split halves): a Ricker
+  pulse or a sine ramped over two periods. The PML's electric loss is scaled by εr (σ/ε =
+  σ*/μ), or a ground running into it reflects off it.
+- **Plane wave = total-field/scattered-field** (`planeWaveBoundary`), an L along the entry
+  side and the side it slants in by, each leg running on out through the PML at its far end;
+  analytic free-space incident fields on every link that crosses it, DAMPED inside the PML by
+  R^(|cos|(depth/d)^4/2). Links touching anything but empty space stay silent (`planeWaveBuried`
+  -> `limits()` warns: a reflection-shadow wedge). Behind the absorbing edges the out-of-screen
+  field is MIRRORED (`mirrorWalls`; TM only with a PML - pml 0 stays a PEC box). Every one of
+  those was MEASURED wrong first: one line along one side (SWR 8 for 4), soft sources fed half
+  and half (40 % lost over 360 cells), a zero wall (same), undamped incident in the PML (±40 %
+  ripple at 30°), a soft-source L (±10 % ripple off its corner). Now: flat to ±1.7 %, leakage
+  2e-4 square on, PEC −0.996/+0.997, εr 4 ∓1/3 within 0.02, Fresnel within ~0.02 at ≥10 cells
+  per wavelength INSIDE the material (5 cells inside = 10 % off: `limits()` warns via
+  `shortening()`, the real part of √εc). Measure reflections by DIFFERENCE (with − without the
+  ground, max over a period, far along): a vertical SWR line sits in the finite world's
+  reflection shadow and read TM 3 where Fresnel says 6.8.
 - **The scene is the source of truth** (`scene.ts`, metres, y up; `src/lib/history.ts` is
   the generic undo the modeler's `history.ts` now wraps). `rasterise()` paints shapes into
-  per-cell εr/σ/PEC, later shapes over earlier; the PML sits OUTSIDE the drawn world. Any
-  edit rebuilds the engine from t = 0 - say so in UI text ("the scene is the simulation").
+  per-cell εr/σ/PEC, later shapes over earlier, then copies the world's outermost cells on out
+  through the PML (an edge-to-edge ground is endless). Scene has `polarisation` and
+  `planeWave` (older stored scenes default to 'tm' / null). Any edit rebuilds the engine from
+  t = 0 - say so in UI text ("the scene is the simulation"). The probe (`probe.ts`: ring of
+  4096 samples, Hann-windowed DFT DC..3f, dB below its own peak) is NOT in the scene: moving
+  it must not restart the clock.
 - `tests/fdtd.test.ts` holds the engine to physics: pulse peak arrives at d/c (±0.15 ns at
   30 cells/λ), grid wavelength = c/f within 3 %, PEC reflection inverted with the round-trip
   delay, εr = 4 doubles the travel time (±7 %), PML leaves < 1e-4 of the peak energy where a
@@ -311,9 +459,16 @@ delete them from a normal shell.
   series-2 blue ↔ surface ↔ series-3 orange for Ez, one-hue green for the envelope (recent
   peak, decay 0.998/step), conductors in ink, dielectrics tinted. React state updaters run
   LATER: compute a rate before resetting its counters, not inside `setStatus`.
+- Presets `mast`, `brewster` (TE, εr 4 at atan 2 = 63.4°) and `ground-40m` (7.1 MHz, εr 13,
+  5 mS/m, 70°, 40 cells/λ so the ground has 10): tests hold Brewster (TE < 0.04, TM within 0.03
+  of 0.60) and average ground (both within 0.05 of Fresnel at 0° and 77°; pseudo-Brewster 76.7°
+  from vertical = 13.3° elevation, |Γ| 0.186).
 - `npm run smoke -- --fdtd` plays a scene, checks both signs are painted and the wall is
   ink, draws a sheet with real mouse input, undoes it with Ctrl+Z, buries a source and reads
-  the warning. Guide: `src/guides/FieldSandboxGuide.tsx`.
+  the warning; then Brewster in Hz (peak < 1.25 after 15 ns), the probe (spectrum peak at
+  1000 MHz, moving it keeps the clock), Ez over the same ground (peak > 1.3), and the 40 m
+  ground with no resolution warning. `--screenshot x.png` saves x-brewster-hz/-ez/-ground-40m.
+  Guide: `src/guides/FieldSandboxGuide.tsx`.
 
 ### Community store (`public/community/index.php`, `src/lib/community.ts`)
 
@@ -341,6 +496,15 @@ delete them from a normal shell.
 - Payload = the owning tool's own export format, so import IS the file-import path
   (validation, fresh ids, sweep-is-truth re-derivation). Imported cores are renamed
   "<name> — <callsign>".
+- **Club library** (2026-10-05): KINDS = core-profile, balun-design, antenna-model (same
+  table, same CC0 rule, client `CommunityKind` must match). `src/ui/CommunityPanel.tsx` is
+  generic: one account UI, then SHELVES ({kind, local items with payload(), takeLabel,
+  onTake}); the old balun-only panel is gone. balun-design = `{emws:'balun-design', balun,
+  core?}` (library.ts) - a design on a measured core CARRIES the core; import re-points
+  profileId/materialId at the freshly imported core. antenna-model = the NEC deck in a JSON
+  envelope (`shared-model.ts`, + z0) because the server requires JSON payloads - keep that
+  invariant; taking one is `loadDeck`. The --community smoke walks all three shelves and
+  now names the exact run's callsign (a reused DB once made "by SMOKE-A" match two runs).
 - **Portability trap, earned**: PDO binds integers as strings, and SQLite says '1' = 1 is
   FALSE where MySQL coerces - a CASE on a bound parameter silently never fired. Plain
   UPDATEs, no cleverness in SQL.
@@ -393,7 +557,12 @@ delete them from a normal shell.
   `window.__emwsVnaAttach` what is on the V2's connector). The V2 sends raw readings through
   known error terms, so the check that it reads the same 75 Ω as the H is a check that the SOL
   calibration works. A hash navigation is not a new document: reset the pick between tools.
-  **No real instrument has been connected yet**; say so.
+- **Validated on the real instrument 2026-10-05**: ZR1JT's V2_2 measured a #31 toroid at
+  1/2/3 turns, 1-60 MHz, 1000 points (exports in `D:\Code\Sample Data\mix31`). N² scaling
+  within ~4 %, the three windings agree on μ′/μ″ within ~5 %, zero negative resistances in
+  3000 SOL-corrected points, self-resonance falls with turns. So driver + calibration work
+  on real hardware; what remains unproven is only what hasn't been tried (the classic-H
+  family on a real unit, S21, other firmware).
 
 ## Conventions
 

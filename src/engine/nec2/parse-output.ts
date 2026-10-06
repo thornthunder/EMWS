@@ -7,6 +7,7 @@ import type {
   FeedPoint,
   FrequencyResult,
   Nec2Report,
+  NearFieldPoint,
   PatternPoint,
   PowerBudget,
   Segment,
@@ -117,6 +118,13 @@ function parsePatternPoint(row: string[]): PatternPoint | undefined {
   };
 }
 
+function parseNearField(row: string[]): NearFieldPoint | undefined {
+  // X Y Z  then magnitude and phase of the X, Y and Z components (fields.c nfpat).
+  if (row.length < 9) return undefined;
+  const component = (i: number) => ({ magnitude: num(row, i), phaseDeg: num(row, i + 1) });
+  return { x: num(row, 0), y: num(row, 1), z: num(row, 2), components: [component(3), component(5), component(7)] };
+}
+
 function labelledValue(line: string): number {
   const m = /[=:]\s*([-+]?[\d.]+(?:[eE][-+]?\d+)?)/.exec(line);
   return m?.[1] !== undefined ? Number(m[1]) : NaN;
@@ -201,6 +209,13 @@ export function parseNec2Output(output: string): Nec2Report {
         if (p) points.push(p);
       });
       if (points.length > 0) freq.patterns.push({ points });
+    } else if (line.includes('NEAR ELECTRIC FIELDS') || line.includes('NEAR MAGNETIC FIELDS')) {
+      // Several NE (or NH) cards append to one list: a grid can be built from many cards.
+      const list = line.includes('ELECTRIC') ? (freq.nearElectric ??= []) : (freq.nearMagnetic ??= []);
+      i = readTable(lines, i, (row) => {
+        const p = parseNearField(row);
+        if (p) list.push(p);
+      });
     }
   }
 

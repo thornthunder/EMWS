@@ -1,9 +1,9 @@
 // RF toolbox: the small sums a station is built with, each shown with its working.
 //
-// Five tabs, no solver: wavelengths and wire, coax loss, attenuators, levels and SWR.
-// Where a figure is an estimate rather than arithmetic - a catalogue cable's loss, the
-// field at a distance, how short a dipole really is - the page says what it is and
-// points at the tool that does it properly.
+// Six tabs, no solver: wavelengths and wire, coax loss, attenuators, levels, SWR, and
+// the microwave link budget. Where a figure is an estimate rather than arithmetic - a
+// catalogue cable's loss, the field at a distance, how short a dipole really is - the
+// page says what it is and points at the tool that does it properly.
 
 import { useEffect, useState } from 'react';
 import { guideForTool } from '../../guides/registry';
@@ -17,7 +17,19 @@ import { formatSi } from '../smith-chart/units';
 import { type Pad, type Topology, designPad, evaluatePad, minimumLossDb, minimumLossPad, snapPad } from './attenuator';
 import { type Cable, CATALOGUE, cableById, catalogueGroups, dielectricById, fitDatasheet, lossOfRun, matchedLossPer100m, runPowers } from './coax';
 import { DIPOLE_GAIN_DBI, dBmToWatts, dBuV, dbToPowerRatio, dbToVoltageRatio, farFieldFromM, fieldStrength, radiatedPower, sMeter, voltsRms } from './levels';
-import { type CoaxInputs, type LevelsInputs, type PadInputs, type SwrInputs, type ToolboxState, type ToolboxTab, type WireInputs, loadState, saveState } from './model';
+import {
+  GEO_ALTITUDE_KM,
+  GEO_SLANT_MAX_KM,
+  type Stage,
+  cascadeNoise,
+  dishBeamwidthDeg,
+  dishGainDbi,
+  horizonBetweenKm,
+  linkBudget,
+  passiveStage,
+  radioHorizonKm,
+} from './link';
+import { type CoaxInputs, type LevelsInputs, type LinkInputs, type PadInputs, type SwrInputs, type ToolboxState, type ToolboxTab, type WireInputs, loadState, saveState } from './model';
 import { HALF_WAVE_RULES, electricalLength, physicalLengthM, wavelengthM } from './wavelength';
 
 const TABS: { id: ToolboxTab; label: string }[] = [
@@ -26,6 +38,7 @@ const TABS: { id: ToolboxTab; label: string }[] = [
   { id: 'pad', label: 'Attenuators' },
   { id: 'levels', label: 'dB, watts & S-units' },
   { id: 'swr', label: 'SWR & return loss' },
+  { id: 'link', label: 'Microwave & link budget' },
 ];
 
 interface Note {
@@ -79,6 +92,7 @@ export function ToolboxTool() {
       {state.tab === 'pad' && <PadSection inputs={state.pad} onChange={patch('pad')} />}
       {state.tab === 'levels' && <LevelsSection inputs={state.levels} onChange={patch('levels')} />}
       {state.tab === 'swr' && <SwrSection inputs={state.swr} onChange={patch('swr')} />}
+      {state.tab === 'link' && <LinkSection inputs={state.link} onChange={patch('link')} />}
     </div>
   );
 }
@@ -828,6 +842,300 @@ function SwrSection({ inputs, onChange }: { inputs: SwrInputs; onChange: (p: Par
               Match it on the Smith chart
             </a>
           </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- microwave & link budget
+
+const dBmText = (v: number) => (Number.isFinite(v) ? `${v.toFixed(1)} dBm` : '—');
+
+/** The three-stage receive chain the inputs describe, in the order the signal meets them. */
+function rxChainOf(inputs: LinkInputs, preampFirst: boolean): Stage[] {
+  const preamp: Stage = { label: 'preamp', gainDb: inputs.preampGainDb, nfDb: inputs.preampNfDb };
+  const feeder = passiveStage('feeder', inputs.rxFeederLossDb);
+  const rig: Stage = { label: 'rig', gainDb: 0, nfDb: inputs.rigNfDb };
+  return preampFirst ? [preamp, feeder, rig] : [feeder, preamp, rig];
+}
+
+function DishOrGain({
+  label,
+  antenna,
+  dishM,
+  efficiency,
+  gainDbi,
+  onPick,
+  onDish,
+  onEfficiency,
+  onGain,
+}: {
+  label: string;
+  antenna: LinkInputs['txAntenna'];
+  dishM: number;
+  efficiency: number;
+  gainDbi: number;
+  onPick: (a: LinkInputs['txAntenna']) => void;
+  onDish: (m: number) => void;
+  onEfficiency: (e: number) => void;
+  onGain: (g: number) => void;
+}) {
+  return (
+    <>
+      <label className="field">
+        <span className="field-label">{label}</span>
+        <select value={antenna} onChange={(e) => onPick(e.target.value === 'dish' ? 'dish' : 'gain')}>
+          <option value="dish">A dish, gain from its diameter</option>
+          <option value="gain">A gain I will type in</option>
+        </select>
+      </label>
+      {antenna === 'dish' ? (
+        <div className="field-row">
+          <NumberField label="Diameter" value={dishM} above={0} unit="m" onCommit={onDish} />
+          <NumberField label="Efficiency" value={efficiency} above={0} onCommit={(v) => onEfficiency(Math.min(0.9, v))} />
+        </div>
+      ) : (
+        <NumberField label="Gain" value={gainDbi} unit="dBi" onCommit={onGain} />
+      )}
+    </>
+  );
+}
+
+function LinkSection({ inputs, onChange }: { inputs: LinkInputs; onChange: (p: Partial<LinkInputs>) => void }) {
+  const txGain = inputs.txAntenna === 'dish' ? dishGainDbi(inputs.txDishM, inputs.fMHz, inputs.txEfficiency) : inputs.txGainDbi;
+  const rxGain = inputs.rxAntenna === 'dish' ? dishGainDbi(inputs.rxDishM, inputs.fMHz, inputs.rxEfficiency) : inputs.rxGainDbi;
+  const chain = cascadeNoise(rxChainOf(inputs, inputs.preampFirst));
+  const otherWay = cascadeNoise(rxChainOf(inputs, !inputs.preampFirst));
+  const budget = linkBudget({
+    txPowerW: inputs.txPowerW,
+    txFeederLossDb: inputs.txFeederLossDb,
+    txGainDbi: txGain,
+    fMHz: inputs.fMHz,
+    distanceKm: inputs.distanceKm,
+    rxGainDbi: rxGain,
+    rxChain: rxChainOf(inputs, inputs.preampFirst),
+    bandwidthHz: inputs.bandwidthHz,
+    requiredSnrDb: inputs.requiredSnrDb,
+  });
+  const horizon = horizonBetweenKm(inputs.h1M, inputs.h2M);
+  const beyondHorizon = inputs.distanceKm > horizon && inputs.distanceKm < GEO_ALTITUDE_KM / 2;
+  const notes: Note[] = [];
+  if (beyondHorizon) {
+    notes.push({
+      severity: 'warning',
+      message: `${inputs.distanceKm} km is beyond the smooth-earth radio horizon for these heights (${horizon.toFixed(0)} km). Free-space loss is then the optimistic floor: terrain, diffraction and troposphere decide the rest.`,
+    });
+  }
+  const dish = (d: number, eff: number) => ({ gain: dishGainDbi(d, inputs.fMHz, eff), beam: dishBeamwidthDeg(d, inputs.fMHz) });
+
+  return (
+    <div className="modeler">
+      <aside className="panel">
+        <section className="form-section">
+          <h2>The shot</h2>
+          <BandButtons fMHz={inputs.fMHz} onPick={(f) => onChange({ fMHz: f })} />
+          <div className="field-row">
+            <NumberField label="Frequency" value={inputs.fMHz} above={0} unit="MHz" onCommit={(v) => onChange({ fMHz: v })} />
+            <NumberField label="Distance" value={inputs.distanceKm} above={0} unit="km" onCommit={(v) => onChange({ distanceKm: v })} />
+          </div>
+          <div className="button-row">
+            <button type="button" className="small" onClick={() => onChange({ distanceKm: GEO_ALTITUDE_KM })}>
+              Geostationary, overhead: {GEO_ALTITUDE_KM.toLocaleString()} km
+            </button>
+            <button type="button" className="small" onClick={() => onChange({ distanceKm: Math.round(GEO_SLANT_MAX_KM) })}>
+              …seen on the horizon: {Math.round(GEO_SLANT_MAX_KM).toLocaleString()} km
+            </button>
+          </div>
+          <p className="muted">Your slant range to a geostationary satellite sits between the two, by elevation; pure geometry, nothing more.</p>
+        </section>
+        <section className="form-section">
+          <h2>Sending</h2>
+          <div className="field-row">
+            <NumberField label="Power" value={inputs.txPowerW} above={0} unit="W" onCommit={(v) => onChange({ txPowerW: v })} />
+            <NumberField label="Feeder loss" value={inputs.txFeederLossDb} min={0} unit="dB" onCommit={(v) => onChange({ txFeederLossDb: v })} />
+          </div>
+          <DishOrGain
+            label="Antenna"
+            antenna={inputs.txAntenna}
+            dishM={inputs.txDishM}
+            efficiency={inputs.txEfficiency}
+            gainDbi={inputs.txGainDbi}
+            onPick={(a) => onChange({ txAntenna: a })}
+            onDish={(v) => onChange({ txDishM: v })}
+            onEfficiency={(v) => onChange({ txEfficiency: v })}
+            onGain={(v) => onChange({ txGainDbi: v })}
+          />
+        </section>
+        <section className="form-section">
+          <h2>Receiving</h2>
+          <DishOrGain
+            label="Antenna"
+            antenna={inputs.rxAntenna}
+            dishM={inputs.rxDishM}
+            efficiency={inputs.rxEfficiency}
+            gainDbi={inputs.rxGainDbi}
+            onPick={(a) => onChange({ rxAntenna: a })}
+            onDish={(v) => onChange({ rxDishM: v })}
+            onEfficiency={(v) => onChange({ rxEfficiency: v })}
+            onGain={(v) => onChange({ rxGainDbi: v })}
+          />
+          <div className="field-row">
+            <NumberField label="Preamp gain" value={inputs.preampGainDb} min={0} unit="dB" onCommit={(v) => onChange({ preampGainDb: v })} />
+            <NumberField label="Its noise figure" value={inputs.preampNfDb} min={0} unit="dB" onCommit={(v) => onChange({ preampNfDb: v })} />
+          </div>
+          <div className="field-row">
+            <NumberField label="Feeder loss" value={inputs.rxFeederLossDb} min={0} unit="dB" onCommit={(v) => onChange({ rxFeederLossDb: v })} />
+            <NumberField label="Rig noise figure" value={inputs.rigNfDb} min={0} unit="dB" onCommit={(v) => onChange({ rigNfDb: v })} />
+          </div>
+          <label className="check">
+            <input type="checkbox" checked={inputs.preampFirst} onChange={(e) => onChange({ preampFirst: e.target.checked })} /> The preamp sits at the antenna, ahead of the feeder
+          </label>
+          <div className="field-row">
+            <NumberField label="Bandwidth" value={inputs.bandwidthHz} above={0} unit="Hz" onCommit={(v) => onChange({ bandwidthHz: v })} />
+            <NumberField label="SNR the mode needs" value={inputs.requiredSnrDb} unit="dB" onCommit={(v) => onChange({ requiredSnrDb: v })} />
+          </div>
+          <div className="button-row">
+            <button type="button" className="small" onClick={() => onChange({ bandwidthHz: 500 })}>
+              CW, 500 Hz
+            </button>
+            <button type="button" className="small" onClick={() => onChange({ bandwidthHz: 2700 })}>
+              SSB, 2.7 kHz
+            </button>
+          </div>
+          <p className="muted">What SNR a mode needs is yours to set: it depends on the operator as much as the mode.</p>
+        </section>
+        <section className="form-section">
+          <h2>Line of sight</h2>
+          <div className="field-row">
+            <NumberField label="Your antenna height" value={inputs.h1M} min={0} unit="m" onCommit={(v) => onChange({ h1M: v })} />
+            <NumberField label="Theirs" value={inputs.h2M} min={0} unit="m" onCommit={(v) => onChange({ h2M: v })} />
+          </div>
+        </section>
+      </aside>
+
+      <div className="workspace">
+        <section className="panel">
+          <h2 className="results-title">
+            {dBmText(budget.receivedDbm)} at the receiver — {Number.isFinite(budget.marginDb) ? `${budget.marginDb >= 0 ? '+' : ''}${budget.marginDb.toFixed(1)} dB margin` : '—'}
+          </h2>
+          <p className="build-card">
+            {inputs.txPowerW} W is {dBmText(budget.eirpDbm - txGain + inputs.txFeederLossDb)}; less {inputs.txFeederLossDb} dB of feeder, into {txGain.toFixed(1)} dBi, radiates{' '}
+            <strong>{dBmText(budget.eirpDbm)} EIRP</strong>. {inputs.distanceKm.toLocaleString()} km of free space at {inputs.fMHz} MHz costs{' '}
+            <strong>{budget.pathLossDb.toFixed(1)} dB</strong>, and the receiving antenna's {rxGain.toFixed(1)} dBi leaves <strong>{dBmText(budget.receivedDbm)}</strong>. Thermal noise in{' '}
+            {formatSi(inputs.bandwidthHz, 'Hz', 3)} is {dBmText(budget.noiseFloorDbm)}; the receiver adds its {budget.systemNfDb.toFixed(2)} dB, so the signal stands{' '}
+            <strong>{budget.snrDb.toFixed(1)} dB</strong> over the noise — {Math.abs(budget.marginDb).toFixed(1)} dB {budget.marginDb >= 0 ? 'more than' : 'short of'} the{' '}
+            {inputs.requiredSnrDb} dB asked for.
+          </p>
+          <dl className="summary">
+            <div>
+              <dt>EIRP</dt>
+              <dd>
+                {dBmText(budget.eirpDbm)}
+                <small>{watts(dBmToWatts(budget.eirpDbm))}</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Path loss</dt>
+              <dd>
+                {budget.pathLossDb.toFixed(1)} dB
+                <small>free space: no ground, no rain, no trees</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Received</dt>
+              <dd>
+                {dBmText(budget.receivedDbm)}
+                <small>{sMeter(budget.receivedDbm, 'vhf').reading} on the VHF scale</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Noise in {formatSi(inputs.bandwidthHz, 'Hz', 3)}</dt>
+              <dd>
+                {dBmText(budget.noiseFloorDbm + budget.systemNfDb)}
+                <small>
+                  kTB {dBmText(budget.noiseFloorDbm)} + NF {budget.systemNfDb.toFixed(2)} dB
+                </small>
+              </dd>
+            </div>
+            <div>
+              <dt>Signal to noise</dt>
+              <dd>
+                {budget.snrDb.toFixed(1)} dB
+                <small>
+                  margin {budget.marginDb >= 0 ? '+' : ''}
+                  {budget.marginDb.toFixed(1)} dB over {inputs.requiredSnrDb} dB
+                </small>
+              </dd>
+            </div>
+          </dl>
+          <p className="muted">
+            The far end here is whatever you typed. For a satellite the uplink's fate is decided by the transponder's own receive
+            system, whose figures this page does not state — the EIRP and path loss are the half that is yours.
+          </p>
+        </section>
+
+        <Notes notes={notes} />
+
+        {(inputs.txAntenna === 'dish' || inputs.rxAntenna === 'dish') && (
+          <section className="panel">
+            <h2 className="results-title">The dish{inputs.txAntenna === 'dish' && inputs.rxAntenna === 'dish' ? 'es' : ''}</h2>
+            <dl className="summary">
+              {inputs.txAntenna === 'dish' && (
+                <div>
+                  <dt>Sending, {inputs.txDishM} m</dt>
+                  <dd>
+                    {dish(inputs.txDishM, inputs.txEfficiency).gain.toFixed(1)} dBi
+                    <small>beamwidth about {dish(inputs.txDishM, inputs.txEfficiency).beam.toFixed(1)}° (70 λ/D)</small>
+                  </dd>
+                </div>
+              )}
+              {inputs.rxAntenna === 'dish' && (
+                <div>
+                  <dt>Receiving, {inputs.rxDishM} m</dt>
+                  <dd>
+                    {dish(inputs.rxDishM, inputs.rxEfficiency).gain.toFixed(1)} dBi
+                    <small>beamwidth about {dish(inputs.rxDishM, inputs.rxEfficiency).beam.toFixed(1)}° (70 λ/D)</small>
+                  </dd>
+                </div>
+              )}
+            </dl>
+            <p className="muted">
+              Gain is η (πD/λ)². The efficiency is typed, not promised: 0.5 to 0.6 covers most amateur dishes, and an offset dish fed
+              with the feed it was made for sits at the top of that. A beamwidth of a degree or two means the mount and the aiming,
+              not the dish, set what you get.
+            </p>
+          </section>
+        )}
+
+        <section className="panel">
+          <h2 className="results-title">The receiver's noise figure: {chain.nfDb.toFixed(2)} dB</h2>
+          <p className="build-card">
+            {inputs.preampFirst ? (
+              <>
+                With the preamp at the antenna, the feeder's {inputs.rxFeederLossDb} dB comes <em>after</em> {inputs.preampGainDb} dB of gain and barely
+                counts: the chain's noise figure is <strong>{chain.nfDb.toFixed(2)} dB</strong>. The other way round it would be{' '}
+                <strong>{otherWay.nfDb.toFixed(2)} dB</strong> — the feeder's loss lands straight on top of the preamp's noise.
+              </>
+            ) : (
+              <>
+                With the feeder ahead of the preamp its {inputs.rxFeederLossDb} dB of loss is paid in full: the chain's noise figure is{' '}
+                <strong>{chain.nfDb.toFixed(2)} dB</strong>. Moved to the antenna, the same preamp would give <strong>{otherWay.nfDb.toFixed(2)} dB</strong>.
+              </>
+            )}{' '}
+            Friis's cascade, F = F₁ + (F₂ − 1)/G₁ + (F₃ − 1)/G₁G₂, is the whole argument for mast-head preamps.
+          </p>
+        </section>
+
+        <section className="panel">
+          <h2 className="results-title">
+            Radio horizon: {Number.isFinite(horizon) ? `${horizon.toFixed(0)} km` : '—'}
+          </h2>
+          <p className="build-card">
+            Over a smooth 4/3 earth an antenna {inputs.h1M} m up sees {radioHorizonKm(inputs.h1M).toFixed(0)} km, and one {inputs.h2M} m up sees{' '}
+            {radioHorizonKm(inputs.h2M).toFixed(0)} km, so they can be <strong>{horizon.toFixed(0)} km</strong> apart with the path just grazing the
+            ground. The 4/3 is average refraction: some days give more, some less, and real terrain is not smooth.
+          </p>
         </section>
       </div>
     </div>

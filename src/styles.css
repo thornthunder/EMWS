@@ -1048,6 +1048,21 @@ circle.hit-wire {
   font: 12px var(--mono);
 }
 
+/* the run of coax between the radio and the feed point */
+.feedline-row {
+  margin: 2px 0 10px;
+}
+.feedline-row select.feedline-cable {
+  max-width: min(360px, 100%);
+  font-size: 13px;
+}
+.feedline-row input.feedline-length {
+  width: 4.5em;
+}
+.power-budget p.muted input.z0 {
+  width: 5em;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -1824,6 +1839,10 @@ button.icon:hover:not(:disabled) {
   padding: 0;
   list-style: none;
 }
+.bin li {
+  display: inline-flex;
+  align-items: center;
+}
 .core-chip-wide {
   width: auto;
   padding: 0 8px 0 4px;
@@ -1833,6 +1852,28 @@ button.icon:hover:not(:disabled) {
 .core-chip-name {
   font-size: 13px;
   color: var(--text);
+}
+/* the ⋯ beside each measured core: the same menu as a right-click on the chip */
+.core-chip-more {
+  width: 20px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: none;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+}
+.core-chip-more:hover,
+.core-chip-more:focus-visible {
+  border-color: var(--border);
+  color: var(--text);
+}
+.bin-hint {
+  margin-top: -4px;
+  font-size: 12px;
 }
 .library {
   margin: 8px 0 0;
@@ -2009,6 +2050,23 @@ button.danger {
 .sandbox .summary dd,
 .sandbox .summary small {
   white-space: normal;
+}
+.probe-charts {
+  margin: 12px 0;
+}
+.probe-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 12px;
+}
+.probe-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.probe-head p {
+  margin: 0;
+  flex: 1 1 200px;
 }
 
 /* RF toolbox: the attenuator schematic and the dipole-rules table. */
@@ -2213,6 +2271,222 @@ select.z0.through {
   margin: 0 0 0.5rem;
 }
 
+/* ---- the RF exposure map ----
+
+   A sequential magnitude: the reference blue ramp, steps 100 -> 700, one step per halving
+   of the field. Validated with the dataviz skill's checker against these surfaces:
+   lightness monotone, adjacent gaps >= 0.06, single hue, in both themes. Its light end
+   sits near the surface on purpose - for a heatmap the weakest step means "next to
+   nothing" (the ordinal 2:1 floor does not apply to cells that tile the plot). Dark mode
+   flips the anchor: weak fields recede into the dark surface, strong ones come forward.
+   Crossing the limit is a STATE, drawn as a boundary line and named in words. */
+
+:root {
+  --exposure-0: #cde2fb;
+  --exposure-1: #9ec5f4;
+  --exposure-2: #6da7ec;
+  --exposure-3: #3987e5;
+  --exposure-4: #256abf;
+  --exposure-5: #184f95;
+  --exposure-6: #0d366b;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --exposure-0: #0d366b;
+    --exposure-1: #184f95;
+    --exposure-2: #256abf;
+    --exposure-3: #3987e5;
+    --exposure-4: #6da7ec;
+    --exposure-5: #9ec5f4;
+    --exposure-6: #cde2fb;
+  }
+}
+.exposure-controls .field-row {
+  align-items: end;
+}
+.exposure-map {
+  margin: 8px 0 0;
+}
+.exposure-map svg {
+  display: block;
+  width: 100%;
+  max-width: 560px;
+  touch-action: none;
+}
+/* A continuous field: cells butt together. Gaps here would draw a grid the data does not have. */
+.exposure-cell {
+  shape-rendering: crispEdges;
+}
+.exposure-step-0 { fill: var(--exposure-0); }
+.exposure-step-1 { fill: var(--exposure-1); }
+.exposure-step-2 { fill: var(--exposure-2); }
+.exposure-step-3 { fill: var(--exposure-3); }
+.exposure-step-4 { fill: var(--exposure-4); }
+.exposure-step-5 { fill: var(--exposure-5); }
+.exposure-step-6 { fill: var(--exposure-6); }
+.exposure-untrusted {
+  fill: var(--series-more);
+  opacity: 0.55;
+}
+.exposure-boundary {
+  fill: none;
+  stroke: var(--strain-burn-edge);
+  stroke-width: 2.5;
+  stroke-linecap: square;
+}
+.exposure-wire-halo {
+  stroke: var(--surface);
+  stroke-width: 7;
+  stroke-linecap: round;
+}
+.exposure-wire {
+  stroke: var(--text);
+  stroke-width: 3;
+  stroke-linecap: round;
+}
+.exposure-hover {
+  fill: none;
+  stroke: var(--text);
+  stroke-width: 1.5;
+}
+.exposure-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+  font-size: 12px;
+  color: var(--muted);
+}
+.exposure-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+/* The verdict is a state: mark + words + the strain colours the Balun-loss card uses. */
+.exposure-flag {
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border-left: 4px solid var(--border);
+  border-radius: 4px;
+}
+.exposure-flag-over {
+  background: var(--strain-burn-bg);
+  border-left-color: var(--strain-burn-edge);
+}
+.exposure-flag-clear {
+  background: var(--strain-ok-bg);
+  border-left-color: var(--strain-ok-edge);
+}
+.exposure-scale-note {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+/* ---- print: a results page clean enough for a club newsletter ----
+
+   Ctrl+P on any tool prints the results - summary cards, charts, patterns, the drawn
+   views - without the controls around them. Forms, buttons and the side panel go; inputs
+   and selects that sit inside a readout stay, flattened to plain text, so "SWR at 50 Ω"
+   still says 50. Colours are pinned to the light palette whatever the screen theme. */
+
+@media print {
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --border: #999999;
+    --text: #000000;
+    --muted: #444444;
+    --plot-grid: #cccccc;
+    --grid-minor: #eeeeee;
+    --grid-axis: #bbbbbb;
+  }
+  body {
+    background: #fff;
+    color: #000;
+  }
+  .site-header nav,
+  .site-footer,
+  .toolbar,
+  .tabs,
+  .tool-tabs,
+  .band-buttons,
+  .button-row,
+  .solver-picker,
+  .feedline-row,
+  .vna,
+  details.compare,
+  .editor-toolbar,
+  .editor-hint,
+  aside.panel,
+  .side-panel,
+  button {
+    display: none !important;
+  }
+  .modeler {
+    display: block;
+  }
+  .workspace {
+    display: flex;
+  }
+  .panel,
+  .card {
+    border-color: var(--border);
+    box-shadow: none;
+    background: #fff;
+  }
+  input,
+  select {
+    padding: 0;
+    border: none !important;
+    background: none !important;
+    appearance: none;
+    font: inherit;
+    color: inherit;
+  }
+  figure.plot,
+  figure.chart,
+  .plots > *,
+  .summary > div,
+  table,
+  .pattern-3d {
+    break-inside: avoid;
+  }
+  a {
+    color: inherit;
+    text-decoration: none;
+  }
+}
+
+/* ---- a message that must be seen before carrying on ---- */
+
+.modal-scrim {
+  position: fixed;
+  inset: 0;
+  z-index: 70;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: rgb(10 14 18 / 0.45);
+}
+.modal {
+  max-width: 480px;
+  padding: 14px 20px 16px;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 16px 40px rgb(0 0 0 / 0.3);
+}
+.modal h3 {
+  margin: 0 0 8px;
+}
+.modal p {
+  margin: 0 0 10px;
+}
+
 /* ---- tuning and ratings ---- */
 
 .tune-note {
@@ -2221,6 +2495,23 @@ select.z0.through {
 }
 .ratings p.muted input.z0 {
   width: 5em;
+}
+/* the optimiser's list of things it may change: long on a big model, so it scrolls */
+.optimise-list {
+  max-height: 280px;
+  margin: 0 0 8px;
+  padding: 0;
+  overflow-y: auto;
+  list-style: none;
+}
+.optimise-list li {
+  margin-bottom: 2px;
+}
+.optimise-list .field-row {
+  margin: 2px 0 6px 22px;
+}
+.sweep-what {
+  margin-top: 10px;
 }
 
 /* ---- a radial ground screen, drawn as spokes ---- */

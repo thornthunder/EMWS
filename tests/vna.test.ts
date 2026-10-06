@@ -15,6 +15,7 @@ import { type Link, concat, decoder, text } from '../src/lib/vna/link';
 import { NanoVna, parsePairs, parseScan } from '../src/lib/vna/nanovna';
 import { NanoVnaV2, decodeFifo, encodeFifoEntry } from '../src/lib/vna/nanovna-v2';
 import type { MeasuredPoint } from '../src/lib/touchstone';
+import { type TransmissionPoint, applyThru, makeThruCalibration, s21Db } from '../src/lib/vna/transmission';
 
 /** A link whose far end is a function of what was written. */
 class FakeLink implements Link {
@@ -45,6 +46,12 @@ function gammaOf(fMHz: number) {
   return { re: ((z.re - 50) * (z.re + 50) + z.im * z.im) / d, im: (z.im * (z.re + 50) - (z.re - 50) * z.im) / d };
 }
 
+/** What sits between the ports: a first-order low-pass, S21 = 1 / (1 + j f / 10 MHz). */
+function s21Of(fMHz: number) {
+  const x = fMHz / 10;
+  return { re: 1 / (1 + x * x), im: -x / (1 + x * x) };
+}
+
 /** A classic NanoVNA with DiSlord firmware: answers `scan` with everything in one go. */
 function classicWithScan(): FakeLink {
   return new FakeLink((bytes) => {
@@ -52,13 +59,14 @@ function classicWithScan(): FakeLink {
     if (cmd === '') return text('ch> ');
     if (cmd === 'version') return text('version\r\n1.2.14\r\nch> ');
     if (cmd === 'info') return text('info\r\nBoard: NanoVNA-H 4\r\nch> ');
-    const scan = /^scan (\d+) (\d+) (\d+) 3$/.exec(cmd);
+    // Mask 3 is frequency + S11; mask 5 is frequency + S21.
+    const scan = /^scan (\d+) (\d+) (\d+) ([35])$/.exec(cmd);
     if (scan) {
       const [start, stop, points] = [Number(scan[1]), Number(scan[2]), Number(scan[3])];
       const lines = [];
       for (let i = 0; i < points; i++) {
         const hz = Math.round(start + ((stop - start) * i) / (points - 1));
-        const g = gammaOf(hz / 1e6);
+        const g = scan[4] === '3' ? gammaOf(hz / 1e6) : s21Of(hz / 1e6);
         lines.push(`${hz} ${g.re.toFixed(6)} ${g.im.toFixed(6)}`);
       }
       // Chunked, as a serial port delivers it.
@@ -86,10 +94,10 @@ function classicOld(): FakeLink {
     }
     const hz = (i: number) => Math.round(start + ((stop - start) * i) / (points - 1));
     if (cmd === 'frequencies') return text(`frequencies\r\n${Array.from({ length: points }, (_, i) => hz(i)).join('\r\n')}\r\nch> `);
-    if (cmd === 'data 0') {
+    if (cmd === 'data 0' || cmd === 'data 1') {
       return text(
-        `data 0\r\n${Array.from({ length: points }, (_, i) => {
-          const g = gammaOf(hz(i) / 1e6);
+        `${cmd}\r\n${Array.from({ length: points }, (_, i) => {
+          const g = cmd === 'data 0' ? gammaOf(hz(i) / 1e6) : s21Of(hz(i) / 1e6);
           return `${g.re.toFixed(6)} ${g.im.toFixed(6)}`;
         }).join('\r\n')}\r\nch> `,
       );
@@ -146,8 +154,8 @@ function v2({ halfSent = false, pieces = false } = {}): FakeLink {
         const step = Number(regs.get(0x10) ?? 0n);
         const entries = [];
         for (let n = 0; n < count; n++, cursor = (cursor + 1) % points) {
-          const g = gammaOf((start + cursor * step) / 1e6);
-          entries.push(encodeFifoEntry({ index: cursor, s11: g, s21: { re: 0.01, im: 0 } }));
+          const f = (start + cursor * step) / 1e6;
+          entries.push(encodeFifoEntry({ index: cursor, s11: gammaOf(f), s21: s21Of(f) }));
         }
         const all = concat(entries);
         if (pieces) {
@@ -360,5 +368,65 @@ describe('one-port calibration', () => {
 
   it('refuses standards that were not swept alike', () => {
     expect(() => solveTerms(standards.short, standards.open.slice(1), standards.load)).toThrow(/same frequencies/);
+  });
+});
+
+describe('port 2: transmission', () => {
+  const expectLowPass = (points: TransmissionPoint[], count: number) => {
+    expect(points).toHaveLength(count);
+    for (const p of points) {
+      const want = s21Of(p.fMHz);
+      expect(p.s21.re).toBeCloseTo(want.re, 4);
+      expect(p.s21.im).toBeCloseTo(want.im, 4);
+    }
+  };
+
+  it('a classic NanoVNA reads S21 with scan mask 5', async () => {
+    const link = classicWithScan();
+    const vna = new NanoVna(link);
+    expectLowPass(await vna.sweepTransmission({ startMHz: 1, stopMHz: 30, points: 21 }), 21);
+    expect(link.transcript).toMatch(/scan 1000000 30000000 21 5\r/);
+  });
+
+  it('older classic firmware reads S21 with data 1', async () => {
+    const link = classicOld();
+    const vna = new NanoVna(link);
+    expectLowPass(await vna.sweepTransmission({ startMHz: 1, stopMHz: 30, points: 101 }), 101);
+    expect(link.transcript).toContain('data 1\r');
+  });
+
+  it('a V2 reads port 2 from the same FIFO entries, received over forward', async () => {
+    const vna = new NanoVnaV2(v2({ pieces: true }));
+    expectLowPass(await vna.sweepTransmission({ startMHz: 1, stopMHz: 30, points: 51 }), 51);
+  });
+
+  it('a thru and an isolation take the error terms out exactly; a thru alone takes the tracking out', () => {
+    const freqs = Array.from({ length: 11 }, (_, i) => 1 + i * 3);
+    // Known error terms: leakage e30 and tracking e10e32, both varying with frequency.
+    const e30 = (f: number) => ({ re: 0.002 + 1e-5 * f, im: -0.001 });
+    const track = (f: number) => ({ re: 0.8 - 0.004 * f, im: -0.2 + 0.002 * f });
+    const mul = (a: { re: number; im: number }, b: { re: number; im: number }) => ({ re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re });
+    const raw = (f: number, s21a: { re: number; im: number }) => {
+      const t = mul(track(f), s21a);
+      return { re: e30(f).re + t.re, im: e30(f).im + t.im };
+    };
+    const sweep = (s21a: (f: number) => { re: number; im: number }) => freqs.map((f) => ({ fMHz: f, s21: raw(f, s21a(f)) }));
+    const thru = sweep(() => ({ re: 1, im: 0 }));
+    const isolation = sweep(() => ({ re: 0, im: 0 }));
+    const measured = sweep(s21Of);
+    const full = applyThru(measured, makeThruCalibration(thru, isolation));
+    full.forEach((p) => expect(cAbs(cSub(p.s21, s21Of(p.fMHz)))).toBeLessThan(1e-12));
+    // Without the isolation the leakage stays in: small, but there.
+    const thruOnly = applyThru(measured, makeThruCalibration(thru));
+    const worst = Math.max(...thruOnly.map((p) => cAbs(cSub(p.s21, s21Of(p.fMHz)))));
+    expect(worst).toBeGreaterThan(1e-4);
+    expect(worst).toBeLessThan(0.01);
+    expect(s21Db({ re: 0.1, im: 0 })).toBeCloseTo(-20, 12);
+  });
+
+  it('refuses a thru and an isolation swept differently', () => {
+    const a = [1, 2, 3].map((f) => ({ fMHz: f, s21: { re: 1, im: 0 } }));
+    const b = [1, 2, 4].map((f) => ({ fMHz: f, s21: { re: 0, im: 0 } }));
+    expect(() => makeThruCalibration(a, b)).toThrow(/same frequencies/);
   });
 });

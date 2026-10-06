@@ -81,6 +81,44 @@ export const PRESETS: Preset[] = [
     blurb: 'A single ping spreading out and leaving through the absorbing edges - the plainest view of how the sandbox works.',
     scene: () => ({ ...emptyScene(), sources: [source(1.5, 1.0, 'pulse')] }),
   },
+  {
+    id: 'mast',
+    name: 'A mast in a plane wave',
+    blurb:
+      'A plane wave meets a conducting cylinder a wavelength across - a mast or a tower seen end-on. In front of it the incoming and reflected waves stand; behind it lies a shadow, filled in from the edges by diffraction.',
+    scene: () => ({
+      ...emptyScene(),
+      planeWave: { side: 'left', angleDeg: 0, kind: 'sine', amplitude: 1 },
+      shapes: [{ id: sceneId('shape'), geometry: { kind: 'disc', cx: 1.3, cy: 1.0, r: 0.15 }, material: CONDUCTOR }],
+    }),
+  },
+  {
+    id: 'brewster',
+    name: "Brewster's angle",
+    blurb:
+      'Vertical polarisation (Hz out of the screen, so E lies in the picture) coming down at 63.4° from overhead onto a ground of εr 4, where tan θ = √εr. Nothing comes back: the field above is the incoming wave alone. Switch to Ez - horizontal polarisation - and a standing wave appears above the ground.',
+    scene: () => ({
+      ...emptyScene(),
+      polarisation: 'te',
+      planeWave: { side: 'top', angleDeg: Number(((Math.atan(2) * 180) / Math.PI).toFixed(1)), kind: 'sine', amplitude: 1 },
+      shapes: [{ id: sceneId('shape'), geometry: { kind: 'rect', x: 0, y: 0, w: 3, h: 0.6 }, material: dielectric(4) }],
+    }),
+  },
+  {
+    id: 'ground-40m',
+    name: 'Average ground on 40 m',
+    blurb:
+      'Horizontal polarisation (Ez) arriving 20° above the horizon at 7.1 MHz over average ground (εr 13, 5 mS/m). The ground sends most of it back, and the lobes and nulls of a standing wave stand above it - the lobes an antenna pattern over ground is made of. Switch to Hz, vertical polarisation, and the stripes fade: past its pseudo-Brewster angle (about 13° elevation here) real ground hardly reflects vertical polarisation.',
+    scene: () => ({
+      ...emptyScene(),
+      fMHz: 7.1,
+      widthM: 300,
+      heightM: 150,
+      cellsPerWavelength: 40,
+      planeWave: { side: 'top', angleDeg: 70, kind: 'sine', amplitude: 1 },
+      shapes: [{ id: sceneId('shape'), geometry: { kind: 'rect', x: 0, y: 0, w: 300, h: 30 }, material: dielectric(13, 0.005) }],
+    }),
+  },
 ];
 
 export function presetById(id: string): Preset | undefined {

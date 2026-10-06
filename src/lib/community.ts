@@ -16,7 +16,8 @@
 /** Relative on purpose: the store lives on whatever site is serving the app. */
 export const COMMUNITY_PATH = 'community/index.php';
 
-export type CommunityKind = 'core-profile';
+/** Must match KINDS in public/community/index.php. */
+export type CommunityKind = 'core-profile' | 'balun-design' | 'antenna-model';
 
 export interface CommunityItem {
   id: number;

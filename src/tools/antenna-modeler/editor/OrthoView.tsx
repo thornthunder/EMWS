@@ -30,7 +30,7 @@ import {
   updateLoad,
   wireById,
 } from '../model';
-import type { MenuEntry } from './ContextMenu';
+import type { MenuEntry } from '../../../ui/ContextMenu';
 import { useEditor } from './context';
 import { type Camera, type Plane, PLANES, gridStep, panBy, snapValue, toScreen, toWorld, zoomAt } from './projection';
 

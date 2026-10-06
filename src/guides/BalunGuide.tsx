@@ -245,8 +245,14 @@ export function BalunGuide() {
       <p>
         The impedance you measured <em>is</em> the permeability, scaled by the shape and the turns: the resistance
         is the loss and the reactance is the inductance. The core goes straight under your design, and the whole
-        tool now runs on its measured curve rather than the estimate. If the winding resonated inside your sweep
-        the tool says so, and how far up to trust the curve.
+        tool now runs on its measured curve rather than the estimate.
+      </p>
+      <p>
+        If the test winding <strong>resonated inside your sweep</strong> — its reactance went capacitive, which a
+        bare ferrite never does — a notice appears the moment the reading comes back, saying where it resonated
+        and how far up to trust the curve (about a third of the resonance). You can keep the reading, marked with
+        that limit, or forget it on the spot and rewind with fewer turns. The limit stays on the core's card, and
+        the design checks warn if a sweep later leans on the curve above it.
       </p>
 
       <h3>Your cores</h3>
@@ -256,6 +262,12 @@ export function BalunGuide() {
         <em>Your cores</em> beneath the catalogue grid, where it can be clicked or dragged onto the pad exactly
         like a catalogue core. Next time you open the tool it is still there. A profile is a <em>core</em>, not a
         mix: what you measured was that FT240, and the tool will not quietly apply it to an FT50.
+      </p>
+      <p>
+        <strong>Right-click a core in the bin</strong> (or press the ⋯ beside it) for everything else: use it,
+        rename or correct it, export it, share it where the site has a community, and <em>forget</em> it — with a
+        second press to confirm, because forgetting a core throws its sweep away. Measure the same core a few
+        times and the bin fills up quickly; forget the readings you no longer trust and keep the one you do.
       </p>
       <p>
         <em>Your core library</em>, at the bottom of the panel, is where you look after them. You can rename one,
@@ -322,6 +334,13 @@ export function BalunGuide() {
         twice over — a measurement describes the core that was measured, wound as it was measured, and someone else's
         FT240 in #43 is close to yours, not identical.
       </p>
+      <p>
+        The same section has a second shelf, <strong>Balun designs</strong>: your saved designs, kept or shared the same
+        way, through the same CC0 step. A design wound on one of your measured cores travels <em>with that core</em> —
+        without it, on anyone else's machine, it could never be evaluated honestly. <em>Add to my designs</em> puts a
+        shared one under <em>Your designs</em> and its core in your bin, both named with their designer, so the club's
+        tried-and-tested 49:1 is a click away, measured core and all.
+      </p>
 
       <h2>Working with the other tools</h2>
       <p>
@@ -350,9 +369,11 @@ export function BalunGuide() {
           different browser, means starting again — unless you exported them. Export what you would mind losing.
         </li>
         <li>
-          <strong>Nothing here has been checked against a bench yet.</strong> The engine is held to conservation
-          of energy and to exact limiting cases, so its arithmetic is sound; whether the ferrite and the strays
-          match your transformer is something only a measurement can say. Compare, and trust your VNA.
+          <strong>The predictions have not been checked against a built transformer yet.</strong> The engine is
+          held to conservation of energy and to exact limiting cases, so its arithmetic is sound, and the
+          measurement path — VNA, calibration, sweep to permeability — has been verified on a real core; but
+          whether the ferrite estimate and the strays match <em>your</em> transformer is something only a
+          measurement of the finished balun can say. Compare, and trust your VNA.
         </li>
         <li>
           Core loss is worked out from <em>small-signal</em> permeability. Driven hard, ferrite loses more than

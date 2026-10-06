@@ -3,9 +3,10 @@
 // Everything the pad can do can be done here too, which is what makes the tool usable
 // from a keyboard or a phone - dragging is a convenience, not the only way in.
 
-import { type ChangeEvent, type DragEvent, useRef, useState } from 'react';
+import { type ChangeEvent, type DragEvent, useEffect, useRef, useState } from 'react';
 import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
 import { TouchstoneError, parseTouchstone } from '../../lib/touchstone';
+import { ContextMenu, type MenuEntry } from '../../ui/ContextMenu';
 import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
 import { COAX, CORES, type CoreSize, type Material, WIRES } from './catalog';
@@ -37,8 +38,9 @@ import {
   wind,
   withCustomDimensions,
 } from './model';
-import { CommunityPanel } from './CommunityPanel';
-import type { SavedBalun } from './library';
+import { CommunityPanel, type CommunityShelf } from '../../ui/CommunityPanel';
+import type { CommunityKind } from '../../lib/community';
+import { type SavedBalun, exportSavedBalun, importSavedBalun } from './library';
 import { CORE_DRAG_TYPE } from './WindingPad';
 
 export interface DesignPanelProps {
@@ -68,7 +70,13 @@ export interface DesignPanelProps {
   onSaveDesign: (name: string) => void;
   onOpenSaved: (id: string) => void;
   onDeleteSaved: (id: string) => void;
+  /** A design taken from the club library, with the measured core it is wound on, if any. */
+  onAddSaved: (saved: SavedBalun, core?: CoreProfile) => void;
 }
+
+const describeProfile = (p: CoreProfile) => `${p.size.name} in ${p.mix}, ${p.setup.turns} turns, ${p.sweep.length} points`;
+/** Something taken from the community keeps its measurer's (or designer's) callsign in its name. */
+const withCallsign = (name: string, callsign: string) => (name.includes(callsign) ? name : `${name} — ${callsign}`);
 
 const TOPOLOGIES: { id: Topology; label: string; blurb: string; start: () => Design }[] = [
   { id: 'autotransformer', label: 'Tapped', blurb: 'One tapped winding: the 49:1 and 9:1 ununs.', start: efhwDesign },
@@ -82,9 +90,60 @@ const DUTIES = [
   { label: 'SSB speech (roughly 20 %)', pct: 20 },
 ];
 
+/** Saves profiles as the export file, named after what is in it. */
+function downloadProfiles(list: CoreProfile[]): void {
+  const blob = new Blob([exportProfiles(list)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = suggestedFileName(list);
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export function DesignPanel(props: DesignPanelProps) {
   const { design, onChange } = props;
   const set = (patch: Partial<Design>) => onChange({ ...design, ...patch });
+
+  // What the chips' menu can start elsewhere in the panel: opening a core's card in the
+  // library, and sharing it (only offered once the community store has answered its probe).
+  const [communityReady, setCommunityReady] = useState(false);
+  const [shareRequest, setShareRequest] = useState<{ kind: CommunityKind; id: string }>();
+  const [inspectId, setInspectId] = useState<string>();
+
+  const shelves: CommunityShelf[] = [
+    {
+      kind: 'core-profile',
+      title: 'Measured cores',
+      local: props.profiles.map((p) => ({ id: p.id, name: p.name, summary: describeProfile(p), payload: () => exportProfiles([p]) })),
+      emptyLocal: 'Measure a core (above) and it can be kept here, or shared.',
+      takeLabel: 'Add to my cores',
+      // The community payload goes through exactly the file-import path: its validation,
+      // its fresh ids, and the re-derivation that keeps the sweep the truth.
+      onTake: (payload, item) =>
+        props.onAddProfiles(
+          importProfiles(payload).map((p) => ({
+            ...p,
+            name: withCallsign(p.name, item.callsign),
+            notes: [p.notes, `Shared CC0 by ${item.callsign}.`].filter(Boolean).join(' '),
+          })),
+        ),
+    },
+    {
+      kind: 'balun-design',
+      title: 'Balun designs',
+      local: props.saved.map((s) => ({ id: s.id, name: s.name, summary: s.summary, payload: () => exportSavedBalun(s, props.profiles) })),
+      emptyLocal: 'Save a design (above) and it can be kept here, or shared - with the measured core it is wound on, if it is.',
+      takeLabel: 'Add to my designs',
+      onTake: (payload, item) => {
+        const { saved, core } = importSavedBalun(payload);
+        props.onAddSaved(
+          { ...saved, name: withCallsign(saved.name, item.callsign) },
+          core && { ...core, name: withCallsign(core.name, item.callsign), notes: [core.notes, `Shared CC0 by ${item.callsign}.`].filter(Boolean).join(' ') },
+        );
+      },
+    },
+  ];
 
   /** Changing what is being built brings that type's own wire, winding and load with it. */
   const switchTo = (topology: Topology) => {
@@ -107,15 +166,15 @@ export function DesignPanel(props: DesignPanelProps) {
         <p className="muted">{TOPOLOGIES.find((t) => t.id === design.topology)!.blurb}</p>
       </section>
 
-      <CoreSection {...props} />
+      <CoreSection {...props} communityReady={communityReady} onShareProfile={(p) => setShareRequest({ kind: 'core-profile', id: p.id })} onInspectProfile={setInspectId} />
       <WireSection design={design} set={set} />
       <RecipeSection {...props} set={set} />
       <LoadSection {...props} set={set} />
       <StraysSection design={design} analysis={props.analysis} set={set} />
       <MeasureSection {...props} />
-      <LibrarySection {...props} />
+      <LibrarySection {...props} inspectId={inspectId} onInspected={() => setInspectId(undefined)} />
       <SavedSection {...props} />
-      <CommunityPanel profiles={props.profiles} onAddProfiles={props.onAddProfiles} />
+      <CommunityPanel shelves={shelves} shareRequest={shareRequest} onShareHandled={() => setShareRequest(undefined)} onReady={setCommunityReady} />
     </div>
   );
 }
@@ -164,7 +223,14 @@ function SavedSection({ saved, suggestedName, onSaveDesign, onOpenSaved, onDelet
   );
 }
 
-function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, onChange, compareId, onCompare }: DesignPanelProps) {
+interface CoreSectionProps extends DesignPanelProps {
+  /** Whether this site has a community store, so the menu offers Share only where it exists. */
+  communityReady: boolean;
+  onShareProfile: (profile: CoreProfile) => void;
+  onInspectProfile: (id: string) => void;
+}
+
+function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, onRemoveProfile, onChange, compareId, onCompare, communityReady, onShareProfile, onInspectProfile }: CoreSectionProps) {
   const core = coreOf(design);
   const startDrag = (e: DragEvent, payload: object) => {
     e.dataTransfer.setData(CORE_DRAG_TYPE, JSON.stringify(payload));
@@ -172,6 +238,26 @@ function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, o
   };
   const setDims = (size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm'>>) => onChange(withCustomDimensions(design, size));
   const catalogue = materials.filter((m) => !m.id.startsWith('core:'));
+
+  /** The menu on a measured core's chip: everything the library can do, where the chip is. */
+  const [menu, setMenu] = useState<{ profile: CoreProfile; x: number; y: number; confirm: boolean }>();
+  const openMenu = (profile: CoreProfile, x: number, y: number) => setMenu({ profile, x, y, confirm: false });
+  const closeMenu = () => setMenu(undefined);
+  const menuEntries = (m: NonNullable<typeof menu>): MenuEntry[] =>
+    m.confirm
+      ? [
+          { label: 'Yes, forget it', danger: true, onSelect: () => onRemoveProfile(m.profile.id) },
+          { label: 'No, keep it', onSelect: () => {} },
+        ]
+      : [
+          ...(design.profileId === m.profile.id ? [] : [{ label: 'Use on the pad', onSelect: () => onPickProfile(m.profile) }]),
+          { label: 'Rename, correct, inspect…', onSelect: () => onInspectProfile(m.profile.id) },
+          { label: 'Export as a file…', onSelect: () => downloadProfiles([m.profile]) },
+          ...(communityReady ? [{ label: 'Share with the community…', onSelect: () => onShareProfile(m.profile) }] : []),
+          'separator' as const,
+          // Swaps to the confirmation while the menu stays up: forgetting takes two presses.
+          { label: 'Forget this core…', danger: true, keepOpen: true, onSelect: () => setMenu({ ...m, confirm: true }) },
+        ];
 
   return (
     <section className="form-section">
@@ -225,27 +311,62 @@ function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, o
           time.
         </p>
       ) : (
-        <ul className="bin" aria-label="Your measured cores">
-          {profiles.map((p) => {
-            const chosen = design.profileId === p.id;
-            return (
-              <li key={p.id}>
-                <button
-                  type="button"
-                  className={`core-chip core-chip-wide${chosen ? ' core-chip-on' : ''}`}
-                  draggable
-                  aria-pressed={chosen}
-                  title={`${p.size.name} ${p.mix}, measured ${new Date(p.measuredAt).toLocaleDateString()} with ${p.setup.turns} turns`}
-                  onDragStart={(e) => startDrag(e, { profileId: p.id })}
-                  onClick={() => onPickProfile(p)}
-                >
-                  <CoreGlyph measured />
-                  <span className="core-chip-name">{p.name}</span>
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <ul className="bin" aria-label="Your measured cores">
+            {profiles.map((p) => {
+              const chosen = design.profileId === p.id;
+              return (
+                <li key={p.id}>
+                  <button
+                    type="button"
+                    className={`core-chip core-chip-wide${chosen ? ' core-chip-on' : ''}`}
+                    draggable
+                    aria-pressed={chosen}
+                    title={`${p.size.name} ${p.mix}, measured ${new Date(p.measuredAt).toLocaleDateString()} with ${p.setup.turns} turns`}
+                    onDragStart={(e) => startDrag(e, { profileId: p.id })}
+                    onClick={() => onPickProfile(p)}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      openMenu(p, e.clientX, e.clientY);
+                    }}
+                  >
+                    <CoreGlyph measured />
+                    <span className="core-chip-name">{p.name}</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="core-chip-more"
+                    aria-label={`Options for ${p.name}`}
+                    aria-haspopup="menu"
+                    title={`Options for ${p.name}: use, export, share, forget`}
+                    onClick={(e) => {
+                      const r = e.currentTarget.getBoundingClientRect();
+                      openMenu(p, r.left, r.bottom + 2);
+                    }}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      openMenu(p, e.clientX, e.clientY);
+                    }}
+                  >
+                    ⋯
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          <p className="muted bin-hint">Right-click a core (or press its ⋯) to export, share or forget it.</p>
+        </>
+      )}
+      {menu && (
+        <ContextMenu
+          menu={{
+            x: menu.x,
+            y: menu.y,
+            title: menu.confirm ? `Forget ${menu.profile.name}? Its sweep goes with it.` : menu.profile.name,
+            entries: menuEntries(menu),
+          }}
+          onClose={closeMenu}
+        />
       )}
 
       <div className="field-row">
@@ -490,13 +611,15 @@ function StraysSection({ design, analysis, set }: { design: Design; analysis: An
   );
 }
 
-function MeasureSection({ design, onAddProfiles }: DesignPanelProps) {
+function MeasureSection({ design, onAddProfiles, onRemoveProfile }: DesignPanelProps) {
   const [turns, setTurns] = useState(8);
   const [strayPf, setStrayPf] = useState(0);
   const [mix, setMix] = useState('#43');
   const [family, setFamily] = useState<CoreProfile['family']>('NiZn');
   const [name, setName] = useState('');
   const [message, setMessage] = useState<string>();
+  /** A reading whose test winding resonated: said to the face, not only in small print. */
+  const [resonated, setResonated] = useState<{ profile: CoreProfile; atMHz: number }>();
   const fileInput = useRef<HTMLInputElement>(null);
   const core = coreOf(design);
   const suggested = `${core.name} ${mix}`.trim();
@@ -519,6 +642,10 @@ function MeasureSection({ design, onAddProfiles }: DesignPanelProps) {
           ? 'The winding never went capacitive in this sweep, so the whole curve is usable.'
           : `The winding resonates in this sweep - trust the curve up to about ${profile.trustworthyUpToMHz.toFixed(1)} MHz, or measure again with fewer turns.`),
     );
+    if (profile.trustworthyUpToMHz !== undefined) {
+      const capacitive = points.find((p) => p.z.im <= 0);
+      if (capacitive) setResonated({ profile, atMHz: capacitive.fMHz });
+    }
     setName('');
   };
 
@@ -576,24 +703,89 @@ function MeasureSection({ design, onAddProfiles }: DesignPanelProps) {
         <MeasureWithVna startMHz={design.sweep.startMHz} stopMHz={design.sweep.stopMHz} action="Measure this core" onMeasured={keep} />
         {message && <p className="muted">{message}</p>}
       </details>
+      {resonated && (
+        <ResonanceNotice
+          profile={resonated.profile}
+          atMHz={resonated.atMHz}
+          onKeep={() => setResonated(undefined)}
+          onForget={() => {
+            onRemoveProfile(resonated.profile.id);
+            setMessage(`${resonated.profile.name} was forgotten: its winding resonated at ${resonated.atMHz.toFixed(1)} MHz.`);
+            setResonated(undefined);
+          }}
+        />
+      )}
     </section>
   );
 }
 
+/**
+ * Said once, in the middle of the screen, the moment a reading comes back resonant. The
+ * same fact also lives on the profile's card and in the design checks, but a card line is
+ * easy to miss and this is the moment the measurer can still rewind the test winding.
+ */
+function ResonanceNotice({ profile, atMHz, onKeep, onForget }: { profile: CoreProfile; atMHz: number; onKeep: () => void; onForget: () => void }) {
+  const keepRef = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    keepRef.current?.focus();
+    const key = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onKeep();
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [onKeep]);
+  const limit = profile.trustworthyUpToMHz;
+  return (
+    <div className="modal-scrim" onClick={onKeep}>
+      <div className="modal resonance-notice" role="alertdialog" aria-modal="true" aria-labelledby="resonance-title" onClick={(e) => e.stopPropagation()}>
+        <h3 id="resonance-title">The test winding resonated</h3>
+        <p>
+          At <strong>{atMHz.toFixed(atMHz < 10 ? 2 : 1)} MHz</strong> the reactance of {profile.name} stopped being inductive. A bare
+          ferrite winding can never do that - it is the test winding resonating with its own capacitance - so around and above that
+          point this reading shows the winding, not the core.
+        </p>
+        <p>
+          {limit !== undefined && (
+            <>
+              The reading is kept, marked <strong>trust it up to about {limit.toFixed(1)} MHz</strong> (a third of the resonance), and
+              its card under <em>Your core library</em> says the same; the design checks will warn if a sweep leans on it higher up.
+            </>
+          )}{' '}
+          To read the core higher, measure it again with fewer turns, spread out, with short leads.
+        </p>
+        <div className="button-row">
+          <button ref={keepRef} type="button" className="small" onClick={onKeep}>
+            Keep it
+          </button>
+          <button type="button" className="small danger" onClick={onForget}>
+            Forget this measurement
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /** Everything you have measured: look it over, rename it, correct it, keep it, share it. */
-function LibrarySection({ profiles, design, onAddProfiles, onUpdateProfile, onRemoveProfile, onPickProfile }: DesignPanelProps) {
+function LibrarySection({ profiles, design, onAddProfiles, onUpdateProfile, onRemoveProfile, onPickProfile, inspectId, onInspected }: DesignPanelProps & { inspectId: string | undefined; onInspected: () => void }) {
   const [message, setMessage] = useState<string>();
+  const [opened, setOpened] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
-  const download = (list: CoreProfile[]) => {
-    const blob = new Blob([exportProfiles(list)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = suggestedFileName(list);
-    a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
+  // A chip's "Rename, correct, inspect…" lands here: open the library, show the card.
+  useEffect(() => {
+    if (inspectId === undefined) return;
+    setOpened(true);
+    const timer = setTimeout(() => {
+      const card = document.getElementById(`core-profile-${inspectId}`);
+      card?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      card?.querySelector('input')?.focus();
+      onInspected();
+    }, 60);
+    return () => clearTimeout(timer);
+  }, [inspectId, onInspected]);
+
+  const download = downloadProfiles;
 
   const open = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -610,7 +802,7 @@ function LibrarySection({ profiles, design, onAddProfiles, onUpdateProfile, onRe
 
   return (
     <section className="form-section">
-      <details>
+      <details open={opened} onToggle={(e) => setOpened((e.target as HTMLDetailsElement).open)}>
         <summary>Your core library{profiles.length > 0 ? ` (${profiles.length})` : ''}</summary>
         <p className="muted">
           Kept in this browser only. Export to keep a copy, move it to another machine, or hand a core's measurement to someone
@@ -630,7 +822,7 @@ function LibrarySection({ profiles, design, onAddProfiles, onUpdateProfile, onRe
         {message && <p className="muted">{message}</p>}
         <ul className="library">
           {profiles.map((p) => (
-            <li key={p.id} className={`library-item${design.profileId === p.id ? ' library-item-on' : ''}`}>
+            <li key={p.id} id={`core-profile-${p.id}`} className={`library-item${design.profileId === p.id ? ' library-item-on' : ''}`}>
               <ProfileCard
                 profile={p}
                 chosen={design.profileId === p.id}

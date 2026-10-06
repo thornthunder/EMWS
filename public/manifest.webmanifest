@@ -1,0 +1,14 @@
+{
+  "name": "EMWS - Electro Magnetic Works Suite",
+  "short_name": "EMWS",
+  "description": "A public-domain electromagnetics workbench for radio amateurs: antennas, matching, baluns, coils and filters, all solved in your browser.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10181f",
+  "theme_color": "#14212b",
+  "icons": [
+    { "src": "favicon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" },
+    { "src": "icon-maskable.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "maskable" }
+  ]
+}

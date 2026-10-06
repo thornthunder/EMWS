@@ -30,7 +30,11 @@
 
 declare(strict_types=1);
 
-const KINDS = ['core-profile'];
+// Measured cores; balun designs (with the core they are wound on); antenna models (a NEC
+// deck in a small JSON envelope - every payload stays JSON, which the check below holds).
+// Each is its owning tool's own format, so taking one is that tool's import and its
+// validation, nothing else's.
+const KINDS = ['core-profile', 'balun-design', 'antenna-model'];
 const MAX_PAYLOAD_BYTES = 1000000;
 const MAX_BODY_BYTES = 1200000;
 const LOGIN_ATTEMPTS = 5;

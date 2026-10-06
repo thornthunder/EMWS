@@ -17,13 +17,17 @@ import { NumberField } from '../../ui/NumberField';
 import { formatSi } from '../smith-chart/units';
 import { copperOhmsPerM, inductanceH, meanDiameterMm, qualityEstimate, reactanceOhms, selfResonanceBoundMHz, turnsFor, windingLengthMm, wireLengthM, wireResistanceOhms } from './coil';
 import { type Ladder, type LadderElement, MAX_ORDER, MIN_ORDER, logFrequencies, nearestStandard, respond, sweepResponse, synthesise, withStandardCapacitors } from './filter';
-import { BANDS, type CoilDesign, type FilterDesign, type LcState, type LcTab, SPACINGS, type TrapDesign, WIRE_CHOICES, loadState, saveState, trapParts } from './model';
+import { BANDS, type CoilDesign, type FilterDesign, type LcState, type LcTab, SPACINGS, type StubDesign, type TrapDesign, WIRE_CHOICES, loadState, saveState, trapParts } from './model';
+import { StubSection } from './StubSection';
+import { type TransmissionPoint, s21Db } from '../../lib/vna/transmission';
+import { MeasureTransmission } from '../../ui/MeasureTransmission';
 import { type TrapSpec, bandwidthMHz, resonantImpedanceOhms, trapAt, trapImpedance } from './trap';
 
 const TABS: { id: LcTab; label: string }[] = [
   { id: 'coil', label: 'A coil' },
   { id: 'trap', label: 'A trap' },
   { id: 'filter', label: 'A filter' },
+  { id: 'stub', label: 'Stubs & cavities' },
 ];
 
 interface Note {
@@ -50,6 +54,7 @@ export function LcTool() {
   const setCoil = (patch: Partial<CoilDesign>) => setState((s) => ({ ...s, coil: { ...s.coil, ...patch } }));
   const setTrap = (patch: Partial<TrapDesign>) => setState((s) => ({ ...s, trap: { ...s.trap, ...patch } }));
   const setFilter = (patch: Partial<FilterDesign>) => setState((s) => ({ ...s, filter: { ...s.filter, ...patch } }));
+  const setStub = (patch: Partial<StubDesign>) => setState((s) => ({ ...s, stub: { ...s.stub, ...patch } }));
 
   return (
     <div className="page">
@@ -78,6 +83,7 @@ export function LcTool() {
       {state.tab === 'coil' && <CoilSection coil={state.coil} onChange={setCoil} />}
       {state.tab === 'trap' && <TrapSection trap={state.trap} coil={state.coil} onChange={setTrap} onCoil={setCoil} goTo={setTab} />}
       {state.tab === 'filter' && <FilterSection filter={state.filter} coil={state.coil} onChange={setFilter} goTo={setTab} />}
+      {state.tab === 'stub' && <StubSection stub={state.stub} onChange={setStub} />}
     </div>
   );
 }
@@ -545,6 +551,7 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
   const ends = { z0: filter.z0 };
   const fc = filter.cutoffMHz;
   const [hover, setHover] = useState<number | undefined>();
+  const [measured, setMeasured] = useState<{ points: TransmissionPoint[]; source: string }>();
   const freqs = logFrequencies(fc / 8, fc * 8, 361);
   const points = sweepResponse(ladder, ends, freqs, q);
   const unequal = Math.abs(ladder.loadOhms - filter.z0) > 0.01 * filter.z0;
@@ -688,6 +695,9 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
           series={[
             { label: `with ${filter.z0} Ω at both ends`, colour: 'var(--series-1)', values: points.map((p) => p.lossDb) },
             ...(asDesigned ? [{ label: `with the ${ladder.loadOhms.toFixed(0)} Ω load it wants`, colour: 'var(--series-2)', dashed: true, values: asDesigned.map((p) => p.lossDb) }] : []),
+            ...(measured
+              ? [{ label: 'measured', colour: 'var(--series-3)', dashed: true, values: measured.points.map((p) => Math.min(100, -s21Db(p.s21))), fMHz: measured.points.map((p) => p.fMHz) }]
+              : []),
           ]}
           ceiling={100}
           marks={[{ fMHz: fc, label: 'cutoff' }, ...(low ? [{ fMHz: 2 * fc, label: '2×' }, { fMHz: 3 * fc, label: '3×' }] : [{ fMHz: fc / 2, label: '½' }, { fMHz: fc / 3, label: '⅓' }])]}
@@ -708,6 +718,18 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
         <p className="muted">
           Return loss 14 dB is SWR 1.5:1. The passband edge of a Butterworth is its 3 dB point; of a Chebyshev, the last ripple.
         </p>
+        <details className="panel measure-filter">
+          <summary>Measure the filter you built</summary>
+          <p className="muted">
+            Port 1 into the filter, port 2 out of it. Its attenuation is drawn dashed over the design{measured ? ` - ${measured.source}` : ''}.
+          </p>
+          <MeasureTransmission
+            startMHz={Number((fc / 8).toPrecision(4))}
+            stopMHz={Number(Math.min(fc * 8, 3000).toPrecision(4))}
+            action="Measure the filter"
+            onMeasured={(pts, source) => setMeasured({ points: pts, source })}
+          />
+        </details>
       </div>
     </div>
   );

@@ -150,11 +150,11 @@ export function AntennaModelerGuide() {
         antenna alone.
       </p>
       <p>
-        For anything more involved — a balun <em>and</em> a length of coax, or a matching network — send the
-        impedance to the <a href="#/smith">Smith chart</a> with the button under the results. It has a
-        transformer component, so you can build the real chain piece by piece. Both it and the reference-impedance
-        trick assume an <strong>ideal, lossless</strong> transformer; a real 4:1 current balun costs you a
-        little, and will not hold exactly 4:1 on every band an OCF is used on.
+        For a matching network — an L network, a stub, a tuner setting — send the impedance to the{' '}
+        <a href="#/smith">Smith chart</a> with the button under the results. It has a transformer component, so
+        you can build any chain piece by piece. Both it and the reference-impedance trick assume an{' '}
+        <strong>ideal, lossless</strong> transformer; a real 4:1 current balun costs you a little, and will not
+        hold exactly 4:1 on every band an OCF is used on.
       </p>
       <p>
         <strong>Or look through a balun you actually have.</strong> Save a design in the{' '}
@@ -189,6 +189,25 @@ export function AntennaModelerGuide() {
         set there: change them in the balun tool and save the design again to see a different verdict here. A core in
         a sealed box, in the sun, runs hotter than the estimate; a measurement of the real core makes the loss, and so
         the heat, much more trustworthy.
+      </p>
+      <h3>The feed line</h3>
+      <p>
+        <strong>The run of coax is part of the station too.</strong> The <em>Feed line</em> row under the summary
+        puts a length of real cable between the radio and the feed point — or between the radio and the balun,
+        when you are looking through one. Pick a type from the RF toolbox's catalogue, or the cable whose
+        datasheet figures you typed in there, and give the length. The <em>SWR at</em> card then shows what the
+        radio sees at the shack end, a <em>Feed line loss</em> card splits the cost into the matched loss and
+        what the mismatch adds, and with a swept run a <em>Where the power goes</em> chart draws, band-wide, the
+        watts that reach the antenna, the watts that warm the cable, and (through a balun) the watts that warm
+        the core.
+      </p>
+      <p>
+        Two honest notes, the toolbox's own. A catalogue cable's loss is <em>calculated</em> from its nominal
+        geometry — smooth solid copper — so it is a floor, and a real braided cable loses somewhat more: for the
+        figure you will actually get, type two numbers from its datasheet into the toolbox's Coax tab and pick
+        that cable here. And the cable's loss makes the SWR <em>at the radio</em> better than at the antenna —
+        comfortable reading on the meter, paid for in watts that never leave the coax. The feed impedance card
+        stays the antenna's own, so you can always see both ends.
       </p>
       <p>
         You can add several feed points, each with its own voltage and phase, which is how you model a phased
@@ -231,6 +250,14 @@ export function AntennaModelerGuide() {
         swept at 30 frequencies, on one core, takes about a third of a second at 81 segments, ten seconds at
         600, and over four minutes at 2000. Past the λ/20 rule the answer barely moves, so the wait buys
         nothing.
+      </p>
+      <p>
+        <strong>And "barely moves" can be checked rather than believed.</strong> <em>Is the model converged?</em>, under
+        Tune, solves the model again with every wire at twice the segments — at the frequency on screen, with a coarse
+        pattern — and reports how far the feed impedance and the peak gain moved, in ohms, percent and dB. If they held
+        still, the answer did not depend on the chopping; if they moved, the figures you were reading did, and the model
+        needs more segments. It is two full solves, so on a heavy model it takes twice the usual wait. No other habit
+        catches a bad mesh as cheaply: make it one.
       </p>
       <p>
         EMWS warns you before a long run and puts the estimate on the Run button, and it stops auto-run from
@@ -462,6 +489,53 @@ export function AntennaModelerGuide() {
         thickness shortens it - and the feed reads a fraction of an ohm of reactance. Then shorten the dipole to 7 m, put
         a coil at its centre, and tune the coil's L for resonance instead: that is how a loaded antenna is designed.
       </p>
+      <p>
+        Besides lengths, heights and loads, every horizontal wire can be moved <strong>across its own direction</strong> —{' '}
+        <em>Position of wire 3 along X</em> — which for a Yagi is that element's place on the boom.
+      </p>
+
+      <h2>Optimise several things at once</h2>
+      <p>
+        A Yagi is the reason this exists: shorten the director and the best spacing moves, and both change the reflector's
+        best length. <em>Optimise</em>, under Tune, changes up to six things together. Tick what it may change — element
+        lengths, their places on the boom, the height, a load — and check each one's range: the search never leaves them.
+        Then weigh what you want:
+      </p>
+      <ul>
+        <li>
+          <strong>Gain, per dB</strong> and <strong>front to back, per dB</strong>: how much each dB is worth to you. Set one
+          to 0 and it stops mattering. Front-to-back counts up to 30 dB and no further — past that the search would chase a
+          razor-thin null that no real antenna keeps.
+        </li>
+        <li>
+          <strong>SWR target and weight</strong>: every 0.1 of SWR over your target costs as much as 1 dB of gain, times the
+          weight. With a sweep in the model you can ask for the worst SWR across it instead of the SWR at one frequency.
+        </li>
+      </ul>
+      <p>
+        It searches with the simplex method — a small triangle (or more dimensions) of trial designs that flips, stretches
+        and shrinks its way downhill — and every trial is a real solve. It starts from the antenna as it is, so it can only
+        improve on it: if nothing in the ranges does better, it says so and changes nothing. When it finishes it lists every
+        change and the before-and-after, says which values ended at the edge of their range (widen it and run again), and
+        lands as one undo step.
+      </p>
+      <p>
+        A lesson the 2 m Yagi example teaches at once: optimise it for gain alone and it gains nearly a dB — and loses half
+        its front-to-back. That is not a fault of the search; it is what a Yagi does, and it is why the goal has more than one
+        weight. A simplex finds <em>a</em> best design near where it started, not necessarily the best one there is: try a
+        different start or narrower ranges if you suspect a better one elsewhere.
+      </p>
+
+      <h2>Sweep a parameter</h2>
+      <p>
+        <em>Sweep a parameter</em>, under the results, steps one thing across a range and plots what the antenna does at
+        each step: peak gain, the elevation of the main lobe, front-to-back (for an antenna that has one), the SWR, and the
+        feed impedance. Sweep the height of the <em>Dipole, 20 m, 10 m over real ground</em> example from 6 to 24 m and you
+        get the handbook's curves for your own antenna: the take-off angle falls from about 50° to 12°, landing within
+        a degree or two of the textbook's sin θ = λ / 4h once the wire is half a wave up. Hover to read any point; click one and{' '}
+        <em>Use</em> it to set the model there — one undo step. The elevation comes from a pattern in 2° steps, so read
+        it to about a degree.
+      </p>
 
       <h2>What the loads must survive</h2>
       <p>
@@ -471,6 +545,35 @@ export function AntennaModelerGuide() {
         the loads must survive</em>, takes the power you type and lists each load's current, the peak volts across it and
         the watts it turns into heat, scaled from NEC's own currents. Peak volts are what a capacitor is rated for; the
         heat is the average for a steady carrier, so speech and CW run cooler. Change the power and the numbers follow.
+      </p>
+
+      <h2>RF exposure around the antenna</h2>
+      <p>
+        <strong>Where is the field strong enough to matter?</strong> NEC-2 can compute the electric and magnetic field at
+        any point from the currents it solved, so the model that gives you the SWR also gives you the field where people
+        stand. The <em>RF exposure around the antenna</em> panel under the results maps it on a level plane seen from above
+        — by default 2 m up, about head height, out to a sensible distance around the antenna — and draws the wire over it.
+        Press <em>Map the field</em>; it is one extra solve.
+      </p>
+      <p>
+        <strong>EMWS states no exposure limits, anywhere.</strong> They differ from country to country, with frequency,
+        and between people who know they are near an antenna and people who do not. Type your regulator's figure for the
+        electric field (V/m) or the magnetic field (A/m), and the map draws a red boundary where it is crossed and says, in
+        words, how far from the nearest wire that reaches. The figures you type are remembered in this browser.
+      </p>
+      <p>
+        The field is worked out at your <strong>average</strong> power, because that is what exposure rules average over:
+        the transmitter power, times the mode's duty (key-down 100 %, CW about 40 %, SSB speech about 20 %), times the share
+        of the averaging time you are actually transmitting. If you have chosen a feed line or a balun above, only the power
+        that gets through them reaches the antenna, and the map uses that. Each colour step is half the field of the one
+        above it — 6 dB, a quarter of the power density. Hover over the map to read any point.
+      </p>
+      <p>
+        Two honest notes. Points closer to a wire than one of its segments are <strong>greyed out</strong>: a thin-wire model
+        is least reliable right beside the wire, and that rule is EMWS's own caution, not a published figure. And the map
+        knows only what is in the model — the antenna and the ground — not the gutter, the mast, the neighbour's fence or
+        the people. Use it to plan where the antenna goes and how much power is sensible; a measurement or a professional
+        assessment is what settles compliance.
       </p>
 
       <h2>Compare with the real antenna</h2>
@@ -584,6 +687,56 @@ export function AntennaModelerGuide() {
         Some decks use features the visual editor cannot draw yet — arcs, helices, copied structures, tapered
         wires. Those still run exactly as written; the views simply become read-only until you go back to a
         model it can draw.
+      </p>
+
+      <h2>The club library</h2>
+      <p>
+        On a site that offers a community store, a <em>Club library</em> section appears under the results (on any
+        other site, or a copy on your own machine, it simply is not there — EMWS never needs an account). Signed in
+        with your callsign, the antenna on screen can be kept on the site or shared, named by the first line of its
+        notes; sharing goes through a public-domain (CC0) dedication first, exactly as for measured cores in the balun
+        tool. What travels is the card deck — what <em>Save</em> writes — plus the impedance the SWR is read against,
+        so a Windom shared at 200 Ω opens at 200 Ω. <em>Open it</em>, on anyone's shared model, is the same as opening a
+        .nec file, and needs no account: "here's the club's tuned 40 m vertical" is one click.
+      </p>
+
+      <h2>MMANA-GAL files (.maa)</h2>
+      <p>
+        <strong>The biggest collection of amateur antenna models anywhere is in MMANA-GAL's .maa format</strong>, and{' '}
+        <em>Open</em> reads it — from the English edition or the Russian one, whatever language its section headings
+        are in. <em>Save .maa</em> writes your model back out for MMANA, in the code page MMANA reads, so a Russian
+        title stays Russian.
+      </p>
+      <p>
+        MMANA computes with a different method, <strong>MININEC</strong>, where EMWS uses NEC-2. They agree closely in
+        free space and differ most near the ground and at junctions, so compare the two rather than expect the same
+        digits. When a file opens, a note lists everything that changed on the way in, in plain words. The main ones:
+      </p>
+      <ul>
+        <li>
+          <strong>Segmentation.</strong> MMANA packs segments in near junctions automatically; NEC-2 cannot taper
+          within a wire. Wires MMANA segmented itself get EMWS's rule — about twenty per wavelength, never fewer than
+          three. Press <em>Is the model converged?</em> to see whether that is fine enough for this antenna.
+        </li>
+        <li>
+          <strong>Real ground.</strong> MMANA keeps its soil in a setup window, not in the file, so EMWS starts from
+          average ground — set yours. MMANA's own help says it works out the feed impedance over perfect ground even
+          when real ground is chosen. For a vertical standing on the ground EMWS does the same thing deliberately, with
+          a radial screen (see <em>Standing a wire on real ground</em> above): the feed impedance is the perfect-ground one and the soil shapes
+          the pattern, just as in MMANA. For an antenna up in the air, EMWS uses the real ground for the impedance too,
+          which MMANA's help itself says is the more accurate for antennas lower than 0.2 λ.
+        </li>
+        <li>
+          <strong>Loads.</strong> MMANA's coils, capacitors and traps (its L, C and Q) and its R + jX come across;
+          a Q becomes the fixed loss resistance NEC-2 holds. MMANA's wire material is <em>not</em> carried over,
+          because its code numbers are not published anywhere — set each wire's material yourself if the loss matters.
+        </li>
+      </ul>
+      <p>
+        A few things in .maa files have no NEC-2 equivalent, and EMWS refuses the file and says which, rather than
+        open a different antenna: MMANA's stepped-diameter ("taper") elements, insulating wires (radius 0), and its
+        "S" Laplace-polynomial loads. Tested on 935 real files from a public collection: 877 open, and every one of
+        those solves.
       </p>
 
       <h2>Honest limits</h2>

@@ -124,6 +124,8 @@ describe('deck <-> model', () => {
     expect(model.feeds[0]).toMatchObject({ wireId: model.wires[1]!.id, segment: 4 });
   });
 
+  // Solves every example twice, so it takes seconds of real work: with the whole suite's
+  // workers starting at once it has blown the default 5 s on a busy machine.
   it('writes a deck nec2c solves identically to the original, for every example', async () => {
     for (const name of EXAMPLES) {
       const original = await simulate(await loadExample(name));
@@ -132,7 +134,21 @@ describe('deck <-> model', () => {
       expect(regenerated.report.segments, name).toEqual(original.report.segments);
       expect(regenerated.report.frequencies, name).toEqual(original.report.frequencies);
     }
-  });
+  }, 30_000);
+
+  // A long Russian comment from a real .maa once overflowed nec2c's 132-BYTE line buffer:
+  // wrapped by characters, its two-byte letters made 200-byte CM lines, and nec2c stopped
+  // with "INCORRECT LABEL FOR A COMMENT CARD".
+  it('wraps comments by bytes, so two-byte letters cannot overflow nec2c', async () => {
+    const model = imported(await loadExample('dipole-20m-free-space.nec'));
+    const long = 'Средняя точка проводов соединена с заземлённой мачтой для грозозащиты, µH Ω ° '.repeat(4);
+    const deck = modelToDeck({ ...model, comments: [long, 'Длинноеслово'.repeat(20)] });
+    const bytes = new TextEncoder();
+    for (const line of deck.split('\n').filter((l) => l.startsWith('CM'))) expect(bytes.encode(line).length).toBeLessThanOrEqual(132);
+    const run = await simulate(deck);
+    expect(run.raw.exitCode).toBe(0);
+    expect(run.report.errors).toEqual([]);
+  }, 30_000);
 
   it('round-trips a model through its own deck', async () => {
     const model = imported(await loadExample('dipole-20m-over-ground.nec'));

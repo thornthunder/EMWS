@@ -22,7 +22,7 @@
 
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdtempSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -37,6 +37,12 @@ const screenshot = flag('--screenshot');
 const example = flag('--example');
 /** Also drive the editor with real mouse and keyboard input: drag, undo, split, draw. */
 const editTest = args.includes('--edit');
+/** Map the field around a dipole over ground: limits, duty, the boundary, the hover readout. */
+const exposureTest = args.includes('--exposure');
+/** Optimise the Yagi's director length and place together, undo it; sweep a dipole's height and use a point. */
+const optimiseTest = args.includes('--optimise');
+/** Open an MMANA .maa through the real Open button, then save one through Save .maa and read it back. */
+const maaTest = args.includes('--maa');
 /** Viewport width in CSS pixels (default 1400); try 400 for a phone. */
 const viewportWidth = Number(flag('--width') ?? 1400);
 /** Render with the dark colour scheme. */
@@ -65,10 +71,12 @@ const communityTest = args.includes('--community');
 const vnaTest = args.includes('--vna');
 /** Send the model to this site's own solver and check it comes back the same. */
 const solverTest = args.includes('--solver');
+/** The installable app: manifest, service worker, and a full offline reload that still solves. */
+const pwaTest = args.includes('--pwa');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : toolboxTest ? '#/toolbox' : fdtdTest ? '#/fdtd' : communityTest ? '#/balun' : undefined);
+const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : toolboxTest ? '#/toolbox' : fdtdTest ? '#/fdtd' : communityTest ? '#/balun' : pwaTest ? '#/' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -312,7 +320,9 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
       measuredAt: new Date().toISOString(), setup: { turns: 8, strayPf: 0, stack: 1 },
       sweep, curve: [], sourceFile: 'smoke.s1p', notes: 'planted by the smoke test',
     };
-    localStorage.setItem('emws.balun.cores.v1', JSON.stringify([profile]));
+    // A second reading of the same core, for the chips' menu to forget.
+    const extra = { ...profile, id: 'core-smoke-2', name: 'Smoke extra reading' };
+    localStorage.setItem('emws.balun.cores.v1', JSON.stringify([profile, extra]));
     localStorage.removeItem('emws.balun.v1');
     location.reload();
   })()`);
@@ -343,6 +353,34 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
 
   check(/8 turns/.test(facts) && /40 points/.test(facts), `the library shows how it was measured: ${facts.trim().slice(0, 70)}...`);
   await snap('library');
+
+  // ---- the chips' right-click menu: forget a reading where it crowds the bin ----
+  await evaluate(`document.querySelector('.bin').scrollIntoView({ block: 'center' })`);
+  await sleep(300);
+  check((await evaluate(`document.querySelectorAll('.bin .core-chip-more').length`)) === 2, 'every chip carries a ⋯ for the same menu');
+  const chipBox = JSON.parse(
+    await evaluate(`(() => {
+      const chip = [...document.querySelectorAll('.bin .core-chip')].find((c) => c.textContent.includes('Smoke extra reading'));
+      const r = chip.getBoundingClientRect();
+      return JSON.stringify({ x: r.x + r.width / 2, y: r.y + r.height / 2 });
+    })()`),
+  );
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: chipBox.x, y: chipBox.y, button: 'right', buttons: 2, clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: chipBox.x, y: chipBox.y, button: 'right', buttons: 0, clickCount: 1 });
+  await sleep(300);
+  const menuItems = await evaluate(`[...document.querySelectorAll('.context-menu button')].map((b) => b.textContent.trim())`);
+  check(menuItems.some((t) => t.startsWith('Export')), `a right-click on the chip opens its menu: ${menuItems.join(' / ')}`);
+  check(menuItems.some((t) => t.startsWith('Use on the pad')) && menuItems.some((t) => t.startsWith('Rename')), 'with use and rename to hand');
+  check(!menuItems.some((t) => t.includes('Share')), 'and no Share on a site with no community store');
+  check(await click('.context-menu button', 'Forget this core'), 'Forget this core…');
+  const confirmTitle = await evaluate(`document.querySelector('.context-menu-title')?.textContent ?? ''`);
+  check(/Forget .*sweep goes with it/.test(confirmTitle), `asks first: ${confirmTitle}`);
+  check(await click('.context-menu button', 'Yes, forget it'), 'Yes, forget it');
+  await sleep(300);
+  const binAfter = await evaluate(`[...document.querySelectorAll('.bin .core-chip-name')].map((e) => e.textContent)`);
+  check(!binAfter.includes('Smoke extra reading') && binAfter.includes('Smoke-test FT240'), `the reading is gone, the good one stays: ${binAfter.join(', ')}`);
+  now = await state();
+  check(/your measurement/.test(now.note), 'and the design still runs on the kept measurement');
 
   check(await click('.core-chip[aria-label="FT240 in #43"]'), 'a catalogue core leaves the profile behind');
   now = await state();
@@ -427,6 +465,27 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   await evaluate(`(() => { const s = document.querySelector('select.through'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
   check(await waitFor(`Math.abs(${swrOf} - ${atFeed}) < 0.01`), `and back at the feed it reads ${atFeed} again`);
 
+  // ---- the feed line: 30 m of LMR-400 between the radio and the feed ----
+  check(
+    await evaluate(`(() => { const s = document.querySelector('select.feedline-cable'); if (!s) return false; const o = [...s.options].find((x) => x.textContent.includes('LMR-400')); if (!o) return false; s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); return true; })()`),
+    'feed line: 30 m of LMR-400',
+  );
+  check(await waitFor(`[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Feed line loss')`), 'a Feed line loss card appears');
+  const lineLoss = parseFloat(
+    await evaluate(`(() => { const d = [...document.querySelectorAll('.summary > div')].find((x) => x.querySelector('dt')?.textContent === 'Feed line loss'); return d?.querySelector('dd')?.textContent ?? ''; })()`),
+  );
+  // The computed floor for 30 m of LMR-400 at 14.2 MHz is about 0.4 dB; the dipole's mild
+  // mismatch adds a few hundredths.
+  check(lineLoss > 0.3 && lineLoss < 0.7, `30 m of LMR-400 at 14.2 MHz costs ${lineLoss} dB`);
+  const swrAtRadio = await evaluate(swrOf);
+  check(swrAtRadio > 1.2 && swrAtRadio < atFeed - 0.01, `the cable's loss flatters the SWR at the radio: ${swrAtRadio} against ${atFeed} at the feed`);
+  // A sweep draws the power budget, band-wide.
+  await evaluate(`(() => { const s = document.querySelector('.example-picker'); s.value = 'dipole-20m-swr-sweep'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  check(await waitFor(`document.querySelector('.power-budget figure.chart') !== null && document.querySelector('.modeler')?.dataset.busy !== 'true'`, 45_000), 'the sweep example draws Where the power goes');
+  const budgetLegend = await evaluate(`document.querySelector('.power-budget .chart-legend')?.textContent ?? ''`);
+  check(budgetLegend.includes('reaches the antenna') && budgetLegend.includes('heats the cable'), `with both fates named: ${budgetLegend}`);
+  await evaluate(`(() => { const s = document.querySelector('select.feedline-cable'); s.value = ''; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+
   await evaluate(`localStorage.removeItem('emws.balun.cores.v1')`);
 
   // Leave the next visitor the shipped design, not this test's leftovers.
@@ -443,7 +502,7 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
  * checked here are ones the unit tests already hold to closed forms, so what this proves
  * is that the page wires the maths to its controls and to the other tabs.
  */
-async function runLcTest({ evaluate, send, log }) {
+async function runLcTest({ evaluate, send, log, screenshot }) {
   const check = (ok, message) => {
     if (!ok) throw new Error(`LC test failed: ${message}`);
     log(`ok  ${message}`);
@@ -554,6 +613,35 @@ async function runLcTest({ evaluate, send, log }) {
   check(await typeNumber('Order', '7'), 'order 7');
   now = await state();
   check(now.issues.length === 0 && now.parts === 7, `an odd order clears it: ${now.parts} parts`);
+  check(await evaluate(`document.querySelector('.measure-filter summary')?.textContent === 'Measure the filter you built'`), 'and offers to measure the filter you built, port 1 to port 2');
+
+  // ---- stubs and cavities ----
+  check(await click('.lc-tab', 'Stubs & cavities'), 'Stubs & cavities');
+  now = await state();
+  // λ/4 at 145 MHz in RG-213, whose solid polyethylene (εr 2.25) gives VF 1/1.5 = 0.667 -
+  // not the rounded 0.66: 299.792458 / 145 / 4 / 1.5 = 0.3446 m.
+  check((now.title ?? '').includes('345 mm'), `the 2 m harmonic trap: a shorted quarter wave, 345 mm of RG-213: ${now.title}`);
+  const notchAt = parseFloat(now.summary['Notch at 290.00 MHz'] ?? 'NaN');
+  const passAt = parseFloat(now.summary['Passes 145.00 MHz'] ?? 'NaN');
+  check(notchAt < -35 && passAt > -0.1, `notches the second harmonic (${notchAt} dB) and passes 145 MHz (${passAt} dB)`);
+  check(now.build.includes('short the far end') && now.build.includes('trim'), 'says how to build it, and to cut long and trim while measuring');
+  if (screenshot) {
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(screenshot.replace(/.png$/i, '-stub.png'), Buffer.from(data, 'base64'));
+  }
+  check(await click('.segmented button', 'A band-pass'), 'A band-pass');
+  now = await state();
+  check(now.parts === 7, `three resonators and four capacitors listed: ${now.parts} rows`);
+  const middle = parseFloat(now.summary['At 145 MHz'] ?? 'NaN');
+  check(middle > -1, `cavities of Q 1500 pass the middle at ${middle} dB`);
+  check(await choose('Resonators made of', 'Coax stubs'), 'make the resonators from coax instead');
+  now = await state();
+  check(parseFloat(now.summary['At 145 MHz'] ?? 'NaN') < -1, `and coax stubs lose more in the middle: ${now.summary['At 145 MHz']}`);
+  check(await until(`document.body.textContent.includes('not high-Q enough')`), 'which the page explains: coax is not high-Q enough for a band this narrow');
+  if (screenshot) {
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(screenshot.replace(/.png$/i, '-bandpass.png'), Buffer.from(data, 'base64'));
+  }
 
   // ---- the trap, into an antenna ----
   check(await click('.lc-tab', 'A trap'), 'back to the trap');
@@ -724,10 +812,379 @@ async function runToolboxTest({ evaluate, send, log }) {
   check(now.panels[1]?.title === 'The wattmeter says 2.00 : 1', `100 W forward, 11.1 W back: ${now.panels[1]?.title}`);
   check((now.panels[2]?.title ?? '').startsWith('72 + j0 Ω in a 50 Ω system: SWR 1.44 : 1'), `72 ohms in 50: ${now.panels[2]?.title}`);
   check(now.panels[2]?.summary['Return loss'] === '14.9 dB', `with a return loss of 14.9 dB: ${now.panels[2]?.summary['Return loss']}`);
+
+  // ---- microwave & link budget ----
+  check(await click('.tool-tab', 'Microwave'), 'Microwave & link budget');
+  now = await state();
+  check((now.panels[0]?.title ?? '').includes('dBm at the receiver'), `the budget headline: ${now.panels[0]?.title}`);
+  check((now.panels[0]?.summary['EIRP'] ?? '').startsWith('63.0 dBm'), `5 W less 1 dB into a 1.2 m dish at 2.4 GHz: EIRP ${now.panels[0]?.summary['EIRP']}`);
+  check((now.panels[0]?.summary['Path loss'] ?? '').startsWith('191.1 dB'), `35,786 km of free space at 2.4 GHz: ${now.panels[0]?.summary['Path loss']}`);
+  check((now.panels[0]?.summary['Received'] ?? '').startsWith('-128.1 dBm'), `received by the typed far end: ${now.panels[0]?.summary['Received']}`);
+  check(await evaluate(`document.body.textContent.includes('whose figures this page does not state')`), 'and the page says it states no satellite figures');
+  check((now.panels[1]?.summary['Sending, 1.2 m'] ?? '').startsWith('27.0 dBi'), `the dish: ${now.panels[1]?.summary['Sending, 1.2 m']}`);
+  check(/about 7\.3°/.test(now.panels[1]?.summary['Sending, 1.2 m'] ?? ''), 'with its 70 λ/D beamwidth');
+  check((now.panels[2]?.title ?? '') === "The receiver's noise figure: 1.18 dB", `preamp at the antenna: ${now.panels[2]?.title}`);
+  check(await click('label.check input'), 'move the preamp to the rig end of the feeder');
+  now = await state();
+  check((now.panels[2]?.title ?? '') === "The receiver's noise figure: 3.10 dB", `and the feeder's 2 dB is paid in full: ${now.panels[2]?.title}`);
+  check(await click('label.check input'), 'back to the antenna');
+  now = await state();
+  check(now.panels[3]?.title === 'Radio horizon: 26 km', `two 10 m stations over a 4/3 earth: ${now.panels[3]?.title}`);
+  check(await click('.button-row button', 'CW, 500 Hz'), 'CW, 500 Hz');
+  now = await state();
+  const margin = parseFloat(((now.panels[0]?.title ?? '').match(/([+-][\d.]+) dB margin/) ?? [])[1] ?? 'NaN');
+  check(margin > 7 && margin < 9, `narrowing 2.7 kHz to 500 Hz buys 10 log10(5.4) of margin: ${margin} dB`);
+}
+
+/**
+ * MMANA-GAL files through the page's own buttons. A Russian-edition file (windows-1251,
+ * Cyrillic section headers) is handed to the real file input, as a person picking it
+ * would; the page must open it, say what it changed, and solve it. Then Save .maa writes
+ * a file to a download folder, and its bytes must be the single-byte MMANA format.
+ */
+async function runMaaTest({ send, evaluate, log, folder }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`MMANA test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const until = async (expr, ms = 30_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(200);
+    }
+    return false;
+  };
+  mkdirSync(folder, { recursive: true });
+  // A 40 m vertical over real ground, from the Russian edition: Cyrillic headers, cp1251.
+  const text = ['Вертикал 40 м', '*', '7.1', '* Провода *', '1', '0.0,\t0.0,\t0.0,\t0.0,\t0.0,\t10.3,\t0.001,\t-1', '*** Источ. ***', '1,\t1', 'w1b,\t0.0,\t1.0', '*** Нагрузка ***', '0,\t1', '*** Автосегм ***', '800,\t80,\t2.0,\t1', '*G/H/M/R/AzEl/X*', '2,\t0.0,\t0,\t50.0,\t120,\t60,\t0'].join('\r\n');
+  const cp1251 = Buffer.from([...text].map((c) => (c >= 'А' && c <= 'я' ? c.charCodeAt(0) - 0x410 + 0xc0 : c.charCodeAt(0))));
+  const file = join(folder, 'vertical.maa');
+  writeFileSync(file, cp1251);
+
+  const { root } = await send('DOM.getDocument', { depth: -1 });
+  const { nodeId } = await send('DOM.querySelector', { nodeId: root.nodeId, selector: '.toolbar input[type="file"]' });
+  check(nodeId > 0, 'the Open button has a file input behind it');
+  const accept = await evaluate(`document.querySelector('.toolbar input[type="file"]')?.accept ?? ''`);
+  check(accept.includes('.maa'), `it accepts .maa files: ${accept}`);
+  await send('DOM.setFileInputFiles', { nodeId, files: [file] });
+  check(await until(`(document.querySelector('.note')?.textContent ?? '').includes('MMANA')`), 'a Russian-edition .maa opens, and the page says it came from MMANA');
+  const note = await evaluate(`document.querySelector('.note')?.textContent ?? ''`);
+  check(/radial screen/.test(note) && /average ground/.test(note), 'and says what it did about the ground: average soil, a radial screen under the grounded vertical');
+  check(await until(`[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Frequency' && d.querySelector('dd')?.textContent.includes('7.1 MHz'))`, 45_000), 'it solves at the file\'s 7.1 MHz');
+  const comment = await evaluate(`document.querySelector('.model-panel textarea.notes')?.value.includes('Вертикал 40 м') ?? false`);
+  check(comment, 'the Russian title survives as the model notes, in Cyrillic');
+
+  // Save it back out through the page's own button.
+  await send('Browser.setDownloadBehavior', { behavior: 'allow', downloadPath: folder });
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.toolbar button')].find((x) => x.textContent.trim() === 'Save .maa'); if (!b) return false; b.click(); return true; })()`), 'Save .maa');
+  const saved = join(folder, 'antenna.maa');
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline && !existsSync(saved)) await sleep(200);
+  check(existsSync(saved), 'a file is written');
+  const bytes = readFileSync(saved);
+  const out = bytes.toString('latin1');
+  check(/^\*\*\*Wires\*\*\*$/m.test(out) && /\r\n/.test(out), 'in MMANA\'s layout, with Windows line ends');
+  check(/^w1b,\t0,\t1$/m.test(out), `the source back where it was: ${out.match(/^w1[^\r]*/m)?.[0]}`);
+  const title = new TextDecoder('windows-1251').decode(bytes).split('\r\n')[0];
+  check(title === 'Вертикал 40 м', `the Russian title goes back out in the Russian edition's code page, windows-1251: "${title}"`);
+  check(await until(`(document.querySelector('.note')?.textContent ?? '').includes('Saved for MMANA-GAL')`), 'and the page says what it wrote');
+}
+
+/**
+ * The optimiser and the parameter sweep, driven as a person would. The optimiser runs on
+ * the 2 m Yagi for gain alone and must come back better, as ONE undo step; the sweep raises
+ * the 20 m dipole from 6 to 24 m and its take-off angle must fall, and a picked point must
+ * reach the model. With --screenshot out.png it also saves out-sweep.png.
+ */
+async function runOptimiseTest({ send, evaluate, loadExample, log, screenshot }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`Optimise test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const until = async (expr, ms = 60_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(200);
+    }
+    return false;
+  };
+  const typeIn = async (scope, label, text) => {
+    const focused = await evaluate(`(() => {
+      const input = [...document.querySelectorAll(${JSON.stringify(scope + ' label.field')})].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    })()`);
+    if (!focused) return false;
+    await send('Input.insertText', { text: String(text) });
+    for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+    await sleep(250);
+    return true;
+  };
+  const tick = (label) =>
+    evaluate(`(() => { const l = [...document.querySelectorAll('.optimise-list label.check')].find((x) => x.textContent.trim() === ${JSON.stringify(label)}); if (!l) return false; l.querySelector('input').click(); return true; })()`);
+  const wireLine = (tag) => evaluate(`[...document.querySelectorAll('.wire-list button')].find((b) => b.querySelector('.wire-tag')?.textContent === ${JSON.stringify(String(tag))})?.textContent ?? ''`);
+  const gainCard = `parseFloat([...document.querySelectorAll('.summary > div')].find((d) => d.querySelector('dt')?.textContent === 'Peak gain')?.querySelector('dd')?.textContent ?? 'NaN')`;
+
+  // ---- the optimiser, on the Yagi ----
+  await loadExample('yagi-3el-2m');
+  check(await until(`document.querySelector('.optimise') !== null`), 'the Optimise section is beside Tune');
+  const before = await wireLine(3);
+  check(await tick('Length of wire 3'), 'tick the length of wire 3 (the director)');
+  check(await tick('Position of wire 3 along X'), 'and its place along the boom - a variable Tune never had');
+  check(await typeIn('.optimise', 'Front to back, per dB', '0'), 'weigh gain alone: F/B 0');
+  check(await typeIn('.optimise', 'SWR weight', '0'), 'SWR 0');
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.optimise button')].find((x) => x.textContent.trim() === 'Optimise'); if (!b || b.disabled) return false; b.click(); return true; })()`), 'Optimise');
+  check(await until(`/Changed|Nothing in those ranges/.test(document.querySelector('.optimise-note')?.textContent ?? '')`, 120_000), 'it finishes and says what it did');
+  const note = await evaluate(`document.querySelector('.optimise-note')?.textContent ?? ''`);
+  const [gBefore, gAfter] = [...note.matchAll(/([\d.]+) dBi/g)].map((m) => Number(m[1]));
+  check(/^Changed/.test(note) && gAfter > gBefore, `more gain: ${note.slice(0, 170)}…`);
+  check(await until(`(${JSON.stringify(before)}) !== ([...document.querySelectorAll('.wire-list button')].find((b) => b.querySelector('.wire-tag')?.textContent === '3')?.textContent ?? '')`), `the director changed: ${before} -> ${await wireLine(3)}`);
+  check(await until(`Math.abs(${gainCard} - ${gAfter}) < 0.6`, 30_000), `and the re-solved model shows it: ${await evaluate(gainCard)} dBi`);
+  // Ctrl+Z in a focused text box is the box's own undo; the app's is for the page.
+  await evaluate(`document.activeElement?.blur()`);
+  for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', modifiers: 2, windowsVirtualKeyCode: 90 });
+  check(await until(`(${JSON.stringify(before)}) === ([...document.querySelectorAll('.wire-list button')].find((b) => b.querySelector('.wire-tag')?.textContent === '3')?.textContent ?? '')`), 'Ctrl+Z takes the whole optimisation back in one step');
+
+  // ---- the parameter sweep, on the dipole over ground ----
+  await loadExample('dipole-20m-over-ground');
+  check(await until(`document.querySelector('.sweep-panel') !== null`), 'the Sweep a parameter panel is under the results');
+  await evaluate(`document.querySelector('.sweep-panel').setAttribute('open', '')`);
+  const chosen = await evaluate(`document.querySelector('.sweep-panel select')?.selectedOptions[0]?.textContent ?? ''`);
+  check(chosen === 'Height of the antenna', `it offers the height first: ${chosen}`);
+  check(await typeIn('.sweep-panel', 'From', '6'), 'from 6 m');
+  check(await typeIn('.sweep-panel', 'to', '24'), 'to 24 m');
+  check(await typeIn('.sweep-panel', 'Points', '7'), '7 points');
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.sweep-panel button')].find((x) => x.textContent.trim() === 'Sweep it'); if (!b) return false; b.click(); return true; })()`), 'Sweep it');
+  check(await until(`document.querySelectorAll('.sweep-panel figure.xy-chart').length >= 4 && !document.querySelector('.sweep-panel .danger')`, 90_000), 'the curves are drawn');
+  const titles = await evaluate(`[...document.querySelectorAll('.sweep-panel .xy-chart .chart-title')].map((t) => t.textContent)`);
+  check(titles.some((t) => t.startsWith('Peak gain')) && titles.some((t) => t.startsWith('Elevation')) && !titles.some((t) => t.startsWith('Front to back')), `gain, take-off angle, SWR and impedance - no F/B for a dipole: ${titles.join(' | ')}`);
+  // The take-off angle at each point, read back through the chart's own hover readout.
+  const angles = [];
+  const elevationChart = `[...document.querySelectorAll('.sweep-panel .xy-chart')].find((f) => f.querySelector('.chart-title')?.textContent.startsWith('Elevation'))`;
+  const dots = JSON.parse(await evaluate(`JSON.stringify([...${elevationChart}.querySelectorAll('circle')].map((c) => { const r = c.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }))`));
+  check(dots.length === 7, `seven solved points on the elevation curve (${dots.length})`);
+  await evaluate(`${elevationChart}.scrollIntoView({ block: 'center' })`);
+  await sleep(300);
+  const dotsNow = JSON.parse(await evaluate(`JSON.stringify([...${elevationChart}.querySelectorAll('circle')].map((c) => { const r = c.getBoundingClientRect(); return { x: r.x + r.width / 2, y: r.y + r.height / 2 }; }))`));
+  for (const d of dotsNow) {
+    await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: d.x, y: d.y });
+    await sleep(80);
+    const r = await evaluate(`${elevationChart}.querySelector('.chart-readout strong')?.textContent ?? ''`);
+    angles.push(Number(r));
+  }
+  check(angles.every((a, i) => i === 0 || a <= angles[i - 1]) && angles[6] < angles[0] - 20, `the take-off angle falls as it is raised: ${angles.join('°, ')}°`);
+  if (screenshot) {
+    const box = JSON.parse(await evaluate(`(() => { const r = document.querySelector('.sweep-panel').getBoundingClientRect(); return JSON.stringify({ x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height }); })()`));
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { ...box, scale: 1 } });
+    writeFileSync(screenshot.replace(/.png$/i, '-sweep.png'), Buffer.from(data, 'base64'));
+  }
+  // Pick the 15 m point and use it.
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: dotsNow[3].x, y: dotsNow[3].y, button: 'left', buttons: 1, clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: dotsNow[3].x, y: dotsNow[3].y, button: 'left', buttons: 0, clickCount: 1 });
+  await sleep(300);
+  const use = await evaluate(`[...document.querySelectorAll('.sweep-panel button')].find((b) => b.textContent.startsWith('Use '))?.textContent ?? ''`);
+  check(use === 'Use 15.000 m', `a click picks the point: "${use}"`);
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.sweep-panel button')].find((x) => x.textContent.startsWith('Use ')); b.click(); return true; })()`), use);
+  check(await until(`document.querySelector('.sweep-panel')?.textContent.includes('has changed since this sweep')`), 'the model takes it, and the sweep says it is now out of date');
+}
+
+/**
+ * The RF exposure map, driven as a person would: a dipole 10 m over real ground, map the
+ * field, then type limits either side of what it found and check the verdict and the
+ * boundary follow. Value-agnostic on purpose: the physics is held by tests/exposure.test.ts;
+ * this checks the page does what the numbers say. With --screenshot out.png it also saves
+ * out-exposure.png, for a person to look at.
+ */
+async function runExposureTest({ send, evaluate, loadExample, log, screenshot }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`Exposure test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const until = async (expr, ms = 30_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(200);
+    }
+    return false;
+  };
+  const typeNumber = async (label, text) => {
+    const focused = await evaluate(`(() => {
+      const input = [...document.querySelectorAll('.exposure label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    })()`);
+    if (!focused) return false;
+    await send('Input.insertText', { text: String(text) });
+    for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+    await sleep(300);
+    return true;
+  };
+  const verdictText = () => evaluate(`(document.querySelector('.exposure-verdict')?.textContent ?? '') + ' ' + (document.querySelector('.exposure-flag')?.textContent ?? '')`);
+  /** The figure the verdict states as the peak, in V/m, from text like "reaches 12.3 V/m" or "850 mV/m". */
+  const peakOf = (text) => {
+    const m = /reaches ([\d.]+) (m|µ|k)?V\/m/.exec(text);
+    if (!m) return NaN;
+    return Number(m[1]) * ({ m: 1e-3, µ: 1e-6, k: 1e3 }[m[2]] ?? 1);
+  };
+
+  await loadExample('dipole-20m-over-ground');
+  await evaluate(`localStorage.removeItem('emws.exposure.v1')`);
+  check(await until(`document.querySelector('.exposure') !== null`), 'the RF exposure panel is under the results');
+  const said = await evaluate(`document.querySelector('.exposure > p.muted')?.textContent ?? ''`);
+  check(/no exposure limits/.test(said), 'and says EMWS states no limits');
+
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.exposure button')].find((x) => x.textContent.trim() === 'Map the field'); if (!b) return false; b.click(); return true; })()`), 'Map the field');
+  check(await until(`document.querySelectorAll('.exposure-map rect.exposure-cell').length === 1681`, 45_000), 'a 41 x 41 map is drawn');
+  let text = await verdictText();
+  const peak = peakOf(text);
+  check(Number.isFinite(peak) && peak > 0, `the verdict states the peak: ${text.replace(/\s+/g, ' ').slice(0, 160)}…`);
+  check(/Type your regulator's limit/.test(text), 'and, with no limit typed, asks for one rather than judging');
+  // Cells only - the key has a grey swatch of its own, which once made this check pass for
+  // the wrong reason. The plane is 8 m below this wire, so nothing on it is too close.
+  check((await evaluate(`document.querySelectorAll('.exposure-map rect.exposure-cell.exposure-untrusted').length`)) === 0, 'at 2 m under a 10 m high dipole no cell is too close to trust');
+
+  // A limit at half the peak must be crossed somewhere; twice the peak, nowhere.
+  check(await typeNumber('Your limit, electric', (peak / 2).toPrecision(3)), `limit at half the peak: ${(peak / 2).toPrecision(3)} V/m`);
+  text = await verdictText();
+  check(/Over your/.test(text) && /from the nearest wire/.test(text), `crossed, and how far out: ${text.replace(/\s+/g, ' ').match(/Over your.*$/)?.[0]}`);
+  check(await evaluate(`(document.querySelector('.exposure-map path.exposure-boundary')?.getAttribute('d') ?? '').length > 0`), 'the boundary is drawn where it is crossed');
+  const legend = await evaluate(`document.querySelector('.exposure-legend')?.textContent ?? ''`);
+  check(/where your .* is crossed/.test(legend) && /too close to a wire/.test(legend), 'and the key names both the boundary and the untrusted cells, in words');
+  if (screenshot) {
+    await evaluate(`document.querySelector('.exposure-map').scrollIntoView({ block: 'center' })`);
+    await sleep(300);
+    // The clip is in document coordinates; getBoundingClientRect is in the viewport's.
+    const box = JSON.parse(await evaluate(`(() => { const r = document.querySelector('.exposure').getBoundingClientRect(); return JSON.stringify({ x: r.x + scrollX, y: r.y + scrollY, width: r.width, height: r.height }); })()`));
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true, clip: { ...box, scale: 1 } });
+    writeFileSync(screenshot.replace(/.png$/i, '-exposure.png'), Buffer.from(data, 'base64'));
+  }
+  check(await typeNumber('Your limit, electric', (peak * 2).toPrecision(3)), `limit at twice the peak: ${(peak * 2).toPrecision(3)} V/m`);
+  text = await verdictText();
+  check(/Nowhere on this map over your/.test(text), 'nowhere over it');
+  check(await evaluate(`document.querySelector('.exposure-map path.exposure-boundary') === null`), 'and no boundary drawn');
+
+  // SSB's 20 % duty: the field falls by sqrt(0.2).
+  await evaluate(`(() => { const s = [...document.querySelectorAll('.exposure select')].find((x) => x.closest('label')?.textContent.includes('Mode')); const o = [...s.options].find((x) => x.textContent.startsWith('SSB')); s.value = o.value; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(300);
+  const ssb = peakOf(await verdictText());
+  check(Math.abs(ssb / peak - Math.sqrt(0.2)) < 0.01, `SSB's 20 % duty scales the field by sqrt(0.2): ${peak} -> ${ssb} V/m (${(ssb / peak).toFixed(4)})`);
+
+  // Hover reads a cell out.
+  const box = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('.exposure-map svg').getBoundingClientRect())`));
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: box.x + box.width * 0.25, y: box.y + box.height * 0.3 });
+  await sleep(200);
+  const readout = await evaluate(`document.querySelector('.exposure-map .chart-readout')?.textContent ?? ''`);
+  check(/X .* m, Y .* m: .*from the nearest/.test(readout), `hovering reads the cell out: ${readout.replace(/\s+/g, ' ')}`);
+
+  // A changed model makes the map stale, and the page says so.
+  await loadExample('dipole-20m-free-space');
+  check(await until(`document.querySelector('.exposure') !== null && document.querySelector('.exposure-map') === null`), 'a new model clears the old map rather than showing it as current');
+  // In free space the plane runs through the wire: the cells along it must be greyed.
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.exposure button')].find((x) => x.textContent.trim() === 'Map the field'); if (!b) return false; b.click(); return true; })()`), 'map the free-space dipole, the plane through its wire');
+  check(await until(`document.querySelectorAll('.exposure-map rect.exposure-cell').length === 1681`, 45_000), 'drawn');
+  const untrusted = await evaluate(`document.querySelectorAll('.exposure-map rect.exposure-cell.exposure-untrusted').length`);
+  check(untrusted > 0 && untrusted < 100, `the ${untrusted} cells along the wire are greyed out as too close to trust`);
+  await evaluate(`localStorage.removeItem('emws.exposure.v1')`);
+}
+
+/**
+ * The installable app: manifest, service worker, and the promise that matters - pull the
+ * network out and the whole suite, solver included, still works.
+ */
+async function runPwaTest({ evaluate, send, problems, log }) {
+  const check = (ok, message) => {
+    if (!ok) throw new Error(`PWA test failed: ${message}`);
+    log(`ok  ${message}`);
+  };
+  const evalAsync = async (expression) => (await send('Runtime.evaluate', { expression, returnByValue: true, awaitPromise: true })).result.value;
+  const until = async (expr, ms = 20_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(200);
+    }
+    return false;
+  };
+
+  check(await evaluate('window.isSecureContext'), 'a secure origin, which the worker needs');
+  const manifest = await evalAsync(`fetch('manifest.webmanifest').then((r) => (r.ok ? r.json() : null)).catch(() => null)`);
+  check(manifest && manifest.name.includes('EMWS') && manifest.display === 'standalone', `the manifest is served and standalone: ${manifest?.name}`);
+  check(Array.isArray(manifest.icons) && manifest.icons.length === 2 && manifest.icons.some((i) => i.purpose === 'maskable'), 'with an any icon and a maskable one');
+
+  const controlled = await until(`navigator.serviceWorker?.controller !== null && navigator.serviceWorker?.controller !== undefined`, 30_000);
+  if (!controlled) {
+    // A failed install (one 404 in the precache list is enough) looks just like no
+    // registration at all, so say which it was before failing.
+    const reg = await evalAsync(
+      `navigator.serviceWorker.getRegistration().then((r) => JSON.stringify(r ? { installing: !!r.installing, waiting: !!r.waiting, active: !!r.active } : null)).catch((e) => String(e))`,
+    );
+    log(`    registration: ${reg}`);
+  }
+  check(controlled, 'the service worker takes the page');
+  const cacheName = await evalAsync(`caches.keys().then((k) => k.find((n) => n.startsWith('emws-')) ?? '')`);
+  check(cacheName.startsWith('emws-'), `a versioned cache: ${cacheName}`);
+  const cached = await evalAsync(`caches.open(${JSON.stringify(cacheName)}).then((c) => c.keys()).then((k) => k.length)`);
+  check(cached > 15, `${cached} files precached`);
+  // ONE engine: the one this browser runs, never both - the suite's own rule.
+  const engines = await evalAsync(`caches.open(${JSON.stringify(cacheName)}).then((c) => c.keys()).then((k) => k.filter((r) => r.url.endsWith('.wasm')).map((r) => r.url.split('/').pop()))`);
+  const simd = await evaluate(`WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,4,1,96,0,0,3,2,1,0,10,9,1,7,0,65,0,253,15,26,11]))`);
+  check(engines.length === 1 && engines[0].startsWith(simd ? 'nec2c-simd-' : 'nec2c-') && (simd || !engines[0].startsWith('nec2c-simd-')), `exactly one engine cached, the ${simd ? 'SIMD' : 'plain'} one this browser runs: ${engines.join(', ')}`);
+
+  // Pull the network out. A reload now must come entirely from the worker's cache.
+  const beforeOffline = problems.length;
+  await send('Network.emulateNetworkConditions', { offline: true, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  await send('Page.navigate', { url: new URL('#/toolbox', baseUrl).href });
+  await sleep(300);
+  await send('Page.reload', {});
+  check(await until(`document.querySelector('h1')?.textContent === 'RF toolbox'`, 30_000), 'offline: a full reload still serves the app');
+  // A lazy tool chunk and the solver's WASM, all from the cache: solve a model with no network.
+  await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
+  check(await until(`[...document.querySelectorAll('.summary > div')].some((d) => d.querySelector('dt')?.textContent === 'Feed impedance')`, 45_000), 'offline: the modeler opens and SOLVES - engine, worker and chunk all from the cache');
+  await send('Network.emulateNetworkConditions', { offline: false, latency: 0, downloadThroughput: -1, uploadThroughput: -1 });
+  log('    (network restored)');
+  // Offline, the optional community store cannot answer its health probe - which is the
+  // designed outcome (its panel simply stays away), so those failures are not loose problems.
+  // Anything else that failed offline, a precached file that was not, stays reported.
+  const offline = problems.splice(beforeOffline);
+  const probes = offline.filter((p) => p.includes('community/index.php'));
+  let bare = probes.length;
+  const kept = offline.filter((p) => {
+    if (probes.includes(p)) return false;
+    if (bare > 0 && p === 'request failed: net::ERR_INTERNET_DISCONNECTED') {
+      bare--;
+      return false;
+    }
+    return true;
+  });
+  problems.push(...kept);
+  check(kept.length === 0, `offline, nothing failed but the optional community probe (${probes.length})${kept.length ? `: ${kept.join('; ')}` : ''}`);
+
+  // Print: the results stay, the controls go. Checked on the solved modeler page.
+  await send('Emulation.setEmulatedMedia', { media: 'print' });
+  const printed = JSON.parse(
+    await evaluate(`JSON.stringify({
+      panel: getComputedStyle(document.querySelector('aside.side-panel')).display,
+      buttons: [...document.querySelectorAll('button')].filter((b) => getComputedStyle(b).display !== 'none').length,
+      summary: getComputedStyle(document.querySelector('.summary')).display,
+      plots: [...document.querySelectorAll('figure.plot')].filter((f) => getComputedStyle(f).display !== 'none').length,
+      background: getComputedStyle(document.body).backgroundColor,
+    })`),
+  );
+  await send('Emulation.setEmulatedMedia', { media: '' });
+  check(printed.panel === 'none' && printed.buttons === 0, `print hides the side panel and every button (${printed.buttons} left)`);
+  check(printed.summary !== 'none' && printed.plots > 0, `and keeps the summary and ${printed.plots} plots`);
+  check(printed.background === 'rgb(255, 255, 255)', `on white paper: ${printed.background}`);
 }
 
 /** Drives the field sandbox: a scene plays and paints, a sheet is drawn with the mouse and undone, a buried source is caught. */
-async function runFdtdTest({ evaluate, send, log }) {
+async function runFdtdTest({ evaluate, send, log, screenshot }) {
   const check = (ok, message) => {
     if (!ok) throw new Error(`Field sandbox test failed: ${message}`);
     log(`ok  ${message}`);
@@ -765,6 +1222,12 @@ async function runFdtdTest({ evaluate, send, log }) {
   };
   const statusOf = (name) => `parseFloat([...document.querySelectorAll('.field-status > div')].find((d) => d.querySelector('dt')?.textContent === ${JSON.stringify(name)})?.querySelector('dd')?.textContent ?? '0')`;
   const shapeCount = () => evaluate(`JSON.parse(localStorage.getItem('emws.fdtd.v1') ?? '{"shapes":[]}').shapes.length`);
+  /** With --screenshot out.png, the pictures along the way as out-<suffix>.png. */
+  const shoot = async (suffix) => {
+    if (!screenshot) return;
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(screenshot.replace(/.png$/i, `-${suffix}.png`), Buffer.from(data, 'base64'));
+  };
   const state = async () =>
     JSON.parse(
       await evaluate(`JSON.stringify({
@@ -780,9 +1243,9 @@ async function runFdtdTest({ evaluate, send, log }) {
 
   // A fresh start: the first scene, paused.
   await evaluate(`(localStorage.removeItem('emws.fdtd.v1'), location.reload())`);
-  check(await until(`document.querySelector('canvas.field-canvas') !== null && document.querySelectorAll('.tool-buttons button').length === 4`, 15_000), 'the sandbox loads');
+  check(await until(`document.querySelector('canvas.field-canvas') !== null && document.querySelectorAll('.tool-buttons button').length === 5`, 15_000), 'the sandbox loads');
   let now = await state();
-  check(now.tools.join('|') === 'Conductor|Dielectric|Source|Select', `four tools: ${now.tools.join(', ')}`);
+  check(now.tools.join('|') === 'Conductor|Dielectric|Source|Probe|Select', `five tools: ${now.tools.join(', ')}`);
   check(now.legend.includes('10.0 × 6.7 wavelengths'), `the world is ten wavelengths wide: ${now.legend.trim()}`);
   check(now.gridNote.includes('200 × 133 cells'), `on a 200 x 133 grid: ${now.gridNote.trim()}`);
   check(now.play[0] === 'Play', 'paused at the start');
@@ -849,6 +1312,46 @@ async function runFdtdTest({ evaluate, send, log }) {
   check(await until(`JSON.parse(localStorage.getItem('emws.fdtd.v1')).shapes.length === 2`), 'two sheets in the scene');
   now = await state();
   check(now.play[0] === 'Pause', 'and it plays');
+
+  // Brewster's angle: a plane wave in Hz over a ground, and the checks say what the slant costs.
+  check(await choose('Start from', "Brewster's angle"), "Start from: Brewster's angle");
+  check(await until(`document.querySelector('.polarisation-picker')?.value === 'te'`), 'the scene is in Hz');
+  now = await state();
+  check(now.legend.includes('Hz negative'), `the legend names Hz: ${now.legend.trim().slice(0, 40)}`);
+  check(now.issues.some((t) => t.includes('starts in empty space only')), 'the ground reaching the side the wave slants in by is reported');
+  check(await until(`${statusOf('Peak |Hz|')} > 0.5`, 20_000), 'the plane wave comes in at about its own amplitude');
+  // 15 ns is the wave across the world and back three times over: anything that would stand has stood.
+  check(await until(`${statusOf('Time')} > 15`, 60_000), 'the wave has filled the world');
+  check(await until(`${statusOf('Peak |Hz|')} < 1.25`, 2_000), `and nothing stands above the ground (peak ${(await state()).status['Peak |Hz|']})`);
+  await shoot('brewster-hz');
+
+  // The probe: click a point above the ground, and the trace and its spectrum come up at the scene's frequency.
+  check(await click('.tool-buttons button', 'Probe'), 'Probe tool');
+  await drag(0.75, 0.3, 0.75, 0.3);
+  check(await until(`document.querySelectorAll('.probe-charts .xy-chart').length === 2`, 30_000), 'the probe shows its trace and its spectrum');
+  const strongest = await evaluate(`parseFloat((document.querySelector('.probe-head p')?.textContent ?? '').split('strongest at')[1] ?? 'NaN')`);
+  check(Math.abs(strongest - 1000) < 30, `the spectrum peaks at the scene's 1000 MHz (${strongest} MHz)`);
+  const clockBefore = await evaluate(statusOf('Time'));
+  await drag(0.6, 0.35, 0.6, 0.35);
+  await sleep(300);
+  check((await evaluate(statusOf('Time'))) >= clockBefore, 'moving the probe does not restart the clock');
+
+  // The same scene in Ez: horizontal polarisation reflects, so a standing wave forms over the ground.
+  check(await choose('Out of the screen', 'Ez'), 'Out of the screen: Ez');
+  check(await until(`${statusOf('Peak |Ez|')} > 1.3`, 30_000), `horizontal polarisation stands over the ground (${(await state()).status['Peak |Ez|']})`);
+  check(await until(`(document.querySelector('.probe-head p')?.textContent ?? '').includes('strongest at')`, 20_000), 'the probe records again from the new start');
+  await shoot('brewster-ez');
+  check(await click('.probe-head button', 'Remove the probe'), 'Remove the probe');
+  check(!(await evaluate(`document.querySelector('.probe-charts') !== null`)), 'and its charts go with it');
+
+  // Average ground on 40 m: a 7.1 MHz world in metres, with the envelope showing the lobes.
+  check(await choose('Start from', 'Average ground on 40 m'), 'Start from: Average ground on 40 m');
+  now = await state();
+  check(now.gridNote.includes('284 × 142 cells'), `at 40 cells a wavelength: ${now.gridNote.trim()}`);
+  check(!now.issues.some((t) => t.includes('times shorter')), 'with the ground resolved too: no warning about it');
+  check(await choose('Show', 'envelope'), 'Show: its envelope');
+  check(await until(`${statusOf('Time')} > 3000`, 90_000), 'the wave has crossed the world three times');
+  await shoot('ground-40m');
 }
 
 /** One visitor measures and shares a core; another takes it and designs on it. */
@@ -908,7 +1411,7 @@ async function runCommunityTest({ evaluate, send, log }) {
   const dedication = await evaluate('document.querySelector(".community-dedication")?.textContent ?? ""');
   check(/public domain/.test(dedication) && /CC0/.test(dedication), 'in words: CC0, public domain, callsign shown');
   check(await clickText('.community-dedication button', 'Share it, CC0'), 'Share it, CC0');
-  check(await until('[...document.querySelectorAll(".community h4")].some((h) => h.textContent === "Shared by the community") && [...document.querySelectorAll(".community-list li")].filter((li) => li.textContent.includes("by SMOKE-A")).length === 1'), 'and it appears on the community shelf, with the callsign');
+  check(await until('[...document.querySelectorAll(".community h4")].some((h) => h.textContent === "Shared by the community") && [...document.querySelectorAll(".community-list li")].filter((li) => li.textContent.includes("by SMOKE-A' + suffix + '")).length === 1'), 'and it appears on the community shelf, with the callsign');
 
   // The second visitor: fresh account, fresh (empty) local bin.
   check(await clickText('.community button', 'Sign out'), 'sign out');
@@ -917,12 +1420,41 @@ async function runCommunityTest({ evaluate, send, log }) {
   await sleep(1500);
   await evaluate('document.querySelector(".community")?.scrollIntoView({ block: "center" })');
   await signInAs('SMOKE-B' + suffix);
-  const row = '[...document.querySelectorAll(".community-list li")].find((li) => li.textContent.includes(' + JSON.stringify(coreName) + ') && li.textContent.includes("by SMOKE-A"))';
+  const row = '[...document.querySelectorAll(".community-list li")].find((li) => li.textContent.includes(' + JSON.stringify(coreName) + ') && li.textContent.includes("by SMOKE-A' + suffix + '"))';
   check(await until(row + ' !== undefined'), 'the other visitor sees it, by SMOKE-A' + suffix);
   check(await evaluate('(() => { const li = ' + row + '; const b = li && [...li.querySelectorAll("button")].find((x) => x.textContent.includes("Add to my cores")); if (!b) return false; b.click(); return true; })()'), 'Add to my cores');
-  check(await until('[...document.querySelectorAll(".bin .core-chip")].some((c) => (c.getAttribute("aria-label") ?? c.textContent).includes("SMOKE-A"))', 20_000), 'it lands in their bin, named with its measurer');
-  check(await evaluate('(() => { const c = [...document.querySelectorAll(".bin .core-chip")].find((x) => (x.getAttribute("aria-label") ?? x.textContent).includes("SMOKE-A")); if (!c) return false; c.click(); return true; })()'), 'and a click designs on it');
+  const landed = await until('[...document.querySelectorAll(".bin .core-chip")].some((c) => (c.getAttribute("aria-label") ?? c.textContent).includes("SMOKE-A' + suffix + '"))', 20_000);
+  if (!landed) log(`    the panel says: ${await evaluate('[...document.querySelectorAll(".community .alert-inline, .community .community-taken")].map((e) => e.textContent).join(" | ") || "(nothing)"')}; bin: ${await evaluate('[...document.querySelectorAll(".bin .core-chip")].map((c) => c.getAttribute("aria-label") ?? c.textContent).join(", ") || "(empty)"')}`);
+  check(landed, 'it lands in their bin, named with its measurer');
+  check(await evaluate('(() => { const c = [...document.querySelectorAll(".bin .core-chip")].find((x) => (x.getAttribute("aria-label") ?? x.textContent).includes("SMOKE-A' + suffix + '")); if (!c) return false; c.click(); return true; })()'), 'and a click designs on it');
   check(await until('/your measurement/.test(document.querySelector(".results-title + p")?.textContent ?? "")', 20_000), 'the results say they come from a measurement, as they must');
+
+  // ---- the club library's other shelves: a balun design, and an antenna model ----
+  const shelf = (kind) => `document.querySelector('.community-shelf[data-kind="${kind}"]')`;
+  const designName = 'Smoke design ' + suffix;
+  check(await evaluate(`(() => { const s = [...document.querySelectorAll('.form-section')].find((x) => x.querySelector('h3')?.textContent.startsWith('Your designs')); const i = s?.querySelector('input[type="text"]'); if (!i) return false; i.focus(); return true; })()`), 'Your designs: a name box');
+  await send('Input.insertText', { text: designName });
+  check(await clickText('.form-section button', 'Save this design'), 'save a design wound on the measured core');
+  check(await until(`[...${shelf('balun-design')}?.querySelectorAll('.community-list li') ?? []].some((li) => li.textContent.includes(${JSON.stringify(designName)}))`), 'it is offered on the balun-design shelf');
+  check(await evaluate(`(() => { const li = [...${shelf('balun-design')}.querySelectorAll('.community-list li')].find((x) => x.textContent.includes(${JSON.stringify(designName)})); const b = li && [...li.querySelectorAll('button')].find((x) => x.textContent.startsWith('Share')); if (!b) return false; b.click(); return true; })()`), 'Share…');
+  check(await clickText('.community-dedication button', 'Share it, CC0'), 'through the same CC0 dedication');
+  check(await until(`[...${shelf('balun-design')}.querySelectorAll('.community-list li')].some((li) => li.textContent.includes(${JSON.stringify(designName)}) && li.textContent.includes('by SMOKE-B'))`), 'and it is on the shelf for everyone, by SMOKE-B');
+
+  await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
+  check(await until(`document.querySelector('.example-picker') !== null`, 20_000), 'the Antenna Modeler opens');
+  await evaluate(`(() => { const s = document.querySelector('.example-picker'); s.value = 'ocf-dipole-windom'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  check(await until(`${shelf('antenna-model')} !== null`, 20_000), 'with a Club library section, the store being here');
+  const modelName = await evaluate(`${shelf('antenna-model')}.querySelector('.community-list li .community-name')?.textContent ?? ''`);
+  check(modelName.length > 0, `this model is offered, named by its notes: ${modelName}`);
+  check(await evaluate(`(() => { const b = [...${shelf('antenna-model')}.querySelectorAll('.community-list li button')].find((x) => x.textContent.startsWith('Share')); if (!b) return false; b.click(); return true; })()`), 'Share…');
+  check(await clickText('.community-dedication button', 'Share it, CC0'), 'Share it, CC0');
+  check(await until(`[...${shelf('antenna-model')}.querySelectorAll('.community-list li')].some((li) => li.textContent.includes('by SMOKE-B') && li.querySelector('button')?.textContent === 'Open it')`), 'the model is on the shelf, to open');
+  // Load something else, then open the shared Windom back: deck AND its 200 Ω reference.
+  await evaluate(`(() => { const s = document.querySelector('.example-picker'); s.value = 'dipole-20m-free-space'; s.dispatchEvent(new Event('change', { bubbles: true })); })()`);
+  await sleep(800);
+  check(await evaluate(`(() => { const li = [...${shelf('antenna-model')}.querySelectorAll('.community-list li')].find((x) => x.textContent.includes('by SMOKE-B')); const b = li && [...li.querySelectorAll('button')].find((x) => x.textContent === 'Open it'); if (!b) return false; b.click(); return true; })()`), 'Open it');
+  check(await until(`(document.querySelector('.note')?.textContent ?? '').includes('From the club library') && (document.querySelector('.note')?.textContent ?? '').includes('SMOKE-B')`), 'it opens, credited to who shared it');
+  check(await until(`document.querySelector('input.z0[aria-label="Reference impedance in ohms"]')?.value === '200'`, 20_000), 'with the Windom\'s 200 Ω reference carried across');
 }
 
 async function runVnaTest({ evaluate, send, log }) {
@@ -1016,6 +1548,83 @@ async function runVnaTest({ evaluate, send, log }) {
   check(await until(`document.querySelectorAll('path.sweep-measured').length === 1`), 'and it is drawn over the modelled SWR curve, dashed, with a legend');
   const legend = await evaluate(`document.querySelector('.plot-wide .chart-legend')?.textContent ?? ''`);
   check(legend.includes('modelled') && legend.includes('measured'), `legend: ${legend.replace(/\s+/g, ' ').trim()}`);
+
+  // ---- Balun tool: a core measured straight off the instrument, and the resonance notice ----
+  await send('Page.navigate', { url: new URL('#/balun', baseUrl).href });
+  check(await until(`document.querySelector('h1')?.textContent === 'Baluns and ununs'`, 30_000), 'the balun tool opens');
+  await evaluate(`localStorage.removeItem('emws.balun.cores.v1')`);
+  await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('Measure the core in your hand'))?.setAttribute('open', '')`);
+  await evaluate(`window.__emwsVnaPick = 'h'`);
+  check(await clickText('.vna button', 'Connect a NanoVNA'), 'measure the core in your hand: connect the H');
+  check(await until(`document.querySelector('.vna-status')?.textContent.includes('connected')`), 'connected');
+  check(await clickText('.vna button', 'Measure this core'), 'Measure this core');
+  check(await until(`document.querySelectorAll('.bin .core-chip').length === 1`), 'an inductive reading lands in the bin');
+  check((await evaluate(`document.querySelector('.resonance-notice') === null`)) === true, 'with no resonance notice: it never went capacitive');
+  check(await clickText('.vna button', 'Disconnect'), 'disconnect the H');
+
+  // The V2 wound too far: a reading that goes capacitive at 7 MHz must be said to the face.
+  await evaluate(`window.__emwsVnaPick = 'v2'`);
+  check(await clickText('.vna button', 'Connect a NanoVNA'), 'connect the V2');
+  check(await until(`document.querySelector('.vna-calibration') !== null`), 'it asks for the calibration here too');
+  for (const standard of ['short', 'open', 'load']) {
+    const label = standard[0].toUpperCase() + standard.slice(1);
+    await evaluate(`window.__emwsVnaAttach(${JSON.stringify(standard)})`);
+    check(await clickText('.vna-calibration button', label), `${label}: measured`);
+    check(await until(`[...document.querySelectorAll('.vna-calibration button')].some((b) => b.textContent.trim() === '✓ ${label}')`), 'ticked');
+  }
+  await evaluate(`window.__emwsVnaAttach('resonant')`);
+  check(await clickText('.vna button', 'Measure this core'), 'Measure this core, wound too far');
+  check(await until(`document.querySelector('.resonance-notice') !== null`), 'the resonance notice appears the moment the reading is back');
+  const notice = await evaluate(`document.querySelector('.resonance-notice')?.textContent ?? ''`);
+  check(/resonated/.test(notice) && /trust it up to about/.test(notice) && /fewer turns/.test(notice), 'saying the resonance, the trust limit and the fix');
+  const saidMHz = Number((notice.match(/up to about ([\d.]+) MHz/) ?? [])[1]);
+  check(saidMHz > 2 && saidMHz < 2.8, `the limit is a third of the 7.1 MHz resonance: ${saidMHz} MHz`);
+  check(await clickText('.resonance-notice button', 'Forget this measurement'), 'Forget this measurement');
+  check(await until(`document.querySelector('.resonance-notice') === null && document.querySelectorAll('.bin .core-chip').length === 1`), 'and it is gone; the good reading stays');
+  check(await clickText('.vna button', 'Measure this core'), 'measured again, same winding');
+  check(await until(`document.querySelector('.resonance-notice') !== null`), 'warned again');
+  check(await clickText('.resonance-notice button', 'Keep it'), 'Keep it, knowingly');
+  check(await until(`document.querySelectorAll('.bin .core-chip').length === 2`), 'kept in the bin this time');
+  await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('Your core library'))?.setAttribute('open', '')`);
+  const cards = await evaluate(`[...document.querySelectorAll('.profile-facts')].map((e) => e.textContent).join(' || ')`);
+  check(/trust it up to/.test(cards), 'and its library card carries the same limit');
+  await evaluate(`localStorage.removeItem('emws.balun.cores.v1')`);
+
+  // ---- Port 2: measure a filter through the V2, thru + isolation calibrated in the page ----
+  await send('Page.navigate', { url: new URL('#/lc', baseUrl).href });
+  check(await until(`document.querySelector('h1')?.textContent === 'Coils, traps and filters'`, 30_000), 'the coils, traps and filters tool opens');
+  check(await clickText('.lc-tab', 'Stubs & cavities'), 'Stubs & cavities');
+  await evaluate(`document.querySelector('.measure-filter')?.setAttribute('open', '')`);
+  await evaluate(`window.__emwsVnaPick = 'v2'`);
+  check(await clickText('.measure-filter .vna button', 'Connect a NanoVNA'), 'connect the V2 for port 2');
+  check(await until(`document.querySelector('.measure-filter .vna-status')?.textContent.includes('NanoVNA-V2')`), 'connected');
+  check(await evaluate(`[...document.querySelectorAll('.measure-filter .vna button')].find((b) => b.textContent.trim() === 'Measure it')?.disabled === true`), 'it will not measure S21 from a raw V2 before a thru');
+  await evaluate(`window.__emwsVnaPort2('thru')`);
+  check(await clickText('.measure-filter .vna-calibration button', 'Thru'), 'Thru: the two cables joined');
+  check(await until(`[...document.querySelectorAll('.measure-filter .vna-calibration button')].some((b) => b.textContent.trim() === '✓ Thru')`), 'ticked');
+  await evaluate(`window.__emwsVnaPort2('isolation')`);
+  check(await clickText('.measure-filter .vna-calibration button', 'Isolation'), 'Isolation: both cables terminated');
+  check(await until(`(document.querySelector('.measure-filter .vna-calibration')?.textContent ?? '').includes('with isolation')`), 'calibrated, with isolation');
+  await evaluate(`window.__emwsVnaPort2('dut')`);
+  check(await clickText('.measure-filter .vna button', 'Measure it'), 'Measure it');
+  check(await until(`(document.querySelector('.xy-chart .chart-legend')?.textContent ?? '').includes('measured')`), 'the measurement is drawn over the design, dashed, with a legend');
+  // Hover at 145 MHz: the simulated low-pass is 3 dB down there, whatever the raw readings said.
+  // Scroll first and let it settle: measured mid-scroll, the chart is not where the mouse goes.
+  // The plot is the figure's own svg; the legend's line swatches are svgs too, inside the caption.
+  await evaluate(`document.querySelector('.xy-chart > svg').scrollIntoView({ block: 'center' })`);
+  await sleep(600);
+  const point = JSON.parse(await evaluate(`(() => { const r = document.querySelector('.xy-chart > svg').getBoundingClientRect(); return JSON.stringify({ x: r.x, y: r.y, w: r.width, h: r.height }); })()`));
+  const [lo, hi] = [145 * 0.5, 290 * 1.5];
+  const px = point.x + ((52 + ((145 - lo) / (hi - lo)) * (700 - 52 - 16)) / 700) * point.w;
+  await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: px, y: point.y + point.h / 2 });
+  await sleep(250);
+  const readout = await evaluate(`document.querySelector('.xy-chart .chart-readout')?.textContent ?? ''`);
+  if (!readout) {
+    const under = await evaluate(`(() => { const e = document.elementFromPoint(${px}, ${point.y + point.h / 2}); return e ? e.tagName + '.' + (e.getAttribute('class') ?? '') + ' in ' + (e.closest('figure')?.className ?? 'no figure') : 'nothing'; })()`);
+    log(`    hover debug: rect ${JSON.stringify(point)}, px ${px.toFixed(0)}, under the mouse: ${under}, viewport ${await evaluate('innerWidth + "x" + innerHeight')}`);
+  }
+  const measuredDb = Number((readout.match(/measured\s*(-?[\d.]+)/) ?? [])[1]);
+  check(Math.abs(measuredDb + 3.01) < 0.15, `the error terms are corrected away: the low-pass reads ${measuredDb} dB at 145 MHz (${readout.replace(/\s+/g, ' ').trim()})`);
 }
 
 /**
@@ -1367,6 +1976,12 @@ async function runEditTest({ send, evaluate, loadExample, waitForResults, getSta
   const tuned = await readState();
   check(tuned.modelWires[0]?.includes(metres.toFixed(3).slice(0, 4)) ?? false, `the model took the new length: ${tuned.modelWires[0]}`);
 
+  // ---- the convergence check: double the segments, see what moves ----
+  check(await evaluate(`(() => { const b = [...document.querySelectorAll('.convergence button')].find((x) => x.textContent.trim() === 'Check it'); if (!b) return false; b.click(); return true; })()`), 'Is the model converged? Check it');
+  check(await tuneReady(`/Settled|Not settled/.test(document.querySelector('.convergence-note')?.textContent ?? '')`, 30_000), 'it answers');
+  const verdict = await evaluate(`document.querySelector('.convergence-note')?.textContent ?? ''`);
+  check(/^Settled/.test(verdict) && /21 → 42/.test(verdict) && /moved the feed impedance by/.test(verdict), `the dipole is settled, with the movement in numbers: ${verdict.slice(0, 110)}…`);
+
   // 11. Ratings: the trap dipole's traps at 100 W.
   await loadExample('trap-dipole-40-80m');
   check(await tuneReady(`document.querySelectorAll('.ratings-table tbody tr').length === 2`, 45_000), 'the trap dipole lists both traps under What the loads must survive');
@@ -1510,15 +2125,20 @@ try {
   // The engine's .wasm is fetched inside the Web Worker, which is a separate DevTools
   // target. Attach to workers as they start (paused, so no request is missed), switch
   // on the same reporting there, then let them run.
+  //
+  // The release must NEVER wait on the enables' answers. A service worker paused at start
+  // does not answer them, and an earlier version that awaited both before releasing left
+  // the PWA's worker frozen before its first line: register() never settled, nothing was
+  // cached, and the run hung. A session handles its commands in order, so the enables are
+  // still in place before the target runs; their replies just do not gate the release.
   const previousOnMessage = ws.onmessage;
   ws.onmessage = (event) => {
     const msg = JSON.parse(event.data);
     if (msg.method === 'Target.attachedToTarget') {
       const { sessionId } = msg.params;
-      void Promise.all([send('Network.enable', {}, sessionId), send('Runtime.enable', {}, sessionId)])
-        .catch(() => {})
-        .then(() => send('Runtime.runIfWaitingForDebugger', {}, sessionId))
-        .catch(() => {});
+      send('Network.enable', {}, sessionId).catch(() => {});
+      send('Runtime.enable', {}, sessionId).catch(() => {});
+      send('Runtime.runIfWaitingForDebugger', {}, sessionId).catch(() => {});
       return;
     }
     previousOnMessage(event);
@@ -1537,7 +2157,7 @@ try {
     // Both are connected to the same "antenna": 75 ohms with half a microhenry in series,
     // so the tools should read 75 + j(2 pi f L) back from either. The page picks the port
     // with window.__emwsVnaPick ('v2' for the V2), and what is on the V2's connector with
-    // window.__emwsVnaAttach('short' | 'open' | 'load' | 'antenna').
+    // window.__emwsVnaAttach('short' | 'open' | 'load' | 'antenna' | 'resonant').
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: `(() => { try {
         if (!window.isSecureContext) return;
@@ -1546,15 +2166,18 @@ try {
           const r = 75, x = 2 * Math.PI * fMHz * 1e6 * 0.5e-6, d = (r + 50) ** 2 + x * x;
           return [((r - 50) * (r + 50) + x * x) / d, (x * (r + 50) - (r - 50) * x) / d];
         };
+        // Between the two ports: a first-order low-pass with its 3 dB point at 145 MHz.
+        const through = (fMHz) => { const x = fMHz / 145; return [1 / (1 + x * x), -x / (1 + x * x)]; };
         const reply = (cmd) => {
           if (cmd === '') return 'ch> ';
           if (cmd === 'version') return 'version\\r\\n1.2.14\\r\\nch> ';
           if (cmd === 'info') return 'info\\r\\nBoard: NanoVNA-H (simulated)\\r\\nch> ';
-          const m = /^scan (\\d+) (\\d+) (\\d+) 3$/.exec(cmd);
+          // Mask 3: frequency + S11. Mask 5: frequency + S21 (calibrated on the instrument).
+          const m = /^scan (\\d+) (\\d+) (\\d+) ([35])$/.exec(cmd);
           if (m) {
             const [a, b, n] = [Number(m[1]), Number(m[2]), Number(m[3])];
             const lines = [];
-            for (let i = 0; i < n; i++) { const hz = Math.round(a + (b - a) * i / (n - 1)); const [re, im] = gamma(hz / 1e6); lines.push(hz + ' ' + re.toFixed(6) + ' ' + im.toFixed(6)); }
+            for (let i = 0; i < n; i++) { const hz = Math.round(a + (b - a) * i / (n - 1)); const [re, im] = m[4] === '3' ? gamma(hz / 1e6) : through(hz / 1e6); lines.push(hz + ' ' + re.toFixed(6) + ' ' + im.toFixed(6)); }
             return cmd + '\\r\\n' + lines.join('\\r\\n') + '\\r\\nch> ';
           }
           return cmd + '\\r\\nch> ';
@@ -1578,13 +2201,31 @@ try {
           const div = (a, b) => { const d = b[0] * b[0] + b[1] * b[1]; return [(a[0] * b[0] + a[1] * b[1]) / d, (a[1] * b[0] - a[0] * b[1]) / d]; };
           let attached = 'load';
           window.__emwsVnaAttach = (what) => { attached = what; };
-          const actual = (fMHz) => attached === 'short' ? [-1, 0] : attached === 'open' ? [1, 0] : attached === 'load' ? [0, 0] : gamma(fMHz);
+          // 'resonant' is a test winding wound too far: a lossy parallel LC (5 uH, 100 pF,
+          // 5 ohms in the coil) that goes capacitive above 7.1 MHz, as an over-wound core does.
+          const resonant = (fMHz) => {
+            const w = 2 * Math.PI * fMHz * 1e6;
+            const zl = [5, w * 5e-6], zc = [0, -1 / (w * 100e-12)];
+            const z = div(mul(zl, zc), [zl[0] + zc[0], zl[1] + zc[1]]);
+            return div([z[0] - 50, z[1]], [z[0] + 50, z[1]]);
+          };
+          const actual = (fMHz) => attached === 'short' ? [-1, 0] : attached === 'open' ? [1, 0] : attached === 'load' ? [0, 0] : attached === 'resonant' ? resonant(fMHz) : gamma(fMHz);
           // Gm = e00 + e10e01 * Ga / (1 - e11 * Ga): what an uncorrected instrument reads.
           const raw = (fMHz) => { const g = actual(fMHz); const eg = mul(E.e11, g); const q = div(mul(E.e10e01, g), [1 - eg[0], -eg[1]]); return [E.e00[0] + q[0], E.e00[1] + q[1]]; };
+          // Port 2, raw as the V2 sends it: S21m = e30 + e10e32 * S21a, leakage and tracking
+          // both varying with frequency, so only a thru + isolation calibration recovers S21a.
+          // window.__emwsVnaPort2('thru' | 'isolation' | 'dut') says what is between the cables.
+          let port2 = 'dut';
+          window.__emwsVnaPort2 = (what) => { port2 = what; };
+          const s21a = (fMHz) => (port2 === 'thru' ? [1, 0] : port2 === 'isolation' ? [0, 0] : through(fMHz));
+          const raw21 = (fMHz) => { const e30 = [0.003 + 1e-5 * fMHz, -0.002]; const t = mul([0.7 - 2e-4 * fMHz, -0.25 + 1e-4 * fMHz], s21a(fMHz)); return [e30[0] + t[0], e30[1] + t[1]]; };
           const entry = (index) => {
-            const [re, im] = raw(((regs.get(0x00) ?? 0) + index * (regs.get(0x10) ?? 0)) / 1e6);
+            const fMHz = ((regs.get(0x00) ?? 0) + index * (regs.get(0x10) ?? 0)) / 1e6;
+            const [re, im] = raw(fMHz);
+            const [re21, im21] = raw21(fMHz);
             const b = new Uint8Array(32), v = new DataView(b.buffer);
-            v.setInt32(0, 1000000, true); v.setInt32(8, Math.round(re * 1e6), true); v.setInt32(12, Math.round(im * 1e6), true); v.setInt32(16, 10000, true); v.setUint16(24, index, true);
+            v.setInt32(0, 1000000, true); v.setInt32(8, Math.round(re * 1e6), true); v.setInt32(12, Math.round(im * 1e6), true);
+            v.setInt32(16, Math.round(re21 * 1e6), true); v.setInt32(20, Math.round(im21 * 1e6), true); v.setUint16(24, index, true);
             return b;
           };
           let buffered = [], cursor = 17, push;
@@ -1677,10 +2318,11 @@ try {
     if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
-    if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (toolboxTest) await runToolboxTest({ evaluate, send, log: (l) => editLog.push(l) });
-    if (fdtdTest) await runFdtdTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (fdtdTest) await runFdtdTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (communityTest) await runCommunityTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (pwaTest) await runPwaTest({ evaluate, send, problems, log: (l) => editLog.push(l) });
     if (process.env.SMOKE_PROBE) console.log('probe:', await evaluate(process.env.SMOKE_PROBE));
     const info = JSON.parse(
       await evaluate(
@@ -1753,6 +2395,10 @@ try {
       log: (l) => editLog.push(l),
     });
   }
+
+  if (exposureTest) await runExposureTest({ send, evaluate, loadExample, log: (l) => editLog.push(l), screenshot });
+  if (optimiseTest) await runOptimiseTest({ send, evaluate, loadExample, log: (l) => editLog.push(l), screenshot });
+  if (maaTest) await runMaaTest({ send, evaluate, log: (l) => editLog.push(l), folder: join(profile, 'maa') });
 
   if (screenshot) {
     const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });

@@ -27,7 +27,10 @@ import {
   whoAmI,
 } from '../src/lib/community';
 import { CORES } from '../src/tools/balun/catalog';
-import { exportProfiles, importProfiles, makeProfile } from '../src/tools/balun/profiles';
+import { type SavedBalun, exportSavedBalun, importSavedBalun, materialFor } from '../src/tools/balun/library';
+import { efhwDesign, withProfile } from '../src/tools/balun/model';
+import { exportProfiles, importProfiles, makeProfile, profileMaterial } from '../src/tools/balun/profiles';
+import { packModel, unpackModel } from '../src/tools/antenna-modeler/shared-model';
 
 /** A PHP that can serve the API against SQLite, with the flags that make it able to. */
 function findPhp(): { exe: string; flags: string[] } | undefined {
@@ -267,6 +270,35 @@ describe.skipIf(!php)('the community store', () => {
     await deleteItem(mine[0]!.id, base);
   });
 
+  it('keeps the club library: balun designs and antenna models, each on its own shelf, CC0 as ever', async () => {
+    alice.use();
+    // A design wound on a measured core travels with that core, and comes back pointed at it.
+    const [core] = importProfiles(profileJson());
+    const saved: SavedBalun = { id: 'b1', name: 'EFHW 49:1', savedAt: new Date().toISOString(), summary: '49:1 on FT240', design: withProfile(efhwDesign(), { id: core!.id, name: core!.name, size: core!.size, materialId: profileMaterial(core!).id }) };
+    const designPayload = exportSavedBalun(saved, [core!]);
+    const modelPayload = packModel('CM 20 m dipole\nCE\nGW 1 21 0 -5.13 0 0 5.13 0 0.001\nGE 0\nFR 0 1 0 0 14.2 0\nEX 0 1 11 0 1 0\nXQ\nEN\n', 200);
+    await expect(saveItem({ kind: 'balun-design', name: 'EFHW 49:1', summary: '49:1', payload: designPayload, public: true, cc0: false }, base)).rejects.toThrow(/CC0/);
+    await saveItem({ kind: 'balun-design', name: 'EFHW 49:1', summary: '49:1 on FT240', payload: designPayload, public: true, cc0: true }, base);
+    await saveItem({ kind: 'antenna-model', name: '20 m dipole', summary: '1 wire, 14.2 MHz', payload: modelPayload, public: true, cc0: true }, base);
+
+    bob.use();
+    expect(await browseShared('core-profile', base)).toEqual([]);
+    const designs = await browseShared('balun-design', base);
+    const models = await browseShared('antenna-model', base);
+    expect(designs.map((d) => d.name)).toEqual(['EFHW 49:1']);
+    expect(models.map((m) => m.name)).toEqual(['20 m dipole']);
+    const taken = importSavedBalun((await fetchShared(designs[0]!.id, base)).payload);
+    expect(taken.core).toBeDefined();
+    expect(taken.saved.design.profileId).toBe(taken.core!.id);
+    expect(taken.core!.id).not.toBe(core!.id);
+    expect(materialFor(taken.saved.design, [taken.core!])?.curve?.length).toBeGreaterThan(0);
+    const model = unpackModel((await fetchShared(models[0]!.id, base)).payload);
+    expect(model.z0).toBe(200);
+    expect(model.deck).toContain('GW 1 21');
+    alice.use();
+    for (const item of await myItems(base)) await deleteItem(item.id, base);
+  });
+
   it('refuses what it should refuse', async () => {
     bob.use();
     await expect(saveItem({ kind: 'balun' as never, name: 'x', summary: '', payload: '{}', public: false, cc0: false }, base)).rejects.toThrow(/Unknown kind/);
@@ -311,7 +343,9 @@ describe.skipIf(!php)('the community store', () => {
     // The code is spent: it cannot be used twice.
     await expect(resetPassword('M0ABC/P', code!, 'yet another password', base)).rejects.toThrow(/Wrong or expired/);
     await logout(base);
-  });
+    // A dozen password hashes and a mail roundtrip: too slow for the default 5 s when the
+    // whole suite's workers start at once on a busy machine.
+  }, 20_000);
 
   it('has no mail, and says so, on a site that set none up', async () => {
     const port = 8850 + Math.floor(Math.random() * 100);
@@ -345,5 +379,6 @@ describe.skipIf(!php)('the community store', () => {
     } catch (e) {
       expect((e as CommunityError).status).toBe(429);
     }
-  });
+    // Six deliberate wrong passwords are six hash checks; see the reset test's timeout.
+  }, 20_000);
 });

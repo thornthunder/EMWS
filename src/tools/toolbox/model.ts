@@ -1,10 +1,10 @@
 // What the RF toolbox remembers between visits: which tab is open and what was typed in it.
 
-import type { LossPoint } from './coax';
+import type { Cable, LossPoint } from './coax';
 import type { Topology } from './attenuator';
 import type { SBand } from './levels';
 
-export type ToolboxTab = 'wire' | 'coax' | 'pad' | 'levels' | 'swr';
+export type ToolboxTab = 'wire' | 'coax' | 'pad' | 'levels' | 'swr' | 'link';
 
 export interface WireInputs {
   fMHz: number;
@@ -57,6 +57,35 @@ export interface SwrInputs {
   z0: number;
 }
 
+/** One end's antenna: a dish whose gain is computed, or a gain typed straight in. */
+export type LinkAntenna = 'dish' | 'gain';
+
+export interface LinkInputs {
+  fMHz: number;
+  distanceKm: number;
+  txPowerW: number;
+  txFeederLossDb: number;
+  txAntenna: LinkAntenna;
+  txDishM: number;
+  txEfficiency: number;
+  txGainDbi: number;
+  rxAntenna: LinkAntenna;
+  rxDishM: number;
+  rxEfficiency: number;
+  rxGainDbi: number;
+  /** Where the preamp sits: at the antenna (true) or at the rig end of the feeder. */
+  preampFirst: boolean;
+  preampGainDb: number;
+  preampNfDb: number;
+  rxFeederLossDb: number;
+  rigNfDb: number;
+  bandwidthHz: number;
+  requiredSnrDb: number;
+  /** For the radio horizon. */
+  h1M: number;
+  h2M: number;
+}
+
 export interface ToolboxState {
   tab: ToolboxTab;
   wire: WireInputs;
@@ -64,6 +93,7 @@ export interface ToolboxState {
   pad: PadInputs;
   levels: LevelsInputs;
   swr: SwrInputs;
+  link: LinkInputs;
 }
 
 export function defaultState(): ToolboxState {
@@ -81,11 +111,35 @@ export function defaultState(): ToolboxState {
     pad: { topology: 'pi', attenuationDb: 10, zIn: 50, zOut: 50, powerW: 1, standardValues: true },
     levels: { dBm: -73, z: 50, band: 'hf', dB: 3, fMHz: 14.2, txW: 100, feederLossDb: 1, gainDbi: 2.15, distanceM: 10, antennaSizeM: 10 },
     swr: { swr: 2, forwardW: 100, reflectedW: 11.1, r: 72, x: 0, z0: 50 },
+    // The club's standing example: a 2.4 GHz uplink to a geostationary satellite.
+    link: {
+      fMHz: 2400,
+      distanceKm: 35786,
+      txPowerW: 5,
+      txFeederLossDb: 1,
+      txAntenna: 'dish',
+      txDishM: 1.2,
+      txEfficiency: 0.55,
+      txGainDbi: 15,
+      rxAntenna: 'gain',
+      rxDishM: 1,
+      rxEfficiency: 0.55,
+      rxGainDbi: 0,
+      preampFirst: true,
+      preampGainDb: 20,
+      preampNfDb: 1,
+      rxFeederLossDb: 2,
+      rigNfDb: 6,
+      bandwidthHz: 2700,
+      requiredSnrDb: 10,
+      h1M: 10,
+      h2M: 10,
+    },
   };
 }
 
 const STORAGE_KEY = 'emws.toolbox.v1';
-const TABS: ToolboxTab[] = ['wire', 'coax', 'pad', 'levels', 'swr'];
+const TABS: ToolboxTab[] = ['wire', 'coax', 'pad', 'levels', 'swr', 'link'];
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
 
@@ -100,14 +154,25 @@ export function loadState(): ToolboxState {
     const pad = { ...fallback.pad, ...(stored.pad ?? {}) };
     const levels = { ...fallback.levels, ...(stored.levels ?? {}) };
     const swr = { ...fallback.swr, ...(stored.swr ?? {}) };
-    const numbers = [wire.fMHz, wire.velocityFactor, wire.physicalM, coax.lengthM, coax.fMHz, coax.loadSwr, coax.powerW, pad.attenuationDb, pad.zIn, pad.zOut, levels.dBm, levels.z, levels.txW, swr.swr, swr.forwardW, swr.z0];
+    const link = { ...fallback.link, ...(stored.link ?? {}) };
+    const numbers = [wire.fMHz, wire.velocityFactor, wire.physicalM, coax.lengthM, coax.fMHz, coax.loadSwr, coax.powerW, pad.attenuationDb, pad.zIn, pad.zOut, levels.dBm, levels.z, levels.txW, swr.swr, swr.forwardW, swr.z0, link.fMHz, link.distanceKm, link.txPowerW, link.bandwidthHz, link.h1M, link.h2M];
     if (!numbers.every(finite)) return fallback;
     if (!Array.isArray(coax.datasheet.points) || coax.datasheet.points.length !== 2) coax.datasheet.points = fallback.coax.datasheet.points;
     const tab = TABS.includes(stored.tab as ToolboxTab) ? (stored.tab as ToolboxTab) : 'wire';
-    return { tab, wire, coax, pad, levels, swr };
+    return { tab, wire, coax, pad, levels, swr, link };
   } catch {
     return fallback;
   }
+}
+
+/**
+ * The cable typed in under "From its datasheet", as a cable other tools can use - the
+ * modeller's feed line, the LC tool's stubs. Read from the same storage with the same
+ * two-point fit, so no two tools can disagree about it.
+ */
+export function savedDatasheetCable(): Cable {
+  const d = loadState().coax.datasheet;
+  return { id: 'datasheet', name: d.name || 'My cable', z0: d.z0, velocityFactor: d.velocityFactor, loss: { kind: 'datasheet', points: d.points } };
 }
 
 export function saveState(state: ToolboxState): void {

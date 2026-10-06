@@ -4,9 +4,10 @@
 
 import { describe, expect, it } from 'vitest';
 import { historyReducer, initialHistory } from '../src/lib/history';
-import { PRESETS } from '../src/tools/fdtd/presets';
-import { CONDUCTOR, addShape, addSource, cellOf, dielectric, emptyScene, gridFor, hitTest, limits, rasterise, removeItem } from '../src/tools/fdtd/scene';
-import { C0, Simulation, ricker } from '../src/tools/fdtd/simulation';
+import { PRESETS, presetById } from '../src/tools/fdtd/presets';
+import { PROBE_SAMPLES, newProbeRecord, probeView, recordProbe, spectrum } from '../src/tools/fdtd/probe';
+import { CONDUCTOR, addShape, addSource, cellOf, dielectric, emptyScene, gridFor, hitTest, limits, rasterise, removeItem, shortening } from '../src/tools/fdtd/scene';
+import { C0, EPS0, type PlaneWaveSpec, type Polarisation, Simulation, makeEngine, ricker } from '../src/tools/fdtd/simulation';
 
 const F = 1e9;
 const DX = 0.01; // 30 cells a wavelength at 1 GHz
@@ -16,8 +17,8 @@ function open(n = 160, extra: Partial<ConstructorParameters<typeof Simulation>[0
   return new Simulation({ nx: n, ny: n, dx: DX, pmlCells: 12, sources: [{ i: n / 2, j: n / 2, kind: 'pulse', fHz: F, amplitude: 1, phaseRad: 0 }], ...extra });
 }
 
-/** Ez at a cell after every step, for `steps` steps. */
-function record(sim: Simulation, i: number, j: number, steps: number): number[] {
+/** The field at a cell after every step, for `steps` steps. */
+function record(sim: { advance(): void; at(i: number, j: number): number }, i: number, j: number, steps: number): number[] {
   const out: number[] = [];
   for (let s = 0; s < steps; s++) {
     sim.advance();
@@ -101,7 +102,8 @@ describe('the engine', () => {
     };
     expect(settle(12)).toBeLessThan(1e-4);
     expect(settle(0)).toBeGreaterThan(0.3);
-  });
+    // Two 160-cell runs of 600 steps: real work, slow under the whole suite's start-up load.
+  }, 20_000);
 
   it('stays finite for thousands of steps, and refuses an unstable time step', () => {
     const sim = open(96);
@@ -110,6 +112,209 @@ describe('the engine', () => {
     expect(sim.peak()).toBeLessThan(10);
     expect(() => new Simulation({ nx: 32, ny: 32, dx: DX, courant: 0.8 })).toThrow(/Courant/);
     expect(ricker(1.5 / F, F)).toBe(1);
+  });
+});
+
+/** |Γ| from Fresnel, for a ground of complex permittivity below free space; θ from the vertical. */
+function fresnel(polarisation: Polarisation, thetaDeg: number, epsr: number, sigma: number, fHz: number): number {
+  const t = (thetaDeg * Math.PI) / 180;
+  const c = Math.cos(t);
+  const im = -sigma / (2 * Math.PI * fHz * EPS0);
+  // sqrt(εc - sin²θ), principal root.
+  const a = epsr - Math.sin(t) ** 2;
+  const r = Math.hypot(a, im);
+  const sr = Math.sqrt((r + a) / 2);
+  const si = Math.sign(im || 1) * Math.sqrt((r - a) / 2);
+  const ratio = (nr: number, ni: number, dr: number, di: number) => Math.hypot(nr, ni) / Math.hypot(dr, di);
+  // Ez out of the screen is s-polarised: (cos - root) / (cos + root). Hz is p: (εc cos - root) / (εc cos + root).
+  if (polarisation === 'tm') return ratio(c - sr, -si, c + sr, si);
+  return ratio(epsr * c - sr, im * c - si, epsr * c + sr, im * c + si);
+}
+
+/**
+ * |Γ| as the engine sees it: a plane wave from the top onto a ground filling the bottom, run
+ * twice - with the ground and without - and the difference read just above the ground, far
+ * enough along that the reflection there comes from ground inside the world.
+ */
+function measuredReflection(polarisation: Polarisation, thetaDeg: number, cellsPerWavelength: number, epsr: number, sigma: number, fHz: number): number {
+  const dx = C0 / fHz / cellsPerWavelength;
+  const pml = 12;
+  const wide = 8 * cellsPerWavelength;
+  const nx = wide + 2 * pml;
+  const ny = 2 * cellsPerWavelength + 2 * pml;
+  const top = pml + cellsPerWavelength;
+  const ground = { epsr: new Float32Array(nx * ny).fill(1), sigma: new Float32Array(nx * ny) };
+  for (let k = 0; k < top * nx; k++) {
+    ground.epsr[k] = epsr;
+    ground.sigma[k] = sigma;
+  }
+  const planeWave: PlaneWaveSpec = { side: 'top', angleDeg: thetaDeg, kind: 'sine', fHz, amplitude: 1 };
+  const withGround = makeEngine(polarisation, { nx, ny, dx, pmlCells: pml, ...ground, planeWave });
+  const without = makeEngine(polarisation, { nx, ny, dx, pmlCells: pml, planeWave });
+  const settle = Math.round((wide * 2.5) / 0.7);
+  for (let s = 0; s < settle; s++) {
+    withGround.advance();
+    without.advance();
+  }
+  const i = pml + Math.round(wide * 0.8);
+  const j = top + Math.round(cellsPerWavelength / 8);
+  let reflected = 0;
+  let incident = 0;
+  for (let s = 0; s < Math.ceil(1 / (fHz * withGround.dt)) + 2; s++) {
+    withGround.advance();
+    without.advance();
+    reflected = Math.max(reflected, Math.abs(withGround.at(i, j) - without.at(i, j)));
+    incident = Math.max(incident, Math.abs(without.at(i, j)));
+  }
+  return reflected / incident;
+}
+
+describe('the plane wave, and the other polarisation', () => {
+  it('fills empty space evenly, square on and at a slant, and stays out of the region behind it', () => {
+    for (const [side, angleDeg] of [['top', 0], ['top', 30], ['left', 20]] as const) {
+      const pml = 12;
+      const nx = 200 + 2 * pml;
+      const ny = 140 + 2 * pml;
+      const sim = makeEngine('tm', { nx, ny, dx: 0.3 / 20, pmlCells: pml, planeWave: { side, angleDeg, kind: 'sine', fHz: F, amplitude: 1 } });
+      sim.advance(2500);
+      const envelope = new Float32Array(nx * ny);
+      for (let s = 0; s < 60; s++) {
+        sim.advance();
+        for (let k = 0; k < nx * ny; k++) envelope[k] = Math.max(envelope[k]!, Math.abs(sim.field[k]!));
+      }
+      let lo = Infinity;
+      let hi = 0;
+      for (let j = pml + 3; j < ny - pml - 3; j++) {
+        for (let i = pml + 3; i < nx - pml - 3; i++) {
+          lo = Math.min(lo, envelope[i + j * nx]!);
+          hi = Math.max(hi, envelope[i + j * nx]!);
+        }
+      }
+      expect(lo, `${side} ${angleDeg}°`).toBeGreaterThan(0.97);
+      expect(hi, `${side} ${angleDeg}°`).toBeLessThan(1.03);
+      // The strip between the launching line and the absorbing edge behind it is scattered field only.
+      const behind = side === 'top' ? (i: number) => envelope[i + (ny - pml - 1) * nx]! : (i: number) => envelope[pml + i * nx]!;
+      let leak = 0;
+      for (let n = pml + 3; n < (side === 'top' ? nx : ny) - pml - 3; n++) leak = Math.max(leak, behind(n));
+      expect(leak, `${side} ${angleDeg}° behind`).toBeLessThan(0.01);
+    }
+  }, 30_000);
+
+  it('a conductor sends it back whole: upside down in Ez, the same way up in Hz', () => {
+    const gamma = (polarisation: Polarisation, what: 'conductor' | 'dielectric') => {
+      const nx = 300;
+      const ny = 60;
+      const epsr = new Float32Array(nx * ny).fill(1);
+      const pec = new Uint8Array(nx * ny);
+      for (let j = 0; j < ny; j++) for (let i = 200; i < nx; i++) if (what === 'conductor') pec[i + j * nx] = 1; else epsr[i + j * nx] = 4;
+      const sim = makeEngine(polarisation, { nx, ny, dx: DX, pmlCells: 12, epsr, pec, planeWave: { side: 'left', angleDeg: 0, kind: 'pulse', fHz: F, amplitude: 1 } });
+      const series = record(sim, 150, 30, 700);
+      const incident = series.slice(0, 300);
+      const reflected = series.slice(300);
+      return { incident: incident[argmaxAbs(incident)]!, gamma: reflected[argmaxAbs(reflected)]! / incident[argmaxAbs(incident)]! };
+    };
+    const tm = gamma('tm', 'conductor');
+    expect(Math.abs(tm.incident - 1)).toBeLessThan(0.01);
+    expect(tm.gamma).toBeLessThan(-0.98);
+    expect(gamma('te', 'conductor').gamma).toBeGreaterThan(0.98);
+    // εr 4 square on: Γ = (1 - 2) / (1 + 2) for E; H reflects with the other sign.
+    expect(Math.abs(gamma('tm', 'dielectric').gamma + 1 / 3)).toBeLessThan(0.02);
+    expect(Math.abs(gamma('te', 'dielectric').gamma - 1 / 3)).toBeLessThan(0.02);
+  }, 30_000);
+
+  it("Brewster's angle: at atan 2 onto εr 4 vertical polarisation goes in whole, horizontal does not", () => {
+    const brewster = (Math.atan(2) * 180) / Math.PI;
+    const vertical = measuredReflection('te', brewster, 20, 4, 0, F);
+    const horizontal = measuredReflection('tm', brewster, 20, 4, 0, F);
+    expect(fresnel('te', brewster, 4, 0, F)).toBeLessThan(1e-12);
+    expect(vertical).toBeLessThan(0.04);
+    expect(Math.abs(horizontal - fresnel('tm', brewster, 4, 0, F))).toBeLessThan(0.03);
+    // And at 45°, both as Fresnel says, within a few hundredths at 20 cells a wavelength.
+    expect(Math.abs(measuredReflection('te', 45, 20, 4, 0, F) - fresnel('te', 45, 4, 0, F))).toBeLessThan(0.03);
+    expect(Math.abs(measuredReflection('tm', 45, 20, 4, 0, F) - fresnel('tm', 45, 4, 0, F))).toBeLessThan(0.03);
+  }, 30_000);
+
+  it('average ground on 40 m: vertical polarisation hardly reflects near 13° elevation, horizontal still does', () => {
+    const f = 7.1e6;
+    // Fresnel's minimum for vertical polarisation over εr 13, 5 mS/m: 76.7° from the vertical.
+    let best = 0;
+    for (let d = 50; d < 89.9; d += 0.1) if (fresnel('te', d, 13, 0.005, f) < fresnel('te', best, 13, 0.005, f)) best = d;
+    expect(best).toBeCloseTo(76.7, 0);
+    // The preset's own grid: 40 cells a wavelength in air, ten inside the ground.
+    expect(40 / shortening({ epsr: 13, sigma: 0.005 }, f)).toBeGreaterThan(10);
+    const verticalLow = measuredReflection('te', 77, 40, 13, 0.005, f);
+    const verticalHigh = measuredReflection('te', 0, 40, 13, 0.005, f);
+    const horizontalLow = measuredReflection('tm', 77, 40, 13, 0.005, f);
+    expect(Math.abs(verticalLow - fresnel('te', 77, 13, 0.005, f))).toBeLessThan(0.05);
+    expect(Math.abs(verticalHigh - fresnel('te', 0, 13, 0.005, f))).toBeLessThan(0.05);
+    expect(Math.abs(horizontalLow - fresnel('tm', 77, 13, 0.005, f))).toBeLessThan(0.05);
+    expect(verticalLow).toBeLessThan(verticalHigh / 2);
+  }, 60_000);
+
+  it('Hz in a dielectric travels at c / √εr too, and its absorbing edge swallows what reaches it', () => {
+    const n = 160;
+    const arrival = (epsr: number) => {
+      const sim = makeEngine('te', { nx: n, ny: n, dx: DX, pmlCells: 12, epsr: new Float32Array(n * n).fill(epsr), sources: [{ i: n / 2, j: n / 2, kind: 'pulse', fHz: F, amplitude: 1, phaseRad: 0 }] });
+      return (argmaxAbs(record(sim, 80 + 40, 80, 500)) + 1) * sim.dt - 1.5 / F;
+    };
+    const ratio = arrival(4) / arrival(1);
+    expect(ratio).toBeGreaterThan(1.85);
+    expect(ratio).toBeLessThan(2.15);
+    const sim = makeEngine('te', { nx: n, ny: n, dx: DX, pmlCells: 12, sources: [{ i: n / 2, j: n / 2, kind: 'pulse', fHz: F, amplitude: 1, phaseRad: 0 }] });
+    let peak = 0;
+    for (let s = 0; s < 600; s++) {
+      sim.advance();
+      peak = Math.max(peak, sim.energy());
+    }
+    expect(sim.energy() / peak).toBeLessThan(1e-4);
+  }, 20_000);
+});
+
+describe('the probe', () => {
+  const dt = (0.7 * DX) / C0;
+
+  it('finds a sine at its own frequency, and a pulse at its centre frequency', () => {
+    const sine = new Float32Array(3000).map((_, m) => Math.sin(2 * Math.PI * F * (m + 1) * dt));
+    const frequencies = Array.from({ length: 241 }, (_, b) => (3 * F * b) / 240);
+    const { levelDb, peakIndex } = spectrum(sine, dt, frequencies);
+    expect(frequencies[peakIndex!]! / F).toBeCloseTo(1, 1);
+    expect(Math.max(...levelDb)).toBe(0);
+    expect(levelDb[frequencies.findIndex((f) => f >= 2 * F)]!).toBeLessThan(-40);
+    const pulse = new Float32Array(3000).map((_, m) => ricker((m + 1) * dt, F));
+    const ping = spectrum(pulse, dt, frequencies);
+    expect(Math.abs(frequencies[ping.peakIndex!]! / F - 1)).toBeLessThan(0.05);
+    // Nothing recorded yet: no peak, everything on the floor.
+    const silent = spectrum(new Float32Array(100), dt, frequencies);
+    expect(silent.peakIndex).toBeUndefined();
+  });
+
+  it('keeps the last samples in order and says how long it has listened', () => {
+    const record = newProbeRecord(5, 100);
+    const field = new Float32Array(10);
+    for (let m = 0; m < PROBE_SAMPLES + 500; m++) {
+      field[5] = Math.sin(2 * Math.PI * F * (100 + m + 1) * dt);
+      recordProbe(record, field);
+    }
+    const view = probeView(record, dt, F)!;
+    expect(view.periods).toBeCloseTo(PROBE_SAMPLES * dt * F, 6);
+    // The trace ends at the last sample taken, at its own time.
+    expect(view.timeNs.at(-1)!).toBeCloseTo((100 + PROBE_SAMPLES + 500) * dt * 1e9, 6);
+    expect(view.trace.at(-1)!).toBeCloseTo(field[5]!, 6);
+    expect(view.peakMHz! / 1000).toBeCloseTo(1, 1);
+    expect(probeView(newProbeRecord(0, 0), dt, F)).toBeUndefined();
+  });
+
+  it('records in the engine without disturbing it', () => {
+    const a = open(96);
+    const b = open(96);
+    const record = newProbeRecord(60 + 48 * 96, 0);
+    for (let s = 0; s < 200; s++) {
+      a.advance();
+      b.advance();
+      recordProbe(record, a.field);
+    }
+    expect(record.count).toBe(200);
+    expect(record.values[199]).toBe(b.at(60, 48));
   });
 });
 
@@ -187,13 +392,55 @@ describe('the scene', () => {
       const scene = preset.scene();
       const notes = limits(scene).notes;
       expect(notes.filter((n) => n.severity === 'error'), preset.id).toHaveLength(0);
-      expect(notes.some((n) => /no source|inside a conductor/.test(n.message)), preset.id).toBe(false);
+      expect(notes.some((n) => /no source|inside a conductor|times shorter/.test(n.message)), preset.id).toBe(false);
       const raster = rasterise(scene);
-      expect(raster.sources.length, preset.id).toBeGreaterThan(0);
+      expect(raster.sources.length > 0 || raster.planeWave !== undefined, preset.id).toBe(true);
       const objects = raster.pec.some((v) => v === 1) || raster.epsr.some((e) => e > 1);
       expect(objects || preset.id === 'ping', preset.id).toBe(true);
     }
     expect(new Set(PRESETS.map((p) => p.id)).size).toBe(PRESETS.length);
+    // The ground scenes' plane waves slant in over a ground that reaches their side: the checks say what that costs.
+    expect(limits(presetById('brewster')!.scene()).notes.some((n) => /starts in empty space only/.test(n.message))).toBe(true);
+    expect(presetById('brewster')!.scene().polarisation).toBe('te');
+  });
+
+  it('carries whatever touches the edge on through the absorbing layer, and nothing else', () => {
+    let scene = addShape(emptyScene(), { kind: 'rect', x: 0, y: 0, w: 3, h: 0.5 }, dielectric(4, 0.01)).scene;
+    scene = addShape(scene, { kind: 'disc', cx: 1.5, cy: 1.5, r: 0.2 }, CONDUCTOR).scene;
+    const raster = rasterise(scene);
+    const { nx, ny, pml } = raster.grid;
+    // Below the world, under the ground, and out to both sides: still ground.
+    for (const [i, j] of [[0, 0], [nx - 1, 0], [nx / 2, 1], [1, pml + 3]]) {
+      expect(raster.epsr[i! + j! * nx], `${i}, ${j}`).toBe(4);
+      expect(raster.sigma[i! + j! * nx], `${i}, ${j}`).toBeCloseTo(0.01, 6);
+    }
+    // Above the world: air. The disc touches no edge, so the layer beside it stays empty.
+    expect(raster.epsr[nx / 2 + (ny - 1) * nx]).toBe(1);
+    expect(raster.pec.slice((ny - pml) * nx).some((v) => v === 1)).toBe(false);
+  });
+
+  it('a plane wave counts as a source, says when it starts inside something, and refuses to start nowhere', () => {
+    const messages = (s: ReturnType<typeof emptyScene>) => limits(s).notes.map((n) => `${n.severity}: ${n.message}`);
+    const lit = { ...emptyScene(), planeWave: { side: 'left' as const, angleDeg: 0, kind: 'sine' as const, amplitude: 1 } };
+    expect(messages(lit).some((m) => /no source/.test(m))).toBe(false);
+    expect(messages(lit).some((m) => /empty space only/.test(m))).toBe(false);
+    expect(rasterise(lit).planeWave).toMatchObject({ side: 'left', fHz: 1e9 });
+    const tilted = { ...lit, planeWave: { ...lit.planeWave, angleDeg: 120 } };
+    expect(rasterise(tilted).planeWave!.angleDeg).toBe(85);
+    const grounded = { ...addShape(lit, { kind: 'rect', x: 0, y: 0, w: 3, h: 0.5 }, dielectric(4)).scene };
+    expect(messages(grounded)).toContainEqual(expect.stringMatching(/warning: .*starts in empty space only/));
+    const buried = addShape(lit, { kind: 'rect', x: 0, y: 0, w: 0.5, h: 2 }, dielectric(4)).scene;
+    expect(messages(buried)).toContainEqual(expect.stringMatching(/error: The plane wave has no empty space/));
+  });
+
+  it('warns when a material is coarse inside even though the air is fine', () => {
+    const ground = (cells: number) => ({
+      ...addShape({ ...emptyScene(), fMHz: 7.1, widthM: 300, heightM: 150, cellsPerWavelength: cells }, { kind: 'rect', x: 0, y: 0, w: 300, h: 30 }, dielectric(13, 0.005)).scene,
+    });
+    expect(shortening({ epsr: 13, sigma: 0.005 }, 7.1e6)).toBeCloseTo(3.95, 2);
+    expect(shortening({ epsr: 4, sigma: 0 }, 1e9)).toBe(2);
+    expect(limits(ground(20)).notes.map((n) => n.message)).toContainEqual(expect.stringMatching(/3\.9 times shorter - only 5\.1 cells.*About 40 cells/));
+    expect(limits(ground(40)).notes.some((n) => /times shorter/.test(n.message))).toBe(false);
   });
 });
 

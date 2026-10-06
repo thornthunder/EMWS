@@ -75,6 +75,20 @@ export interface RadiationPattern {
 
 export type Environment = 'free-space' | 'perfect-ground' | 'finite-ground';
 
+/** One component of a near field: a PEAK phasor, as nec2c prints it. */
+export interface FieldComponent {
+  magnitude: number;
+  phaseDeg: number;
+}
+
+/** A point of an NE (V/m) or NH (A/m) table: where, and the three Cartesian components. */
+export interface NearFieldPoint {
+  x: number;
+  y: number;
+  z: number;
+  components: [FieldComponent, FieldComponent, FieldComponent];
+}
+
 export interface FrequencyResult {
   frequencyMHz: number;
   wavelengthM: number;
@@ -83,6 +97,10 @@ export interface FrequencyResult {
   currents: SegmentCurrent[];
   power?: PowerBudget;
   patterns: RadiationPattern[];
+  /** From NE cards: the electric field at points around the antenna, V/m peak. */
+  nearElectric?: NearFieldPoint[];
+  /** From NH cards: the magnetic field, A/m peak. */
+  nearMagnetic?: NearFieldPoint[];
 }
 
 export interface Nec2Report {

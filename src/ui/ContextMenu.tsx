@@ -1,3 +1,9 @@
+// The suite's one context menu: right-click (or a chip's ⋯ button) opens it; Escape, a
+// press anywhere else, or scrolling closes it. Grew up in the Antenna Modeler's editor and
+// moved here when the balun tool's core chips needed the same.
+//
+// Public domain (The Unlicense). By ZR1JT.
+
 import { type KeyboardEvent as ReactKeyboardEvent, useEffect, useLayoutEffect, useRef, useState } from 'react';
 
 export interface MenuItem {
@@ -7,6 +13,8 @@ export interface MenuItem {
   danger?: boolean;
   /** Keyboard shortcut or extra detail, shown right-aligned. */
   hint?: string;
+  /** Leaves the menu open: for an item that swaps the entries, such as a confirmation. */
+  keepOpen?: boolean;
 }
 
 export type MenuEntry = MenuItem | 'separator';
@@ -95,7 +103,7 @@ export function ContextMenu({ menu, onClose }: { menu: MenuState; onClose: () =>
             className={entry.danger ? 'danger' : undefined}
             disabled={entry.disabled}
             onClick={() => {
-              onClose();
+              if (!entry.keepOpen) onClose();
               entry.onSelect();
             }}
           >

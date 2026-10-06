@@ -84,7 +84,14 @@ PASS
 
 - Serves `.wasm` as `application/wasm` (older IIS has no mapping, and would answer 404).
 - Caches `assets/*` for a year. Vite puts a content hash in those file names, so a new
-  build gets new URLs; everything else, `index.html` included, is always revalidated.
+  build gets new URLs; everything else, `index.html` and `sw.js` included, is always
+  revalidated.
+- On an **https** site the build's `sw.js` (written by `scripts/build-sw.mjs`) makes EMWS
+  installable and usable offline: it precaches the app and the one engine the visitor's
+  browser runs. Nothing to configure - `sw.js` and `manifest.webmanifest` are ordinary
+  files, the existing `worker-src 'self'` covers the worker, and `.webmanifest` already has
+  its MIME mapping above. On plain http browsers refuse service workers, and the site
+  simply behaves as it did before.
 - Sends `Content-Security-Policy` (same-origin only, plus permission to compile
   WebAssembly), `X-Content-Type-Options` and `Referrer-Policy`.
 - Turns on static compression.
@@ -106,7 +113,7 @@ not on it, so the 259 KB engine goes out uncompressed. Adding it cuts that to ab
 | **HTTP 500.19** on every request | A section of `web.config` is locked at server level. The error page names the line. The usual suspects are `<httpProtocol>` or `<staticContent>` locked by an administrator; unlock the section in IIS Manager → Configuration Editor, or remove that block. |
 | Page loads, simulation fails, **404 for `.wasm`** | `web.config` was not copied, so there is no MIME mapping. |
 | Console: *"violates the following Content Security Policy directive"* | You added something the policy does not allow (an external font, script or API). Adjust the `Content-Security-Policy` value in `public/web.config`. |
-| Old version still showing | `index.html` is never cached by EMWS's own rules, so look at a proxy or CDN in front of IIS. |
+| Old version still showing | Online, the offline worker always asks the server for `index.html` first, so one reload shows a new deploy (the worker then refreshes its cache in the background). Offline, the last cached version is what there is. If it persists online, look at a proxy or CDN in front of IIS. |
 
 ## Later: multi-threaded solving
 

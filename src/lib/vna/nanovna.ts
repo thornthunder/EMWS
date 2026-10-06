@@ -10,8 +10,11 @@
 //     frequencies                 the sweep's frequencies, one per line, Hz
 //     data 0                      S11 at each of them, "re im" per line - CALIBRATED,
 //                                 with whatever calibration the instrument has applied
-//     scan <start> <stop> <pts> 3 newer firmware only: sweep and return "freq re im"
-//                                 lines in one go, with nothing to wait for
+//     data 1                      S21 the same way: what arrived at port 2
+//     scan <start> <stop> <pts> m newer firmware only: sweep and print one line per point
+//                                 in one go. m is a mask of what to print: 1 the
+//                                 frequency, 2 S11, 4 S21 - so 3 is "freq re im" of S11
+//                                 and 5 is "freq re im" of S21
 //
 // PROVENANCE. This is written from the protocol - the commands and what they print -
 // which is an interface, not a work. The NanoVNA firmware and the usual desktop client
@@ -24,6 +27,7 @@ import type { MeasuredPoint } from '../touchstone';
 import { impedanceFromGamma } from '../touchstone';
 import { type Link, VnaError, decoder, readUntil, text } from './link';
 import type { Instrument, SweepRequest } from './instrument';
+import type { TransmissionPoint } from './transmission';
 
 const PROMPT = 'ch> ';
 
@@ -68,6 +72,16 @@ export class NanoVna implements Instrument {
   }
 
   async sweep(request: SweepRequest): Promise<MeasuredPoint[]> {
+    return (await this.read(request, 'S11')).map(toPoint);
+  }
+
+  /** Port 2: S21, carrying the instrument's own (thru) calibration. */
+  async sweepTransmission(request: SweepRequest): Promise<TransmissionPoint[]> {
+    return (await this.read(request, 'S21')).map(({ hz, re, im }) => ({ fMHz: hz / 1e6, s21: { re, im } }));
+  }
+
+  /** One sweep of one channel: S11 (channel 0) or S21 (channel 1). */
+  private async read(request: SweepRequest, channel: 'S11' | 'S21'): Promise<ScanLine[]> {
     const startHz = Math.round(request.startMHz * 1e6);
     const stopHz = Math.round(request.stopMHz * 1e6);
     const points = Math.max(2, Math.min(request.points, 1001));
@@ -76,12 +90,13 @@ export class NanoVna implements Instrument {
     // Newer firmware answers a whole sweep to one command. Try it once; if it prints
     // nothing usable, this is older firmware and the long way round is used from then on.
     if (this.scanSupported !== false) {
-      const reply = await this.command(`scan ${startHz} ${stopHz} ${points} 3`, 3000 + points * MS_PER_POINT * 2);
+      const mask = channel === 'S11' ? 3 : 5;
+      const reply = await this.command(`scan ${startHz} ${stopHz} ${points} ${mask}`, 3000 + points * MS_PER_POINT * 2);
       const parsed = parseScan(reply);
       if (parsed.length >= 2) {
         this.scanSupported = true;
         request.onProgress?.(parsed.length, parsed.length);
-        return parsed.map(toPoint);
+        return parsed;
       }
       this.scanSupported = false;
     }
@@ -92,15 +107,15 @@ export class NanoVna implements Instrument {
     await new Promise((r) => setTimeout(r, SETTLE_MS + points * MS_PER_POINT));
     const frequencies = parseNumbers(await this.command('frequencies', 5000));
     request.onProgress?.(frequencies.length, frequencies.length * 2);
-    const s11 = parsePairs(await this.command('data 0', 5000));
-    if (frequencies.length < 2 || s11.length !== frequencies.length) {
-      throw new VnaError(`The NanoVNA returned ${frequencies.length} frequencies but ${s11.length} readings.`);
+    const values = parsePairs(await this.command(channel === 'S11' ? 'data 0' : 'data 1', 5000));
+    if (frequencies.length < 2 || values.length !== frequencies.length) {
+      throw new VnaError(`The NanoVNA returned ${frequencies.length} frequencies but ${values.length} readings.`);
     }
     if (Math.abs(frequencies[0]! - startHz) > startHz * 0.01) {
       throw new VnaError('The NanoVNA has not taken the new sweep range. Try again.');
     }
     request.onProgress?.(frequencies.length * 2, frequencies.length * 2);
-    return frequencies.map((hz, i) => toPoint({ hz, re: s11[i]![0], im: s11[i]![1] }));
+    return frequencies.map((hz, i) => ({ hz, re: values[i]![0], im: values[i]![1] }));
   }
 
   async close(): Promise<void> {

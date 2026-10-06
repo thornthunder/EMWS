@@ -15,7 +15,7 @@
   },
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/clean-dist.mjs && tsc -b && vite build",
+    "build": "node scripts/clean-dist.mjs && tsc -b && vite build && node scripts/build-sw.mjs",
     "preview": "vite preview",
     "typecheck": "tsc -b",
     "test": "node scripts/test.mjs",

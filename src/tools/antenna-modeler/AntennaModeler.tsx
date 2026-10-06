@@ -17,9 +17,20 @@ import { saveImpedanceHandoff } from '../../lib/handoff';
 import type { Complex } from '../../lib/complex';
 import { DEFAULT_Z0, formatImpedance, returnLossDb, swr } from '../../lib/rf';
 import { Pattern3D } from './Pattern3D';
+import { checkConvergence } from './convergence';
+import { decodeMaa, encodeMaa, maaToModel, modelToMaa } from './maa';
+import { ExposurePanel } from './ExposurePanel';
+import type { OptimiseRequest } from './ModelPanel';
+import { applyAll, describeMeasured, optimise } from './optimise';
+import { SweepPanel } from './SweepPanel';
+import { CommunityPanel } from '../../ui/CommunityPanel';
+import { packModel, unpackModel } from './shared-model';
+import { type LineSide, throughLine, toolboxDatasheetCable } from './feedline';
+import { type Cable, cableById, catalogueGroups, runPowers } from '../toolbox/coax';
+import { LineChart } from '../../ui/LineChart';
 import { loadName, loadRatings } from './ratings';
 import { type RadioSide, type ThroughOption, balunStrain, radioSide, throughOptions } from './through';
-import { type TuneRequest, applyVariable, describeVariable, formatTunedValue, tune } from './tune';
+import { type TuneRequest, applyVariable, currentValue, describeVariable, formatTunedValue, tune } from './tune';
 import { PolarPlot } from '../../ui/PolarPlot';
 import { SweepChart } from '../../ui/SweepChart';
 import { deckToModel, modelToDeck, planRuns } from './deck';
@@ -208,8 +219,17 @@ export function AntennaModeler() {
   const [deckDraft, setDeckDraft] = useState<string | null>(null);
   const [solverChoice, setSolverChoice] = useState<SolverChoice>(loadSolverChoice);
   const [fallbackNote, setFallbackNote] = useState<string>();
-  /** Transmit power the load ratings are worked out for. */
+  /** Transmit power the load ratings and the feed-line budget are worked out for. */
   const [powerW, setPowerW] = useState(100);
+  /** The convergence check: busy while its two solves run, then a verdict in words. */
+  const [convergence, setConvergence] = useState<{ busy: boolean; note?: string }>({ busy: false });
+  const [optimising, setOptimising] = useState<{ busy: boolean; progress?: string; note?: string }>({ busy: false });
+  /** The run of coax between the radio and the feed (or the balun on it): '' = none. */
+  const [lineCableId, setLineCableId] = useState('');
+  const [lineLengthM, setLineLengthM] = useState(30);
+  // Read once, like the baluns: the RF toolbox is where the datasheet cable changes.
+  const [datasheetCable] = useState<Cable>(() => toolboxDatasheetCable());
+  const lineCable = lineCableId === '' ? undefined : lineCableId === 'datasheet' ? datasheetCable : cableById(lineCableId);
   const [tuning, setTuning] = useState<{ busy: boolean; progress?: string; note?: string }>({ busy: false });
 
   const client = useRef<Solver | undefined>(undefined);
@@ -444,6 +464,47 @@ export function AntennaModeler() {
     [model, withSolver, dispatch],
   );
 
+  /** Several things at once against a weighted goal; the result is one undo step. */
+  const optimiseModel = useCallback(
+    (request: OptimiseRequest) => {
+      const start = model;
+      const current = request.vars.map((v) => currentValue(start, v.variable) ?? v.range.min);
+      setOptimising({ busy: true, progress: 'starting…' });
+      setPending((p) => p + 1);
+      optimise(
+        start,
+        request.vars,
+        request.goal,
+        current,
+        (deck) => withSolver((solver) => solver.solve(deck)),
+        (count, best) => setOptimising({ busy: true, progress: `${count} trials · best so far ${best ? describeMeasured(best) : '…'}` }),
+        request.maxEvaluations,
+      )
+        .then((result) => {
+          const trials = ` (${result.evaluations} trials)`;
+          if (!result.improved) {
+            setOptimising({ busy: false, note: `Nothing in those ranges beat the model as it is - ${describeMeasured(result.before)} - so it is unchanged${trials}.` });
+            return;
+          }
+          // Applied to whatever the model is by now, not to a stale copy - as Tune does.
+          dispatch({ type: 'edit', recipe: (m) => (m === start ? result.model : applyAll(m, request.vars, result.values)) });
+          const changed = request.vars
+            .map((v, i) => `${describeVariable(start, v.variable)} ${formatTunedValue(v.variable, current[i]!)} → ${formatTunedValue(v.variable, result.values[i]!)}`)
+            .join('; ');
+          const edge = result.atEdge.length
+            ? ` ${result.atEdge.map((i) => describeVariable(start, request.vars[i]!.variable)).join(' and ')} ended at the edge of its range: the real best is probably beyond it.`
+            : '';
+          const cut = result.truncated ? ' Stopped at the trial limit before settling: run it again to carry on from here.' : '';
+          setOptimising({ busy: false, note: `Changed ${changed}. ${describeMeasured(result.before)} → ${describeMeasured(result.after)}${trials}.${edge}${cut}` });
+        })
+        .catch((e: unknown) => {
+          setOptimising({ busy: false, note: e instanceof SimulationCancelled ? 'Optimising stopped; nothing was changed.' : `Optimising failed: ${e instanceof Error ? e.message : String(e)}` });
+        })
+        .finally(() => setPending((p) => p - 1));
+    },
+    [model, withSolver, dispatch],
+  );
+
   // Re-solve shortly after every edit (not during a drag), while the model is sound.
   const firstRun = useRef(true);
   useEffect(() => {
@@ -475,6 +536,35 @@ export function AntennaModeler() {
   );
   const index = Math.min(selectedIndex, Math.max(0, frequencies.length - 1));
   const frequency: FrequencyResult | undefined = frequencies[index];
+
+  /** A one-off solve beside the main results (the exposure map): busy while it runs, cancellable. */
+  const solveSideJob = useCallback(
+    async (deck: string): Promise<Nec2Run> => {
+      setPending((p) => p + 1);
+      try {
+        return await withSolver((solver) => solver.solve(deck));
+      } finally {
+        setPending((p) => p - 1);
+      }
+    },
+    [withSolver],
+  );
+
+  /** The mesh-refinement check: two fresh solves at the frequency on screen, one verdict. */
+  const checkModel = useCallback(() => {
+    const fMHz = frequency?.frequencyMHz ?? model.frequency.startMHz;
+    setConvergence({ busy: true });
+    setPending((p) => p + 1);
+    checkConvergence(model, fMHz, (deck) => withSolver((solver) => solver.solve(deck)))
+      .then((report) => setConvergence({ busy: false, note: report.words }))
+      .catch((e: unknown) =>
+        setConvergence({
+          busy: false,
+          note: e instanceof SimulationCancelled ? 'Check stopped; nothing was changed.' : `Check failed: ${e instanceof Error ? e.message : String(e)}`,
+        }),
+      )
+      .finally(() => setPending((p) => p - 1));
+  }, [model, frequency, withSolver]);
 
   // A sweep with an automatic pattern solves the far field for the chosen frequency on its own.
   useEffect(() => {
@@ -532,7 +622,42 @@ export function AntennaModeler() {
   const openFile = async (e: ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     e.target.value = '';
-    if (file) loadDeck(await file.text());
+    if (!file) return;
+    if (/\.maa$/i.test(file.name)) {
+      const imported = maaToModel(decodeMaa(new Uint8Array(await file.arrayBuffer())));
+      if (!imported.ok) {
+        // Nothing to fall back on: a .maa is not a deck. Keep the model there was.
+        setNotes([`${file.name} could not be opened: ${imported.reason}`]);
+        return;
+      }
+      setSelection(null);
+      setDeckDraft(null);
+      setNotes(imported.notes);
+      setFitKey((k) => k + 1);
+      setZ0(imported.z0 ?? DEFAULT_Z0);
+      dispatch({ type: 'load', model: imported.model });
+      setSource({ kind: 'model' });
+      setTab('model');
+      if (!autoRun) solveModel(imported.model);
+      return;
+    }
+    loadDeck(await file.text());
+  };
+
+  /** The model as an MMANA-GAL file, in the single-byte code page MMANA reads on Windows. */
+  const saveMaa = () => {
+    const out = modelToMaa(model, z0);
+    if (!out.ok) {
+      setNotes([`Not saved as .maa: ${out.reason}`]);
+      return;
+    }
+    const url = URL.createObjectURL(new Blob([encodeMaa(out.text)], { type: 'text/plain' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = 'antenna.maa';
+    a.click();
+    URL.revokeObjectURL(url);
+    setNotes(['Saved for MMANA-GAL as antenna.maa.', ...out.notes]);
   };
 
   const newModel = () => {
@@ -580,21 +705,33 @@ export function AntennaModeler() {
     return report ? sceneFromReport(report, frequency) : EMPTY_SCENE;
   }, [isModel, model, solved, frequency, report]);
 
-  // The modelled impedance at every solved frequency, seen through the chosen balun.
+  // The modelled impedance at every solved frequency...
+  const antennaPoints = useMemo(() => frequencies.flatMap((f) => (f.feeds[0] ? [{ fMHz: f.frequencyMHz, z: f.feeds[0].impedance }] : [])), [frequencies]);
+  // ...seen through the chosen balun...
   const radio: RadioSide[] | undefined = useMemo(() => {
     if (!through?.material) return undefined;
-    const points = frequencies.flatMap((f) => (f.feeds[0] ? [{ fMHz: f.frequencyMHz, z: f.feeds[0].impedance }] : []));
-    return radioSide({ saved: through.saved, material: through.material }, points);
-  }, [through, frequencies]);
+    return radioSide({ saved: through.saved, material: through.material }, antennaPoints);
+  }, [through, antennaPoints]);
   const radioAt = frequency && radio?.find((r) => r.fMHz === frequency.frequencyMHz);
+  // ...and then down the feed line, which hangs between the radio and whatever the rest is.
+  const line: LineSide[] | undefined = useMemo(() => {
+    if (!lineCable || !(lineLengthM > 0)) return undefined;
+    const feedSide = radio ? radio.map((r) => ({ fMHz: r.fMHz, z: r.z })) : antennaPoints;
+    return feedSide.length > 0 ? throughLine(lineCable, lineLengthM, feedSide) : undefined;
+  }, [lineCable, lineLengthM, radio, antennaPoints]);
+  const lineAt = frequency && line?.find((l) => l.fMHz === frequency.frequencyMHz);
 
   const sweep = useMemo(
     () =>
       frequencies.map((f) => {
-        const z = radio ? radio.find((r) => r.fMHz === f.frequencyMHz)?.z : f.feeds[0]?.impedance;
+        const z = line
+          ? line.find((l) => l.fMHz === f.frequencyMHz)?.z
+          : radio
+            ? radio.find((r) => r.fMHz === f.frequencyMHz)?.z
+            : f.feeds[0]?.impedance;
         return { frequencyMHz: f.frequencyMHz, swr: z ? swr(z, z0) : Infinity };
       }),
-    [frequencies, radio, z0],
+    [frequencies, radio, line, z0],
   );
 
   const lastRadius = model.wires[model.wires.length - 1]?.radius ?? DEFAULT_RADIUS;
@@ -623,7 +760,12 @@ export function AntennaModeler() {
           <button type="button" onClick={() => download(deckText, 'antenna.nec')} title="Save as a NEC-2 card deck (.nec)">
             Save
           </button>
-          <input ref={fileInput} type="file" accept=".nec,.txt,text/plain" hidden onChange={openFile} />
+          {isModel && (
+            <button type="button" onClick={saveMaa} title="Save for MMANA-GAL (.maa)">
+              Save .maa
+            </button>
+          )}
+          <input ref={fileInput} type="file" accept=".nec,.maa,.txt,text/plain" hidden onChange={openFile} />
         </div>
 
         <div className="tabs" role="tablist">
@@ -660,6 +802,8 @@ export function AntennaModeler() {
                 onSelect={setSelection}
                 z0={z0}
                 tune={{ busy: tuning.busy, progress: tuning.progress, note: tuning.note, run: tuneModel, cancel: cancelSolvers }}
+                convergence={{ busy: convergence.busy, note: convergence.note, run: checkModel, cancel: cancelSolvers }}
+                optimiser={{ busy: optimising.busy, progress: optimising.progress, note: optimising.note, run: optimiseModel, cancel: cancelSolvers }}
               />
             ) : (
               <div className="note">
@@ -792,12 +936,53 @@ export function AntennaModeler() {
                 throughId={throughId}
                 onThrough={setThroughId}
                 through={through && radioAt ? { name: through.saved.name, powerW: through.saved.design.powerW, ...radioAt } : undefined}
+                line={lineCable && lineAt ? { name: lineCable.name, lengthM: lineLengthM, powerW, balunDb: radioAt?.lossDb, ...lineAt } : undefined}
               />
+              <p className="muted feedline-row">
+                Feed line{' '}
+                <select
+                  className="feedline-cable"
+                  value={lineCableId}
+                  onChange={(e) => setLineCableId(e.target.value)}
+                  aria-label="Feed line between the radio and the feed point"
+                >
+                  <option value="">none — the radio is at the feed point</option>
+                  {catalogueGroups().map((g) => (
+                    <optgroup key={g.group} label={g.group}>
+                      {g.cables.map((c) => (
+                        <option key={c.id} value={c.id}>
+                          {c.name}
+                        </option>
+                      ))}
+                    </optgroup>
+                  ))}
+                  <option value="datasheet">{datasheetCable.name} — your datasheet cable, from the RF toolbox</option>
+                </select>
+                {lineCable && (
+                  <>
+                    {' of '}
+                    <input
+                      className="z0 feedline-length"
+                      type="number"
+                      min={0.1}
+                      step={1}
+                      value={lineLengthM}
+                      onChange={(e) => setLineLengthM(Math.max(0.1, Number(e.target.value) || 0.1))}
+                      aria-label="Feed line length, metres"
+                    />{' '}
+                    m between the radio and the {through ? 'balun' : 'feed point'}.
+                    {lineCable.loss.kind === 'geometry'
+                      ? ' Its loss is calculated from the geometry - a floor; a real braided cable loses somewhat more.'
+                      : ' Its loss follows the two datasheet points, exactly.'}
+                  </>
+                )}
+              </p>
               {frequency.feeds.length > 1 && <FeedTable frequency={frequency} segments={report?.segments ?? []} z0={z0} />}
               {isModel && model.loads.length > 0 && <LoadRatingsCard model={model} frequency={frequency} powerW={powerW} onPower={setPowerW} />}
               {frequencies.length > 1 && (
                 <SweepChart points={sweep} selected={index} onSelect={setSelectedIndex} z0={z0} measured={measuredSwr} measuredLabel="measured" />
               )}
+              {frequencies.length > 1 && line && line.length > 1 && <PowerBudgetChart line={line} radio={radio} powerW={powerW} onPower={setPowerW} />}
               {cuts.length > 0 ? (
                 <div className="plots">
                   {cuts.map((cut, i) => (
@@ -808,6 +993,30 @@ export function AntennaModeler() {
               ) : (
                 plan.patternDeck &&
                 isModel && <p className="muted pattern-pending">Solving the radiation pattern at {frequency.frequencyMHz} MHz…</p>
+              )}
+              {isModel && model.wires.length > 0 && model.feeds.length > 0 && (
+                <SweepPanel
+                  key={`sweep-${fitKey}`}
+                  model={model}
+                  fMHz={frequency.frequencyMHz}
+                  z0={z0}
+                  solve={solveSideJob}
+                  onCancel={cancelSolvers}
+                  onApply={(variable, value) => dispatch({ type: 'edit', recipe: (m) => applyVariable(m, variable, value) })}
+                />
+              )}
+              {isModel && model.wires.length > 0 && model.feeds.length > 0 && (
+                <ExposurePanel
+                  key={fitKey}
+                  model={model}
+                  fMHz={frequency.frequencyMHz}
+                  powerW={powerW}
+                  onPower={setPowerW}
+                  deliveredShare={10 ** (-((lineAt?.lossDb ?? 0) + (radioAt?.lossDb ?? 0)) / 10)}
+                  through={[lineCable && lineAt ? `${lineLengthM} m of ${lineCable.name}` : undefined, through && radioAt ? through.saved.name : undefined].filter(Boolean).join(' and ') || undefined}
+                  solve={solveSideJob}
+                  onCancel={cancelSolvers}
+                />
               )}
             </>
           )}
@@ -821,6 +1030,37 @@ export function AntennaModeler() {
               sweep={compareSweep}
             />
           )}
+          <CommunityPanel
+            title="Club library"
+            shelves={[
+              {
+                kind: 'antenna-model',
+                title: 'Antenna models',
+                local:
+                  model.wires.length > 0 || source.kind === 'text'
+                    ? [
+                        {
+                          id: 'this-model',
+                          name: (isModel ? model.comments[0] : undefined)?.slice(0, 120) || 'Untitled antenna',
+                          summary: isModel
+                            ? `${model.wires.length} wire${model.wires.length === 1 ? '' : 's'}, ${model.frequency.startMHz} MHz, ${model.ground.kind === 'free-space' ? 'free space' : model.ground.kind === 'perfect' ? 'perfect ground' : 'real ground'}`
+                            : 'a NEC deck',
+                          payload: () => packModel(deckText, z0),
+                        },
+                      ]
+                    : [],
+                emptyLocal: 'Draw or open an antenna and it can be kept here, or shared. Its first line of notes is its name.',
+                takeLabel: 'Open it',
+                // A shared model is a NEC deck: opening it is exactly opening a .nec file.
+                onTake: (payload, item) => {
+                  const { deck, z0: reference } = unpackModel(payload);
+                  setZ0(reference ?? DEFAULT_Z0);
+                  loadDeck(deck);
+                  setNotes((n) => [`From the club library: ${item.name}, shared CC0 by ${item.callsign}.`, ...n]);
+                },
+              },
+            ]}
+          />
           {solved && solved.run.raw.output !== '' && <ReportDetails text={solved.run.raw.output} />}
         </section>
       </div>
@@ -932,6 +1172,8 @@ interface SummaryProps {
   onThrough: (id: string) => void;
   /** The radio side of the chosen balun at this frequency, when one is chosen and usable. */
   through?: RadioSide & { name: string; powerW: number };
+  /** The radio end of the feed line at this frequency, when a cable is chosen. */
+  line?: LineSide & { name: string; lengthM: number; powerW: number; balunDb: number | undefined };
 }
 
 const STRAIN_WORDS = {
@@ -958,13 +1200,54 @@ function BalunLossCard({ through }: { through: RadioSide & { name: string; power
   );
 }
 
-function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throughId, onThrough, through }: SummaryProps) {
+/** What the chosen run of coax costs: matched loss, what the mismatch adds, and the watts. */
+function FeedLineCard({ line }: { line: NonNullable<SummaryProps['line']> }) {
+  const { deliveredW, heatW } = runPowers(line.lossDb, line.powerW);
+  const antennaW = line.balunDb !== undefined ? deliveredW * 10 ** (-line.balunDb / 10) : deliveredW;
+  return (
+    <div className="feedline-card">
+      <dt>Feed line loss</dt>
+      <dd>{Number.isFinite(line.lossDb) ? `${line.lossDb.toFixed(2)} dB` : '∞'}</dd>
+      <small>
+        {line.lengthM} m of {line.name}: matched {line.matchedDb.toFixed(2)} dB, the mismatch adds{' '}
+        {Number.isFinite(line.lossDb) ? (line.lossDb - line.matchedDb).toFixed(2) : '∞'} dB. At {line.powerW} W:{' '}
+        {heatW.toFixed(1)} W warms the cable, {antennaW.toFixed(1)} W reaches the antenna
+        {line.balunDb !== undefined ? ', balun included' : ''}.
+      </small>
+    </div>
+  );
+}
+
+/** Watts out of the radio, frequency by frequency: what arrives and what heats what. */
+function PowerBudgetChart({ line, radio, powerW, onPower }: { line: LineSide[]; radio: RadioSide[] | undefined; powerW: number; onPower: (watts: number) => void }) {
+  const [hover, setHover] = useState<number | undefined>();
+  const balunDb = (fMHz: number) => radio?.find((r) => r.fMHz === fMHz)?.lossDb ?? 0;
+  const toFeedSide = line.map((l) => 10 ** (-l.lossDb / 10));
+  const series = [
+    { label: 'reaches the antenna', colour: 'var(--series-1)', values: line.map((l, i) => powerW * toFeedSide[i]! * 10 ** (-balunDb(l.fMHz) / 10)) },
+    { label: 'heats the cable', colour: 'var(--series-3)', values: line.map((_, i) => powerW * (1 - toFeedSide[i]!)) },
+    ...(radio ? [{ label: 'heats the balun', colour: 'var(--series-2)', values: line.map((l, i) => powerW * toFeedSide[i]! * (1 - 10 ** (-balunDb(l.fMHz) / 10))) }] : []),
+  ];
+  return (
+    <div className="power-budget">
+      <LineChart title={`Where ${powerW} W from the radio goes`} unit="W" fMHz={line.map((l) => l.fMHz)} series={series} hover={hover} onHover={setHover} />
+      <p className="muted">
+        With{' '}
+        <input className="z0" type="number" min={0} step={10} value={powerW} onChange={(e) => onPower(Math.max(0, Number(e.target.value) || 0))} aria-label="Power out of the radio, watts" />{' '}
+        W out of the radio, for a steady carrier.
+      </p>
+    </div>
+  );
+}
+
+function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throughId, onThrough, through, line }: SummaryProps) {
   const feed = frequency.feeds[0];
   const peak = mainLobe(patterns.flatMap((p) => p.points));
   const frontToBack = cuts.map(frontToBackDb).find((v) => v !== undefined);
-  // The SWR the radio sees: at the feed point, or at its own connector through the balun.
-  const seen: Complex | undefined = through ? through.z : feed?.impedance;
+  // The SWR the radio sees: at the feed point, through the balun, or at the far end of the line.
+  const seen: Complex | undefined = line ? line.z : through ? through.z : feed?.impedance;
   const ratio = seen ? swr(seen, z0) : undefined;
+  const path = line ? `${line.lengthM} m of ${line.name}${through ? ` and ${through.name}` : ''}` : through ? through.name : undefined;
 
   return (
     <dl className="summary">
@@ -1014,13 +1297,14 @@ function Summary({ frequency, segments, patterns, cuts, z0, onZ0, baluns, throug
           </dt>
           <dd>{Number.isFinite(ratio) ? `${ratio.toFixed(2)} : 1` : '∞'}</dd>
           <small>
-            {through
-              ? `${formatImpedance(through.z)} Ω at the radio through ${through.name}`
+            {seen && path
+              ? `${formatImpedance(seen)} Ω at the radio through ${path}`
               : `return loss ${returnLossDb(feed.impedance, z0).toFixed(1)} dB`}
           </small>
         </div>
       )}
       {through && <BalunLossCard through={through} />}
+      {line && <FeedLineCard line={line} />}
       {peak && (
         <div>
           <dt>Peak gain</dt>

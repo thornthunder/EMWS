@@ -6,10 +6,31 @@
 import { bandPairs, bandsUpTo } from '../../lib/bands';
 import { INSULATION, awgMm } from '../balun/catalog';
 import type { CoilSpec } from './coil';
-import type { FilterSpec } from './filter';
+import type { FilterFamily, FilterSpec } from './filter';
+import type { StubKind } from './stub';
 import { capacitorFor } from './trap';
 
-export type LcTab = 'coil' | 'trap' | 'filter';
+export type LcTab = 'coil' | 'trap' | 'filter' | 'stub';
+
+/** The coax-stub notch and the quarter-wave-resonator band-pass. */
+export interface StubDesign {
+  mode: 'notch' | 'bandpass';
+  /** Notch: which stub, the frequency it is cut for, and the line it is cut from. */
+  kind: StubKind;
+  fMHz: number;
+  /** A catalogue cable id, or 'datasheet' for the RF toolbox's datasheet cable. */
+  cableId: string;
+  /** Band-pass. */
+  centreMHz: number;
+  bandwidthMHz: number;
+  order: number;
+  family: FilterFamily;
+  rippleDb: number;
+  /** Resonators cut from the cable above, or a cavity / trough line of its own impedance and Q. */
+  resonator: 'cable' | 'cavity';
+  cavityZ0: number;
+  cavityQ: number;
+}
 
 export interface CoilDesign extends CoilSpec {
   /** The frequency the coil is for, MHz. */
@@ -40,6 +61,7 @@ export interface LcState {
   coil: CoilDesign;
   trap: TrapDesign;
   filter: FilterDesign;
+  stub: StubDesign;
 }
 
 export interface WireChoice {
@@ -76,6 +98,21 @@ export function defaultState(): LcState {
     coil: { turns: 12, formerMm: 25, wireMm: 1.0, wallMm: 0, spacing: 1, atMHz: 7.1 },
     trap: { fMHz: 7.1, given: 'coil', henries, farads: capacitorFor(7.1, henries), q: 200 },
     filter: { kind: 'lowpass', family: 'butterworth', order: 5, cutoffMHz: 32, z0: 50, rippleDb: 0.1, first: 'shunt', qInductor: 100, qCapacitor: 1000, standardCapacitors: false },
+    // The second-harmonic trap for 2 m: passes 145 MHz, notches 290.
+    stub: {
+      mode: 'notch',
+      kind: 'shorted-quarter',
+      fMHz: 145,
+      cableId: 'rg213',
+      centreMHz: 145,
+      bandwidthMHz: 2,
+      order: 3,
+      family: 'butterworth',
+      rippleDb: 0.1,
+      resonator: 'cavity',
+      cavityZ0: 70,
+      cavityQ: 1500,
+    },
   };
 }
 
@@ -99,9 +136,10 @@ export function loadState(): LcState {
     const coil = { ...fallback.coil, ...(stored.coil ?? {}) };
     const trap = { ...fallback.trap, ...(stored.trap ?? {}) };
     const filter = { ...fallback.filter, ...(stored.filter ?? {}) };
-    if (![coil.turns, coil.formerMm, coil.wireMm, coil.atMHz, trap.fMHz, trap.henries, trap.farads, filter.cutoffMHz, filter.order].every(finite)) return fallback;
-    const tab: LcTab = stored.tab === 'trap' || stored.tab === 'filter' ? stored.tab : 'coil';
-    return { tab, coil, trap, filter };
+    const stub = { ...fallback.stub, ...(stored.stub ?? {}) };
+    if (![coil.turns, coil.formerMm, coil.wireMm, coil.atMHz, trap.fMHz, trap.henries, trap.farads, filter.cutoffMHz, filter.order, stub.fMHz, stub.centreMHz, stub.bandwidthMHz, stub.cavityQ].every(finite)) return fallback;
+    const tab: LcTab = stored.tab === 'trap' || stored.tab === 'filter' || stored.tab === 'stub' ? stored.tab : 'coil';
+    return { tab, coil, trap, filter, stub };
   } catch {
     return fallback;
   }

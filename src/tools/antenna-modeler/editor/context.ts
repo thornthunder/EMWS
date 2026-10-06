@@ -4,7 +4,7 @@ import { createContext, useContext } from 'react';
 import type { Vec3 } from '../../../engine/nec2/types';
 import type { HistoryAction } from '../history';
 import type { AntennaModel } from '../model';
-import type { MenuState } from './ContextMenu';
+import type { MenuState } from '../../../ui/ContextMenu';
 import type { Camera, Plane, Size } from './projection';
 import type { Scene } from './scene';
 

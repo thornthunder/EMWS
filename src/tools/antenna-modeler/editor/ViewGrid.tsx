@@ -4,7 +4,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { HistoryAction } from '../history';
 import { type AntennaModel, deleteWire, highestFrequencyMHz, wavelengthM } from '../model';
-import { ContextMenu, type MenuState } from './ContextMenu';
+import { ContextMenu, type MenuState } from '../../../ui/ContextMenu';
 import { type CursorReadout, EditorContext, type EditorApi, type Overlay, type Tool } from './context';
 import { OrthoView } from './OrthoView';
 import { type Camera, type Plane, PLANES, type Size, fitCamera, formatLength, gridStep } from './projection';

@@ -242,6 +242,10 @@ export function BalunTool() {
             onSaveDesign={saveDesign}
             onOpenSaved={openSaved}
             onDeleteSaved={deleteSaved}
+            onAddSaved={(entry, core) => {
+              if (core) setProfiles((list) => [...list, core]);
+              setSaved((list) => [...list, entry]);
+            }}
           />
         </aside>
 

@@ -153,6 +153,73 @@ export function CoilsGuide() {
         and a third of cutoff to see how much rejection the broadcast band gets.
       </p>
 
+      <h2>Measure the filter you built</h2>
+      <p>
+        Under the filter's charts, <em>Measure the filter you built</em> puts a NanoVNA's two ports to work: port 1 into the
+        filter, port 2 out of it. The measured response is drawn dashed over the design, so you see at once where your filter
+        and the drawing part company — usually above 30 MHz, where lead lengths and strays start to matter.
+      </p>
+      <ul>
+        <li>
+          A <strong>classic NanoVNA</strong> sends readings with its own calibration: calibrate it on the instrument, thru
+          included, at the ends of the two cables you will use.
+        </li>
+        <li>
+          A <strong>NanoVNA-V2</strong> sends raw readings, and EMWS will not show them until you calibrate here. Join the two
+          cables with a barrel connector and press <em>Thru</em>. For a deep notch also press <em>Isolation</em> with a 50 Ω
+          load on the end of each cable: it takes out the signal that leaks across inside the instrument, which otherwise
+          sets a floor under the notch you are trying to see.
+        </li>
+      </ul>
+      <p className="muted">
+        This is a response calibration: it takes out the cables and the instrument's tracking, not the small mismatch at each
+        port. For a filter's shape and a notch's depth that is a fraction of a dB.
+      </p>
+
+      <h2>Stubs and cavities, for 2 m and 70 cm</h2>
+      <p>
+        Above 30 MHz coils get small and fussy, and the station's filters are made from transmission line instead. The{' '}
+        <em>Stubs &amp; cavities</em> tab designs two of them.
+      </p>
+      <h3>A coax stub notch</h3>
+      <p>
+        A length of coax hung across the feed line at a T is a filter. Which kind depends on its far end:
+      </p>
+      <ul>
+        <li>
+          <strong>Shorted quarter wave:</strong> open circuit at its frequency, so it passes it, and a short at twice it. The
+          classic second-harmonic trap after a 2 m transmitter — and a DC path to ground for static.
+        </li>
+        <li>
+          <strong>Open quarter wave:</strong> a short at its frequency — a notch — and transparent at twice it.
+        </li>
+        <li>
+          <strong>Shorted half wave:</strong> notches its frequency and passes half of it.
+        </li>
+      </ul>
+      <p>
+        The tab gives the length to cut in the cable you choose (its velocity factor included), the depth of the notch the
+        cable's loss allows, and what it does to the frequency you want to keep. Cut it a few millimetres long and trim while
+        watching the notch on a NanoVNA: the T and its connector add length. Be clear about one thing the curve shows at once:
+        <strong> a plain stub's notch is broad.</strong> One percent away from it the stub still takes tens of dB, so it is for
+        harmonics and far-off signals, not for a repeater's 600 kHz split — that takes the high-Q cavities below.
+      </p>
+      <h3>A band-pass of quarter-wave resonators</h3>
+      <p>
+        The other design is a band-pass made of resonators — shorted lines a little under a quarter wave — joined by small
+        series capacitors, the way the microwave textbooks build them, from the same Butterworth and Chebyshev prototypes as the
+        filter tab. The tab lists each capacitor and each resonator's length, and draws the response of exactly those parts.
+      </p>
+      <p>
+        What sets the loss in the middle is the <strong>Q of the resonators</strong>, and the tab makes the point plainly:
+        choose RG-213 stubs for a 2 MHz-wide filter on 2 m and it loses more than 3 dB in the middle, because coax stubs are
+        not high-Q enough for a band that narrow. Choose <em>cavities or trough line</em> with an unloaded Q of 1500 — use
+        yours, measured or the maker's figure — and it drops below a dB. The capacitors for a narrow filter come out at a picofarad or less: those are made, not
+        bought — a short overlap of wire, or a small trimmer — and every resonator is tuned while measuring. The design
+        formulas are for narrow bands; above about 10 % the tab says so, and the curve, being the exact analysis, is what to
+        believe.
+      </p>
+
       <h2>Working with the other tools</h2>
       <ul>
         <li>
@@ -182,7 +249,12 @@ export function CoilsGuide() {
           the first. The Antenna Modeler does show what a trap or coil <em>costs</em>, as efficiency, once it is in a wire.
         </li>
         <li>
-          <strong>Not yet here:</strong> band-pass filters, traps made from coax, and multi-layer or toroidal air coils.
+          <strong>Interdigital and comb-line filters are not designed here.</strong> Their rods couple to each other, and
+          sizing that coupling needs charts this tool does not carry; the band-pass tab couples its resonators with capacitors
+          instead, which any resonator can use.
+        </li>
+        <li>
+          <strong>Not yet here:</strong> traps made from coax, and multi-layer or toroidal air coils.
         </li>
       </ul>
     </>

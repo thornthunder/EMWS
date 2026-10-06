@@ -26,6 +26,8 @@ import { type AntennaModel, type EndName, type EndRef, junctionOf, moveEnds, tra
 export type TuneVariable =
   /** The length of one wire, moved from one end or stretched about its middle. */
   | { kind: 'wire-length'; wireId: string; ends: EndName | 'both' }
+  /** Where one wire sits along a horizontal axis - a Yagi element's place on the boom. Joined ends come along. */
+  | { kind: 'wire-position'; wireId: string; axis: 'x' | 'y' }
   /** The height of the whole antenna: every wire shifted together. */
   | { kind: 'height' }
   /** One part of one load: the coil, the capacitor, the resistance. */
@@ -86,6 +88,10 @@ export function currentValue(model: AntennaModel, variable: TuneVariable): numbe
       const wire = wireById(model, variable.wireId);
       return wire ? wireLength(wire) : undefined;
     }
+    case 'wire-position': {
+      const wire = wireById(model, variable.wireId);
+      return wire ? (wire.a[variable.axis] + wire.b[variable.axis]) / 2 : undefined;
+    }
     case 'height':
       return model.wires.length > 0 ? Math.min(...model.wires.flatMap((w) => [w.a.z, w.b.z])) : undefined;
     case 'load': {
@@ -95,12 +101,54 @@ export function currentValue(model: AntennaModel, variable: TuneVariable): numbe
   }
 }
 
+export interface VariableChoice {
+  key: string;
+  label: string;
+  variable: TuneVariable;
+}
+
+const PART_NAMES = { henries: 'L', farads: 'C', ohms: 'R', reactance: 'X' } as const;
+
+/**
+ * Everything about a model that can be tuned, in the person's words: every wire's length,
+ * where each horizontal wire sits across its own direction (a Yagi element's place on the
+ * boom), the height of the lot, and each part of each load. Tune, the optimiser and the
+ * parameter sweep all offer this same list.
+ */
+export function variableChoices(model: AntennaModel): VariableChoice[] {
+  const choices: VariableChoice[] = [];
+  for (const w of model.wires) choices.push({ key: 'wire:' + w.id, label: 'Length of wire ' + w.tag, variable: { kind: 'wire-length', wireId: w.id, ends: 'both' } });
+  for (const w of model.wires) {
+    const d = vectorOf(w);
+    // A mostly vertical wire has no "along the boom"; its height is the antenna's height.
+    if (Math.abs(d.z) > Math.hypot(d.x, d.y)) continue;
+    const axis = Math.abs(d.x) <= Math.abs(d.y) ? 'x' : 'y';
+    choices.push({ key: 'pos:' + w.id + ':' + axis, label: `Position of wire ${w.tag} along ${axis.toUpperCase()}`, variable: { kind: 'wire-position', wireId: w.id, axis } });
+  }
+  if (model.wires.length > 0) choices.push({ key: 'height', label: 'Height of the antenna', variable: { kind: 'height' } });
+  for (const l of model.loads) {
+    const wire = model.wires.find((w) => w.id === l.wireId);
+    const name = l.label ? '"' + l.label + '"' : 'load on wire ' + (wire?.tag ?? '?');
+    const fields: ('henries' | 'farads' | 'ohms' | 'reactance')[] = l.kind === 'impedance' ? ['ohms', 'reactance'] : ['henries', 'farads', 'ohms'];
+    for (const field of fields) {
+      choices.push({ key: 'load:' + l.id + ':' + field, label: PART_NAMES[field] + ' of ' + name, variable: { kind: 'load', loadId: l.id, field } });
+    }
+  }
+  return choices;
+}
+
 /** A range worth searching: wide enough to hold the answer, narrow enough to find it. */
 export function suggestedRange(model: AntennaModel, variable: TuneVariable): TuneRange {
   const now = currentValue(model, variable) ?? 0;
   switch (variable.kind) {
     case 'wire-length':
       return { min: Math.max(0.01, now * 0.7), max: now * 1.3 || 1 };
+    case 'wire-position': {
+      // A quarter of the wire's own length either way, and never less than 10 cm.
+      const wire = wireById(model, variable.wireId);
+      const reach = Math.max(0.1, wire ? wireLength(wire) * 0.25 : 1);
+      return { min: now - reach, max: now + reach };
+    }
     case 'height':
       return { min: Math.max(0, now - 5), max: now + 10 };
     case 'load':
@@ -127,6 +175,14 @@ export function applyVariable(model: AntennaModel, variable: TuneVariable, value
       const wireNow = wireById(movedA, wire.id)!;
       return moveEnds(movedA, junctionOf(movedA, { wireId: wireNow.id, end: 'b' }), add(centre, half));
     }
+    case 'wire-position': {
+      const now = currentValue(model, variable);
+      if (now === undefined) return model;
+      // Both ends, and every end joined to either: the element moves as one, as a drag does.
+      const ends = [...junctionOf(model, { wireId: variable.wireId, end: 'a' }), ...junctionOf(model, { wireId: variable.wireId, end: 'b' })];
+      const delta = { x: 0, y: 0, z: 0, [variable.axis]: value - now };
+      return translateEnds(model, ends, delta);
+    }
     case 'height': {
       const now = currentValue(model, variable);
       if (now === undefined) return model;
@@ -149,6 +205,8 @@ export function describeVariable(model: AntennaModel, variable: TuneVariable): s
       const how = variable.ends === 'both' ? 'both ends' : `end ${variable.ends === 'a' ? 1 : 2}`;
       return `the length of wire ${wire?.tag ?? '?'} (${how})`;
     }
+    case 'wire-position':
+      return `the position of wire ${wireById(model, variable.wireId)?.tag ?? '?'} along ${variable.axis.toUpperCase()}`;
     case 'height':
       return 'the height of the antenna';
     case 'load': {
