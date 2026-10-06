@@ -1322,8 +1322,11 @@ async function runFdtdTest({ evaluate, send, log, screenshot }) {
 
   // Pause and draw a conductor with the mouse.
   check(await click('.run-buttons button', 'Pause'), 'Pause');
-  const box = JSON.parse(await evaluate(`JSON.stringify(document.querySelector('canvas.field-canvas').getBoundingClientRect())`));
+  // Typing into a field lower down the panel scrolls the page, so measure the canvas afresh
+  // for every gesture, with the page scrolled back to the top where the canvas is in view.
+  const canvasBox = async () => JSON.parse(await evaluate(`(window.scrollTo(0, 0), JSON.stringify(document.querySelector('canvas.field-canvas').getBoundingClientRect()))`));
   const drag = async (fx1, fy1, fx2, fy2) => {
+    const box = await canvasBox();
     const x1 = box.left + box.width * fx1;
     const y1 = box.top + box.height * fy1;
     const x2 = box.left + box.width * fx2;
@@ -1354,6 +1357,34 @@ async function runFdtdTest({ evaluate, send, log, screenshot }) {
   now = await state();
   check(!now.issues.some((t) => t.includes('inside a conductor')), 'and deleting it clears the warning');
 
+  // Several sources, each with its own phase, listed by number.
+  const sourceRows = () => evaluate(`JSON.stringify([...document.querySelectorAll('.source-list li .item-text')].map((e) => e.textContent.trim()))`).then(JSON.parse);
+  check((await sourceRows()).length === 1, 'the scene lists its one source');
+  await drag(0.5 / 3, 0.6, 0.5 / 3, 0.6);
+  check(await typeNumber('Phase', '90'), 'Phase: 90° for the new one');
+  const rows = await sourceRows();
+  check(rows.length === 2 && /∠ 0°/.test(rows[0]) && /∠ 90°/.test(rows[1]), `two sources, 0° and 90°: ${rows.join(' | ')}`);
+  check(await click('.source-list .item-pick'), 'click source 1 in the list');
+  check((await fieldValue('Phase')) === '0', 'and its own phase comes up to edit');
+  check(await click('.source-list .item-remove'), 'remove source 1');
+  check((await sourceRows()).length === 1, 'one source left');
+
+  // Several probes: each numbered, on one chart.
+  check(await click('.tool-buttons button', 'Probe'), 'Probe tool');
+  const probeRows = () => evaluate(`JSON.stringify([...document.querySelectorAll('.probe-list li .item-text')].map((e) => e.textContent.trim()))`).then(JSON.parse);
+  await drag(0.8, 0.3, 0.8, 0.3);
+  await drag(0.8, 0.6, 0.8, 0.6);
+  const probeList = await probeRows();
+  check(probeList.length === 2, `two probes listed: ${JSON.stringify(probeList)}`);
+  check(await click('.run-buttons button', 'Play'), 'Play');
+  check(await until(`document.querySelectorAll('.probe-charts .xy-chart').length === 2 && document.querySelectorAll('.probe-charts .xy-chart')[0].querySelectorAll('.chart-key').length === 2`, 30_000), 'both probes trace on the one time chart, with a legend');
+  check(await click('.run-buttons button', 'Pause'), 'Pause');
+  await drag(0.8, 0.3, 0.8, 0.3);
+  check((await evaluate(`document.querySelectorAll('.probe-list li').length`)) === 1, 'clicking a probe takes it away');
+  check(await click('.probe-head button', 'Remove all'), 'Remove all');
+  check(!(await evaluate(`document.querySelector('.probe-charts') !== null`)), 'and the charts go with them');
+  check(await click('.tool-buttons button', 'Conductor'), 'Conductor tool again');
+
   // Another scene plays at once.
   check(await choose('Start from', 'Corner reflector'), 'Start from: Corner reflector');
   check(await until(`JSON.parse(localStorage.getItem('emws.fdtd.v1')).shapes.length === 2`), 'two sheets in the scene');
@@ -1376,20 +1407,25 @@ async function runFdtdTest({ evaluate, send, log, screenshot }) {
   check(await click('.tool-buttons button', 'Probe'), 'Probe tool');
   await drag(0.75, 0.3, 0.75, 0.3);
   check(await until(`document.querySelectorAll('.probe-charts .xy-chart').length === 2`, 30_000), 'the probe shows its trace and its spectrum');
-  const strongest = await evaluate(`parseFloat((document.querySelector('.probe-head p')?.textContent ?? '').split('strongest at')[1] ?? 'NaN')`);
+  const strongest = await evaluate(`parseFloat((document.querySelector('.probe-list .item-text')?.textContent ?? '').split('strongest at')[1] ?? 'NaN')`);
   check(Math.abs(strongest - 1000) < 30, `the spectrum peaks at the scene's 1000 MHz (${strongest} MHz)`);
   const clockBefore = await evaluate(statusOf('Time'));
-  await drag(0.6, 0.35, 0.6, 0.35);
+  await drag(0.75, 0.3, 0.6, 0.35);
   await sleep(300);
-  check((await evaluate(statusOf('Time'))) >= clockBefore, 'moving the probe does not restart the clock');
+  check((await evaluate(statusOf('Time'))) >= clockBefore, 'dragging the probe does not restart the clock');
+  check((await evaluate(`document.querySelectorAll('.probe-list li').length`)) === 1, 'and it is still the one probe, moved');
 
   // The same scene in Ez: horizontal polarisation reflects, so a standing wave forms over the ground.
   check(await choose('Polarisation', 'Ez'), 'Polarisation: Ez');
   check(await until(`${statusOf('Peak |Ez|')} > 1.3`, 30_000), `horizontal polarisation stands over the ground (${(await state()).status['Peak |Ez|']})`);
-  check(await until(`(document.querySelector('.probe-head p')?.textContent ?? '').includes('strongest at')`, 20_000), 'the probe records again from the new start');
+  check(await until(`(document.querySelector('.probe-list .item-text')?.textContent ?? '').includes('strongest at')`, 20_000), 'the probe records again from the new start');
+  // A second probe at the ground: the two traces share the chart and the spectra share a reference.
+  await drag(0.6, 0.68, 0.6, 0.68);
+  check(await until(`document.querySelectorAll('.probe-list li').length === 2 && document.querySelectorAll('.probe-charts .xy-chart')[1]?.querySelectorAll('.chart-key').length === 2`, 20_000), 'a second probe joins both charts');
+  check((await evaluate(`document.querySelectorAll('.probe-charts .chart-title')[1]?.textContent ?? ''`)).includes('strongest of any probe'), 'the spectra are against the strongest of any probe');
   await shoot('brewster-ez');
-  check(await click('.probe-head button', 'Remove the probe'), 'Remove the probe');
-  check(!(await evaluate(`document.querySelector('.probe-charts') !== null`)), 'and its charts go with it');
+  check(await click('.probe-head button', 'Remove all'), 'Remove all');
+  check(!(await evaluate(`document.querySelector('.probe-charts') !== null`)), 'and the charts go with them');
 
   // Average ground on 40 m: a 7.1 MHz world in metres, with the envelope showing the lobes.
   check(await choose('Start from', 'Average ground on 40 m'), 'Start from: Average ground on 40 m');

@@ -9,15 +9,16 @@
 import { type PointerEvent as ReactPointerEvent, useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { guideForTool } from '../../guides/registry';
 import { type GenericHistory, type GenericHistoryAction, historyReducer, initialHistory } from '../../lib/history';
-import { NumberField } from '../../ui/NumberField';
+import { NumberField, formatValue } from '../../ui/NumberField';
 import { XYChart } from '../../ui/XYChart';
 import { type PaintMode, type Rgb, paintField, parseCssColour } from './colour';
 import { PRESETS, presetById } from './presets';
-import { type ProbeRecord, type ProbeView, newProbeRecord, probeView, recordProbe } from './probe';
+import { type ProbeRecord, type ProbeView, levelsAgainstStrongest, newProbeRecord, probeView, recordProbe } from './probe';
 import {
   CONDUCTOR,
   COURANT,
   type Geometry,
+  type Grid,
   MAX_PLANE_WAVE_ANGLE,
   type Scene,
   type ScenePlaneWave,
@@ -43,8 +44,12 @@ type Tool = 'conductor' | 'dielectric' | 'source' | 'probe' | 'select';
 const TOOLS: { id: Tool; label: string; hint: string }[] = [
   { id: 'conductor', label: 'Conductor', hint: 'Drag to draw a conducting sheet, seen edge-on.' },
   { id: 'dielectric', label: 'Dielectric', hint: 'Drag a rectangle of insulating material.' },
-  { id: 'source', label: 'Source', hint: 'Click where a wave should start.' },
-  { id: 'probe', label: 'Probe', hint: 'Click a point to watch the field there against time, with its spectrum. Moving it does not restart the clock.' },
+  { id: 'source', label: 'Source', hint: 'Click where a wave should start. Click again for another: each source has its own amplitude and phase.' },
+  {
+    id: 'probe',
+    label: 'Probe',
+    hint: 'Click a point to watch the field there against time, with its spectrum - up to six probes, numbered. Drag one to move it, click it to take it away. Probes do not restart the clock.',
+  },
   { id: 'select', label: 'Select', hint: 'Click an object to move, edit or delete it.' },
 ];
 
@@ -72,6 +77,8 @@ const HINTS = {
   scaleWithFrequency:
     'When you change the frequency, grow or shrink the world and everything drawn in it with the wavelength, so the picture keeps its size in wavelengths and its detail. Conductivities in S/m do not scale, so a lossy ground means something different at each frequency. Untick to keep the metres instead.',
   tools: 'Choose what a click or a drag on the picture does.',
+  sourceList: 'Every source in the scene, numbered as on the picture, with its position, amplitude and phase. Click one to edit it.',
+  probeList: 'Every probe, numbered and coloured as on the picture and on the charts, with where it is and where its spectrum peaks.',
   epsr: 'Relative permittivity of the next dielectric drawn. Air 1, PTFE about 2.1, FR-4 about 4.4, fresh water about 80. Waves inside travel slower and are shorter by its square root.',
   sigma: 'Conductivity of the next dielectric drawn, in siemens per metre - 0 for a lossless one. Average ground is about 0.005, sea water about 5.',
   sourceKind: 'A continuous wave at the frequency above, or a single short pulse.',
@@ -122,6 +129,30 @@ function translate(geometry: Geometry, dx: number, dy: number): Geometry {
 
 const cssColour = (name: string, fallback: Rgb): Rgb => parseCssColour(getComputedStyle(document.documentElement).getPropertyValue(name)) ?? fallback;
 
+/** A probe is not part of the scene: it watches, it does not change the simulation. */
+interface Probe {
+  id: string;
+  x: number;
+  y: number;
+}
+
+/** As many probes as there are series colours to tell them apart by. */
+export const MAX_PROBES = 6;
+const SERIES_FALLBACK: Rgb[] = [
+  [10, 122, 82],
+  [11, 110, 168],
+  [193, 80, 10],
+  [74, 58, 167],
+  [232, 123, 164],
+  [237, 161, 0],
+];
+let probeCounter = 0;
+
+const cellIndex = (grid: Grid, x: number, y: number) => {
+  const cell = cellOf(grid, x, y);
+  return cell ? cell.i + cell.j * grid.nx : undefined;
+};
+
 export function FdtdTool() {
   const [history, dispatch] = useReducer(reduce, undefined, () => initialHistory(loadScene() ?? PRESETS[0]!.scene()));
   const scene = history.present;
@@ -137,8 +168,8 @@ export function FdtdTool() {
   const [mode, setMode] = useState<PaintMode>('field');
   const [contrast, setContrast] = useState(1);
   const [status, setStatus] = useState<Status>({ step: 0, timeS: 0, peak: 0, stepsPerSecond: 0 });
-  const [probe, setProbe] = useState<{ x: number; y: number } | undefined>();
-  const [probeData, setProbeData] = useState<ProbeView | undefined>();
+  const [probes, setProbes] = useState<Probe[]>([]);
+  const [probeData, setProbeData] = useState<Map<string, ProbeView>>(new Map());
   const [traceHover, setTraceHover] = useState<number | undefined>();
   const [spectrumHover, setSpectrumHover] = useState<number | undefined>();
 
@@ -146,13 +177,20 @@ export function FdtdTool() {
   const checks = useMemo(() => limits(scene, raster), [scene, raster]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const simRef = useRef<FieldEngine | null>(null);
-  const probeRef = useRef<ProbeRecord | null>(null);
+  /** One recording per probe, by id. */
+  const probeRecords = useRef<Map<string, ProbeRecord>>(new Map());
   const envelopeRef = useRef<Float32Array>(new Float32Array(0));
   const scaleRef = useRef(0);
-  const drag = useRef<{ kind: 'draw'; id?: string; x: number; y: number } | { kind: 'move'; id: string; x: number; y: number } | null>(null);
+  const drag = useRef<
+    | { kind: 'draw'; id?: string; x: number; y: number }
+    | { kind: 'move'; id: string; x: number; y: number }
+    | { kind: 'probe'; id: string; x: number; y: number; moved: boolean }
+    | null
+  >(null);
   const offscreen = useRef<HTMLCanvasElement | null>(null);
   const runningRef = useRef(running);
   runningRef.current = running;
+  /** The sample count the charts were last drawn from, so a frame with nothing new redraws nothing. */
   const probeCountRef = useRef(-1);
   const fHzRef = useRef(scene.fMHz * 1e6);
   fHzRef.current = scene.fMHz * 1e6;
@@ -174,13 +212,47 @@ export function FdtdTool() {
     setStatus({ step: 0, timeS: 0, peak: 0, stepsPerSecond: 0 });
   }, [raster]);
 
-  // The probe records from where the clock is now; a new engine or a moved probe starts afresh.
-  const probeCell = useMemo(() => (probe ? cellOf(raster.grid, probe.x, probe.y) : undefined), [probe, raster]);
+  // Each probe records from where the clock is now. A new engine starts every recording
+  // afresh; adding, moving or removing one probe touches only its own recording.
+  const probeCells = useMemo(() => probes.map((p) => ({ id: p.id, k: cellIndex(raster.grid, p.x, p.y) })), [probes, raster]);
+  const recordsFor = useRef<typeof raster | null>(null);
   useEffect(() => {
-    probeRef.current = probeCell ? newProbeRecord(probeCell.i + probeCell.j * raster.grid.nx, simRef.current?.step ?? 0) : null;
+    const records = probeRecords.current;
+    const fresh = recordsFor.current !== raster;
+    recordsFor.current = raster;
+    const step = simRef.current?.step ?? 0;
+    const keep = new Set<string>();
+    for (const { id, k } of probeCells) {
+      keep.add(id);
+      const have = records.get(id);
+      if (k === undefined) records.delete(id);
+      else if (fresh || !have || have.k !== k) records.set(id, newProbeRecord(k, step));
+    }
+    for (const id of [...records.keys()]) if (!keep.has(id)) records.delete(id);
     probeCountRef.current = -1;
-    setProbeData(undefined);
-  }, [probeCell, raster]);
+    setProbeData((old) => {
+      const next = new Map<string, ProbeView>();
+      for (const [id, view] of old) if (records.get(id)?.count) next.set(id, view);
+      return next;
+    });
+  }, [probeCells, raster]);
+
+  /** Every probe's charts from its recording; called whenever there is something new. */
+  const refreshProbes = useCallback((sim: FieldEngine) => {
+    const next = new Map<string, ProbeView>();
+    let total = 0;
+    // All over the same stretch: as far back as the newest recording goes.
+    let shortest = Infinity;
+    for (const record of probeRecords.current.values()) shortest = Math.min(shortest, record.count);
+    for (const [id, record] of probeRecords.current) {
+      total += record.count;
+      const view = probeView(record, sim.dt, fHzRef.current, undefined, undefined, shortest);
+      if (view) next.set(id, view);
+    }
+    if (total === probeCountRef.current) return;
+    probeCountRef.current = total;
+    setProbeData(next);
+  }, []);
 
   const paint = useCallback(() => {
     const canvas = canvasRef.current;
@@ -221,14 +293,28 @@ export function FdtdTool() {
     const py = (y: number) => height - y * sy;
     const accent = cssColour('--accent', [181, 97, 10]);
     ctx.lineWidth = 2 * dpr;
-    for (const source of scene.sources) {
+    ctx.font = `bold ${11 * dpr}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    /** A number beside a marker, in a colour, with a halo of the paper so it reads over the field. */
+    const label = (text: string, x: number, y: number, colour: Rgb) => {
+      ctx.textAlign = 'left';
+      ctx.lineJoin = 'round';
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeStyle = `rgb(${surface.join(',')})`;
+      ctx.strokeText(text, x, y);
+      ctx.fillStyle = `rgb(${colour.join(',')})`;
+      ctx.fillText(text, x, y);
+      ctx.lineWidth = 2 * dpr;
+    };
+    scene.sources.forEach((source, n) => {
       ctx.beginPath();
       ctx.arc(px(source.x), py(source.y), 5 * dpr, 0, 2 * Math.PI);
       ctx.fillStyle = `rgb(${ink.join(',')})`;
       ctx.fill();
       ctx.strokeStyle = `rgb(${surface.join(',')})`;
       ctx.stroke();
-    }
+      if (scene.sources.length > 1) label(String(n + 1), px(source.x) + 8 * dpr, py(source.y) - 8 * dpr, ink);
+    });
     // The plane wave: an arrow in from the middle of its side, along its direction.
     if (scene.planeWave) {
       const [ux, uy] = planeWaveDirection({ side: scene.planeWave.side, angleDeg: Math.max(-MAX_PLANE_WAVE_ANGLE, Math.min(MAX_PLANE_WAVE_ANGLE, scene.planeWave.angleDeg)) });
@@ -255,12 +341,14 @@ export function FdtdTool() {
       ctx.fill();
       ctx.lineWidth = 2 * dpr;
     }
-    // The probe: a ringed cross.
-    if (probe) {
+    // The probes: ringed crosses, each in its series colour with its number - the colour
+    // of its trace on the charts, and a number so colour is never the only cue.
+    probes.forEach((probe, n) => {
       const cx = px(probe.x);
       const cy = py(probe.y);
-      ctx.strokeStyle = `rgb(${accent.join(',')})`;
-      ctx.lineWidth = 2 * dpr;
+      const colour = cssColour(`--series-${n + 1}`, SERIES_FALLBACK[n] ?? accent);
+      ctx.strokeStyle = `rgb(${surface.join(',')})`;
+      ctx.lineWidth = 4 * dpr;
       ctx.beginPath();
       ctx.arc(cx, cy, 7 * dpr, 0, 2 * Math.PI);
       ctx.moveTo(cx - 11 * dpr, cy);
@@ -268,7 +356,11 @@ export function FdtdTool() {
       ctx.moveTo(cx, cy - 11 * dpr);
       ctx.lineTo(cx, cy + 11 * dpr);
       ctx.stroke();
-    }
+      ctx.strokeStyle = `rgb(${colour.join(',')})`;
+      ctx.lineWidth = 2 * dpr;
+      ctx.stroke();
+      label(String(n + 1), cx + 10 * dpr, cy - 10 * dpr, colour);
+    });
     const chosen = scene.shapes.find((s) => s.id === selected) ?? scene.sources.find((s) => s.id === selected);
     if (chosen) {
       ctx.strokeStyle = `rgb(${accent.join(',')})`;
@@ -285,7 +377,7 @@ export function FdtdTool() {
       ctx.stroke();
       ctx.setLineDash([]);
     }
-  }, [raster, scene, selected, mode, contrast, probe]);
+  }, [raster, scene, selected, mode, contrast, probes]);
 
   // The clock: a few steps a frame while running, and one paint per frame regardless.
   useEffect(() => {
@@ -298,7 +390,7 @@ export function FdtdTool() {
       if (sim && runningRef.current) {
         const env = envelopeRef.current;
         const field = sim.field;
-        const record = probeRef.current;
+        const records = probeRecords.current;
         for (let s = 0; s < speed; s++) {
           sim.advance();
           for (let k = 0; k < env.length; k++) {
@@ -306,7 +398,7 @@ export function FdtdTool() {
             const held = env[k]! * ENVELOPE_DECAY;
             env[k] = v > held ? v : held;
           }
-          if (record) recordProbe(record, field);
+          for (const record of records.values()) recordProbe(record, field);
         }
         stepsSince += speed;
       }
@@ -318,11 +410,7 @@ export function FdtdTool() {
         const stepsPerSecond = runningRef.current ? Math.round((stepsSince * 1000) / Math.max(1, now - lastReport)) : 0;
         const next = { step: sim.step, timeS: sim.time, peak: sim.peak(), stepsPerSecond };
         setStatus((s) => (s.step === next.step && s.stepsPerSecond === next.stepsPerSecond && s.peak === next.peak ? s : next));
-        const record = probeRef.current;
-        if (record && record.count !== probeCountRef.current) {
-          probeCountRef.current = record.count;
-          setProbeData(probeView(record, sim.dt, fHzRef.current));
-        }
+        refreshProbes(sim);
         lastReport = now;
         stepsSince = 0;
       }
@@ -330,7 +418,7 @@ export function FdtdTool() {
     };
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
-  }, [paint, speed]);
+  }, [paint, speed, refreshProbes]);
 
   // ---- editing ----
 
@@ -345,7 +433,14 @@ export function FdtdTool() {
     const { x, y } = toWorld(e);
     e.currentTarget.setPointerCapture(e.pointerId);
     if (tool === 'probe') {
-      if (x >= 0 && y >= 0 && x < scene.widthM && y < scene.heightM) setProbe({ x, y });
+      const near = probes.find((p) => Math.hypot(p.x - x, p.y - y) <= toleranceM * 2);
+      if (near) {
+        // On a probe: a drag moves it, a plain click (see onPointerUp) takes it away.
+        drag.current = { kind: 'probe', id: near.id, x, y, moved: false };
+      } else if (probes.length < MAX_PROBES && x >= 0 && y >= 0 && x < scene.widthM && y < scene.heightM) {
+        probeCounter += 1;
+        setProbes((ps) => [...ps, { id: `probe-${probeCounter}`, x, y }]);
+      }
       return;
     }
     if (tool === 'source') {
@@ -371,6 +466,14 @@ export function FdtdTool() {
     const d = drag.current;
     if (!d) return;
     const { x, y } = toWorld(e);
+    if (d.kind === 'probe') {
+      if (!d.moved && Math.hypot(x - d.x, y - d.y) < raster.grid.dx) return;
+      d.moved = true;
+      const nx = Math.max(0, Math.min(scene.widthM - raster.grid.dx / 2, x));
+      const ny = Math.max(0, Math.min(scene.heightM - raster.grid.dx / 2, y));
+      setProbes((ps) => ps.map((p) => (p.id === d.id ? { ...p, x: nx, y: ny } : p)));
+      return;
+    }
     if (d.kind === 'move') {
       const dx = x - d.x;
       const dy = y - d.y;
@@ -394,8 +497,13 @@ export function FdtdTool() {
   };
 
   const onPointerUp = () => {
-    if (!drag.current) return;
+    const d = drag.current;
+    if (!d) return;
     drag.current = null;
+    if (d.kind === 'probe') {
+      if (!d.moved) removeProbe(d.id);
+      return;
+    }
     dispatch({ type: 'gesture-end' });
   };
 
@@ -431,10 +539,10 @@ export function FdtdTool() {
 
   const setWorld = (patch: Partial<Scene>) => dispatch({ type: 'edit', recipe: (s) => ({ ...s, ...patch }) });
   const setFrequency = (fMHz: number) => {
-    // The probe is in metres but not in the scene: scale it too, so it stays where it is in the picture.
-    if (scene.scaleWithFrequency && probe && fMHz > 0 && scene.fMHz > 0) {
+    // Probes are in metres but not in the scene: scale them too, so they stay where they are in the picture.
+    if (scene.scaleWithFrequency && probes.length && fMHz > 0 && scene.fMHz > 0) {
       const ratio = scene.fMHz / fMHz;
-      setProbe({ x: probe.x * ratio, y: probe.y * ratio });
+      setProbes((ps) => ps.map((p) => ({ ...p, x: p.x * ratio, y: p.y * ratio })));
     }
     dispatch({ type: 'edit', recipe: (s) => withFrequency(s, fMHz) });
   };
@@ -443,28 +551,29 @@ export function FdtdTool() {
     if (!preset) return;
     dispatch({ type: 'load', model: preset.scene() });
     setSelected(undefined);
+    setProbes([]);
     setRunning(true);
   };
   const stepOnce = () => {
     const sim = simRef.current;
     if (!sim) return;
-    const record = probeRef.current;
     for (let s = 0; s < 10; s++) {
       sim.advance();
-      if (record) recordProbe(record, sim.field);
+      for (const record of probeRecords.current.values()) recordProbe(record, sim.field);
     }
     setStatus({ step: sim.step, timeS: sim.time, peak: sim.peak(), stepsPerSecond: 0 });
-    if (record) setProbeData(probeView(record, sim.dt, scene.fMHz * 1e6));
+    refreshProbes(sim);
   };
   const reset = () => {
     simRef.current?.reset();
     envelopeRef.current.fill(0);
     scaleRef.current = 0;
-    if (probeRef.current) probeRef.current = newProbeRecord(probeRef.current.k, 0);
+    for (const [id, record] of probeRecords.current) probeRecords.current.set(id, newProbeRecord(record.k, 0));
     probeCountRef.current = -1;
-    setProbeData(undefined);
+    setProbeData(new Map());
     setStatus({ step: 0, timeS: 0, peak: 0, stepsPerSecond: 0 });
   };
+  const removeProbe = (id: string) => setProbes((ps) => ps.filter((p) => p.id !== id));
   const setPlaneWave = (patch: Partial<ScenePlaneWave> | null) =>
     dispatch({
       type: 'edit',
@@ -482,6 +591,13 @@ export function FdtdTool() {
   const { grid } = raster;
   const name = fieldName(scene.polarisation);
   const pw = scene.planeWave;
+  // The probes' charts: every probe's trace on one time axis (the longest recording sets it),
+  // and every spectrum against the strongest point of any of them.
+  const probeViews = probes.map((p, n) => ({ probe: p, n, view: probeData.get(p.id) })).filter((v): v is { probe: Probe; n: number; view: ProbeView } => v.view !== undefined);
+  const traceAxis = probeViews.reduce<number[]>((best, v) => (v.view.timeNs.length > best.length ? v.view.timeNs : best), []);
+  const spectrumLevels = levelsAgainstStrongest(probeViews.map((v) => v.view));
+  const spectrumAxis = probeViews.find((v) => v.view.periods >= 2)?.view.fMHz ?? [];
+  const seriesColour = (n: number) => `var(--series-${n + 1})`;
 
   return (
     <div className="page sandbox">
@@ -544,6 +660,23 @@ export function FdtdTool() {
               ))}
             </div>
             <p className="muted">{TOOLS.find((t) => t.id === tool)?.hint}</p>
+            {scene.sources.length > 0 && (
+              <ul className="item-list source-list" aria-label="Sources" title={HINTS.sourceList}>
+                {scene.sources.map((s, n) => (
+                  <li key={s.id} className={s.id === selected ? 'is-selected' : undefined}>
+                    <button type="button" className="item-pick" onClick={() => setSelected(s.id)} title="Select this source to edit it; its number is drawn beside it on the picture.">
+                      <span className="item-number">{n + 1}</span>
+                      <span className="item-text">
+                        {s.x.toFixed(2)}, {s.y.toFixed(2)} m · {s.kind === 'pulse' ? 'one pulse' : `continuous, ${formatValue(s.amplitude)} ∠ ${formatValue(s.phaseDeg)}°`}
+                      </span>
+                    </button>
+                    <button type="button" className="item-remove" onClick={() => dispatch({ type: 'edit', recipe: (sc) => removeItem(sc, s.id) })} aria-label={`Remove source ${n + 1}`} title="Remove this source.">
+                      ×
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            )}
             {tool === 'dielectric' && !selectedShape && (
               <div className="field-row">
                 <NumberField label="εr" value={newDielectric.epsr} min={1} onCommit={(v) => setNewDielectric((d) => ({ ...d, epsr: v }))} hint={HINTS.epsr} />
@@ -722,45 +855,58 @@ export function FdtdTool() {
             </ul>
           )}
 
-          {probe && (
-            <section className="probe-charts" aria-label="The probe">
+          {probes.length > 0 && (
+            <section className="probe-charts" aria-label="The probes">
               <div className="probe-head">
-                <h2>At the probe</h2>
+                <h2>At the probes</h2>
                 <p className="muted">
-                  {probeData
-                    ? `${probeData.periods.toFixed(0)} periods recorded${probeData.peakMHz !== undefined ? ` · strongest at ${probeData.peakMHz.toPrecision(4)} MHz` : ' · silent so far'}`
-                    : probeCell
-                      ? running
-                        ? 'Recording…'
-                        : 'Press Play to record.'
-                      : 'The probe is outside the world.'}
+                  {probeViews.length === 0 ? (running ? 'Recording…' : 'Press Play to record.') : `${Math.max(...probeViews.map((v) => v.view.periods)).toFixed(0)} periods recorded`}
+                  {probes.length >= MAX_PROBES ? ` · ${MAX_PROBES} is the most` : ''}
                 </p>
-                <button type="button" className="small" onClick={() => setProbe(undefined)} title="Take the probe off the picture and close these charts. Clicking with the Probe tool puts it back.">
-                  Remove the probe
+                <button type="button" className="small" onClick={() => setProbes([])} title="Take every probe off the picture and close these charts.">
+                  Remove all
                 </button>
               </div>
-              {probeData && (
+              <ul className="item-list probe-list" aria-label="Probes" title={HINTS.probeList}>
+                {probes.map((p, n) => {
+                  const view = probeData.get(p.id);
+                  const inside = cellOf(raster.grid, p.x, p.y) !== undefined;
+                  return (
+                    <li key={p.id}>
+                      <span className="item-number" style={{ background: seriesColour(n) }}>{n + 1}</span>
+                      <span className="item-text">
+                        {p.x.toFixed(2)}, {p.y.toFixed(2)} m ·{' '}
+                        {!inside ? 'outside the world' : !view ? 'nothing yet' : view.peakMHz !== undefined ? `strongest at ${view.peakMHz.toPrecision(4)} MHz` : 'silent so far'}
+                      </span>
+                      <button type="button" className="item-remove" onClick={() => removeProbe(p.id)} aria-label={`Remove probe ${n + 1}`} title="Take this probe off the picture.">
+                        ×
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+              {probeViews.length > 0 && (
                 <>
                   <XYChart
                     title={`${name} against time`}
                     unit="relative"
                     xLabel="ns"
                     xTitle="Time, ns"
-                    x={probeData.timeNs}
-                    series={[{ label: name, colour: 'var(--series-2)', values: probeData.trace }]}
+                    x={traceAxis}
+                    series={probeViews.map(({ n, view }) => ({ label: `Probe ${n + 1}`, colour: seriesColour(n), values: view.trace, x: view.timeNs }))}
                     format={(v) => v.toFixed(3)}
                     xFormat={(v) => v.toFixed(2)}
                     hover={traceHover}
                     onHover={setTraceHover}
                   />
-                  {probeData.periods >= 2 ? (
+                  {spectrumAxis.length > 0 ? (
                     <XYChart
-                      title="Its spectrum"
-                      unit="dB below the strongest"
+                      title={probeViews.length > 1 ? 'Their spectra' : 'Its spectrum'}
+                      unit={probeViews.length > 1 ? 'dB below the strongest of any probe' : 'dB below the strongest'}
                       xLabel="MHz"
                       xTitle="Frequency, MHz"
-                      x={probeData.fMHz}
-                      series={[{ label: 'Level', colour: 'var(--series-1)', values: probeData.levelDb }]}
+                      x={spectrumAxis}
+                      series={probeViews.map(({ n }, i) => ({ label: `Probe ${n + 1}`, colour: seriesColour(n), values: spectrumLevels[i]! }))}
                       format={(v) => v.toFixed(1)}
                       xFormat={(v) => Number(v.toPrecision(4)).toString()}
                       floor={-60}

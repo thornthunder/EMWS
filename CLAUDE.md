@@ -456,6 +456,24 @@ delete them from a normal shell.
   scale-free, σ in S/m deliberately is not, and the hint says so. The probe is scaled in the
   tool. Off, `limits()` warns below `SMALL_WORLD_WAVELENGTHS` (2). The frequency field goes
   through `setFrequency`, never `setWorld({ fMHz })`.
+- **Many sources, up to six probes** (2026-10-06, ZR1JT asked for n of each). Sources always
+  were n (`scene.sources`, each with phase); what was missing was a LIST - `.source-list`,
+  numbered as on the canvas (numbers drawn once there are two), click to select, × to remove.
+  Probes: `probes: Probe[]` state + `probeRecords: Map<id, ProbeRecord>` reconciled by
+  `probeCells` (a new raster restarts every recording; adding/moving one probe touches only
+  its own). `MAX_PROBES = 6` = the series colours: `--series-4..6` were ADDED (light
+  #4a3aa7/#e87ba4/#eda100, dark #9085e9/#d55181/#c98500) and validated as a set of six with
+  the dataviz checker against both surfaces - 5 and 6 are under 3:1 on light, so a probe is
+  always numbered (canvas, list, legend), never colour alone. One time chart (every trace,
+  own `x`; the longest recording sets the axis), one spectrum chart against `levelsAgainstStrongest`.
+  **Earned, twice:** the DFT power is normalised by (Σ window)² (a shorter recording read
+  weaker: the test pins A²/4 for a sine at 3000 AND 1500 samples), AND several probes are
+  evaluated over the SAME stretch (`probeView(..., limit = shortest count)`) - a wave that
+  arrived partway through the older probe's recording averaged −8 dB against a probe added
+  after it, with the bigger trace on screen (SEEN in the smoke screenshot).
+  Probe tool: click adds, click ON a probe removes, drag moves (`drag.kind === 'probe'`).
+  `loadPreset` clears probes. Smoke lesson: typing into a panel field SCROLLS the page, so the
+  sandbox smoke re-measures the canvas (scrolled to top) before every mouse gesture.
 - **Every control has hover text**: `HINTS` in `FdtdTool.tsx` (one place), `NumberField`'s new
   `hint` prop -> `title` on its label, `title` on every `label.field`/`label.check`, button and
   status card. The `--fdtd` smoke fails on any sandbox label, button or status card without

@@ -39,8 +39,10 @@ export function FieldSandboxGuide() {
           part of the wave is reflected.
         </li>
         <li>
-          Choose <em>Probe</em> and click a point above the ground. Two charts appear under the picture: the field at that
-          point against time, and its spectrum. Moving the probe does not restart the clock.
+          Choose <em>Probe</em> and click a point above the ground, then another point just over it. Two charts appear
+          under the picture: the field at each probe against time, one trace per probe, and their spectra. The probes are
+          numbered on the picture, in the list and in the legend. Drag one to move it, click it to take it away; probes do
+          not restart the clock.
         </li>
       </ol>
 
@@ -114,15 +116,24 @@ export function FieldSandboxGuide() {
         </li>
         <li>
           <strong>Source</strong>: click. A continuous source at the world's frequency, or one pulse, with an amplitude and a
-          phase. Two continuous sources with a phase difference make a phased array; the envelope view shows its lobes.
+          phase. Click again for another: there can be as many as you like, and the panel lists them by number - the number
+          is drawn beside each on the picture once there are two - with its position, amplitude and phase. Click one in the
+          list to edit it. Continuous sources with phase differences make a phased array; the envelope view shows its lobes,
+          and a probe at a few points shows the phases adding and cancelling.
         </li>
         <li>
-          <strong>Probe</strong>: click a point to watch it. The first chart is the field there over the last dozen periods;
-          the second is its spectrum, from DC to three times the world's frequency, in dB below its own strongest point (the
-          fields are relative, so the spectrum is too). The spectrum is taken over everything recorded, up to 4096 steps,
-          through a Hann window; it needs two periods before it is drawn, and it sharpens the longer it listens. A continuous
-          source shows one peak at its frequency; a pulse in a box shows the box's resonances. <em>Remove the probe</em> takes
-          the charts away.
+          <strong>Probe</strong>: click a point to watch it, up to six of them, each numbered and in its own colour on the
+          picture, in the list and on the charts. The first chart is the field at every probe over the last dozen periods,
+          one trace each, so you can see two points of a standing wave swing in step or in opposition; the second is their
+          spectra, from DC to three times the world's frequency. With one probe the spectrum is in dB below its own
+          strongest point; with several, below the strongest point of any of them, so a probe in a null reads so many dB
+          under a probe in a lobe (the fields are relative, so the spectra are too). A lone probe's spectrum is taken over
+          everything it has recorded, up to 4096 steps; several probes' spectra are taken over the stretch they have all
+          recorded - as far back as the newest one goes - because a wave that arrived partway through a longer recording
+          would average weaker than the same wave filling a shorter one. Through a Hann window; it needs two periods
+          before it is drawn and sharpens the longer it listens. A continuous source shows one peak at its frequency; a pulse in a box shows the
+          box's resonances. Drag a probe to move it, click it to take it away, or use the × in the list; <em>Remove all</em>
+          clears them.
         </li>
         <li>
           <strong>Select</strong>: click to pick an object, drag to move it, <em>Delete</em> to remove it; the panel shows its
@@ -209,7 +220,8 @@ export function FieldSandboxGuide() {
         vertical polarisation must reflect less than 0.04 of the field and horizontal within 0.03 of Fresnel's 0.60; over
         average ground at 7.1 MHz, at the 40 m scene's own grid, both polarisations within 0.05 of Fresnel, square on and 13°
         above the horizon. The probe's spectrum is checked to find a sine at its own frequency and a pulse at its centre
-        frequency. Those are the physics it is held to; anything subtler, take as a picture.
+        frequency, and two probes recording a full and a half-amplitude sine for different lengths of time must read 6.02 dB
+        apart. Those are the physics it is held to; anything subtler, take as a picture.
       </p>
     </>
   );

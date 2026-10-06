@@ -34,6 +34,12 @@
   --series-1: #0a7a52;
   --series-2: #0b6ea8;
   --series-3: #c1500a;
+  /* 4-6 added 2026-10-06 for the sandbox's probes, validated as a set of six against both
+     surfaces (adjacent pairs); 5 and 6 are under 3:1 on light, so anything using them must
+     carry a visible label as well. */
+  --series-4: #4a3aa7;
+  --series-5: #e87ba4;
+  --series-6: #eda100;
   --series-more: #5d6973;
 
   --mono: ui-monospace, 'Cascadia Mono', 'SF Mono', Consolas, 'Liberation Mono', monospace;
@@ -72,6 +78,9 @@
     --series-1: #34a878;
     --series-2: #4a94e0;
     --series-3: #d9661f;
+    --series-4: #9085e9;
+    --series-5: #d55181;
+    --series-6: #c98500;
     --series-more: #94a1ab;
   }
 }
@@ -2053,6 +2062,73 @@ button.danger {
 }
 .probe-charts {
   margin: 12px 0;
+}
+/* Numbered lists of sources and probes: the number matches the marker on the picture. */
+.item-list {
+  list-style: none;
+  margin: 6px 0 8px;
+  padding: 0;
+}
+.item-list li {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  border-radius: var(--radius);
+  font-size: 13px;
+}
+.item-list li.is-selected {
+  background: var(--bg);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+.item-pick {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.item-number {
+  flex: 0 0 auto;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  border-radius: 10px;
+  background: var(--text);
+  color: var(--surface);
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 20px;
+  text-align: center;
+}
+.item-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  color: var(--muted);
+}
+.item-remove {
+  flex: 0 0 auto;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--muted);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.item-remove:hover {
+  color: var(--text);
+  border-color: var(--text);
 }
 .probe-head {
   display: flex;

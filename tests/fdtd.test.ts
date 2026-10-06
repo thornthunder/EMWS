@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { historyReducer, initialHistory } from '../src/lib/history';
 import { PRESETS, presetById } from '../src/tools/fdtd/presets';
-import { PROBE_SAMPLES, newProbeRecord, probeView, recordProbe, spectrum } from '../src/tools/fdtd/probe';
+import { PROBE_SAMPLES, levelsAgainstStrongest, newProbeRecord, probeView, recordProbe, spectrum } from '../src/tools/fdtd/probe';
 import { CONDUCTOR, addShape, addSource, cellOf, dielectric, emptyScene, gridFor, hitTest, limits, rasterise, removeItem, shortening, withFrequency } from '../src/tools/fdtd/scene';
 import { C0, EPS0, type PlaneWaveSpec, type Polarisation, Simulation, makeEngine, ricker } from '../src/tools/fdtd/simulation';
 
@@ -302,6 +302,43 @@ describe('the probe', () => {
     expect(view.trace.at(-1)!).toBeCloseTo(field[5]!, 6);
     expect(view.peakMHz! / 1000).toBeCloseTo(1, 1);
     expect(probeView(newProbeRecord(0, 0), dt, F)).toBeUndefined();
+  });
+
+  it('puts several probes against one reference, so a weaker one reads so many dB down whenever it started', () => {
+    const at = (amplitude: number, samples: number) => {
+      const record = newProbeRecord(0, 0);
+      const field = new Float32Array(1);
+      for (let m = 0; m < samples; m++) {
+        field[0] = amplitude * Math.sin(2 * Math.PI * F * (m + 1) * dt);
+        recordProbe(record, field);
+      }
+      return probeView(record, dt, F)!;
+    };
+    const loud = at(1, 3000);
+    // Half the amplitude, and a recording half as long - as a probe added later has.
+    const quiet = at(0.5, 1500);
+    // A sine of amplitude A has power (A / 2)² however long it was recorded for.
+    expect(loud.peakPower).toBeCloseTo(0.25, 2);
+    expect(quiet.peakPower).toBeCloseTo(0.0625, 3);
+    // On its own each peaks at 0 dB; together the half-amplitude one peaks 6.02 dB down.
+    expect(Math.max(...loud.levelDb)).toBe(0);
+    expect(Math.max(...quiet.levelDb)).toBe(0);
+    const [loudDb, quietDb] = levelsAgainstStrongest([loud, quiet]);
+    expect(Math.max(...loudDb!)).toBe(0);
+    expect(Math.max(...quietDb!)).toBeCloseTo(-6.02, 1);
+    expect(Math.min(...quietDb!)).toBeGreaterThanOrEqual(-60);
+    expect(levelsAgainstStrongest([])).toEqual([]);
+    // A wave that arrived partway: over its whole recording it averages weaker than over the
+    // stretch a later probe has, so the tool compares every probe over the shortest recording.
+    const late = newProbeRecord(0, 0);
+    const field = new Float32Array(1);
+    for (let m = 0; m < 3000; m++) {
+      field[0] = m < 1500 ? 0 : Math.sin(2 * Math.PI * F * (m + 1) * dt);
+      recordProbe(late, field);
+    }
+    expect(probeView(late, dt, F)!.peakPower).toBeLessThan(0.25 * 0.5);
+    expect(probeView(late, dt, F, undefined, undefined, 1500)!.peakPower).toBeCloseTo(0.25, 2);
+    expect(probeView(late, dt, F, undefined, undefined, 1500)!.periods).toBeCloseTo(1500 * dt * F, 6);
   });
 
   it('records in the engine without disturbing it', () => {
