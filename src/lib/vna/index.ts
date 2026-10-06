@@ -14,6 +14,7 @@ import { NanoVnaV2 } from './nanovna-v2';
 
 export type { Instrument, SweepRequest } from './instrument';
 export { VnaError } from './link';
+export { type BridgeInfo, type BridgeInstrumentInfo, BridgeInstrument, DEFAULT_BRIDGE_URL, bridgeUrl, probeBridge, setBridgeUrl } from './bridge';
 
 /** Why a VNA cannot be used here, in words for the person, or undefined if it can. */
 export function serialUnavailableReason(): string | undefined {

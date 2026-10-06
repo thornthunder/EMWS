@@ -239,7 +239,8 @@ export function BalunGuide() {
           Either sweep it with the NanoVNA on its own, save the <code>.s1p</code>, and open that — or, with the
           NanoVNA plugged in by USB, press <em>Connect a NanoVNA…</em> and then <em>Measure this core</em>, and
           skip the file altogether. The live route needs a secure page (https:// or localhost) and a desktop
-          Chromium browser; the Smith chart guide has the details, including what a NanoVNA-V2 needs first.
+          Chromium browser; the Smith chart guide has the details, including what a NanoVNA-V2 needs first, and how a
+          bench or handheld VNA on the network (a FieldFox) comes in the same way through the EMWS VNA bridge.
         </li>
       </ol>
       <p>

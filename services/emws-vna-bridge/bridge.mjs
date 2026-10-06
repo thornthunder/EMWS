@@ -1,0 +1,431 @@
+#!/usr/bin/env node
+// EMWS VNA bridge: a bench or handheld VNA on the LAN, offered to the EMWS page.
+//
+// A web page cannot open a TCP socket, and a Keysight FieldFox speaks SCPI over one
+// (port 5025). This program sits between them on the same machine as the browser: it
+// talks SCPI to the instrument and answers plain HTTP on 127.0.0.1, in the shape the
+// page's NanoVNA drivers already produce, so every "Measure it" button in EMWS can offer
+// the FieldFox beside a NanoVNA. Like the solver service, it is optional by construction:
+// without it, EMWS is exactly what it was.
+//
+//   node bridge.mjs --fieldfox 192.168.0.50            one FieldFox, SCPI port 5025
+//   node bridge.mjs --fieldfox lab-ff:5025 --port 8075  (the HTTP port defaults to 8075)
+//   node bridge.mjs --simulate                          a simulated FieldFox, to try the page
+//
+//   GET  /health -> { service, version, kinds: ['vna'], instruments: [...] }
+//   POST /sweep  { instrument, parameter: 'S11' | 'S21', startHz, stopHz, points, ifbwHz? }
+//             -> { instrument, parameter, frequenciesHz, real, imag, corrected, method }
+//
+// The commands are the ones in Keysight's FieldFox programming guide (NA mode): INST "NA"
+// with *OPC? because a mode switch is overlapped; CALC:PAR1:DEF / :SEL; SENS:FREQ:STAR /
+// STOP, SENS:SWE:POIN, SENS:BWID; FORM ASC,0; INIT:CONT 0 then INIT:IMM;*OPC? ("always
+// single-sweep when programming", the guide says); SENS:FREQ:DATA? for the x axis and
+// CALC:DATA:SDATA? for the trace as real,imag pairs, corrected when correction is on.
+// Nothing here has met a real FieldFox yet; it has met the scripted one in
+// fake-fieldfox.mjs, which answers the way the guide says the instrument does.
+//
+// Listens on 127.0.0.1 only. No dependencies. Public domain (The Unlicense). By ZR1JT.
+
+import { createServer } from 'node:http';
+import { connect as netConnect } from 'node:net';
+import { fileURLToPath } from 'node:url';
+
+export const VERSION = '1.0.0';
+export const DEFAULT_HTTP_PORT = 8075;
+export const SCPI_PORT = 5025;
+/** The most points a FieldFox will take; the instrument is the final judge. */
+export const MAX_POINTS = 10001;
+
+// ---- SCPI over a socket ----
+
+/** One instrument's socket: commands out, lines back, one exchange at a time. */
+export class ScpiSocket {
+  /** @param {string} host @param {number} port */
+  constructor(host, port) {
+    this.host = host;
+    this.port = port;
+    /** @type {import('node:net').Socket | undefined} */
+    this.socket = undefined;
+    this.buffer = '';
+    /** @type {{ resolve: (line: string) => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | undefined} */
+    this.pending = undefined;
+  }
+
+  /** @param {number} timeoutMs */
+  open(timeoutMs = 3000) {
+    return new Promise((resolve, reject) => {
+      const socket = netConnect({ host: this.host, port: this.port });
+      const timer = setTimeout(() => {
+        socket.destroy();
+        reject(new Error(`No answer from ${this.host}:${this.port} within ${timeoutMs} ms.`));
+      }, timeoutMs);
+      socket.once('connect', () => {
+        clearTimeout(timer);
+        socket.setNoDelay(true);
+        this.socket = socket;
+        resolve(undefined);
+      });
+      socket.once('error', (e) => {
+        clearTimeout(timer);
+        reject(new Error(`Could not connect to ${this.host}:${this.port}: ${e.message}`));
+      });
+      socket.on('data', (chunk) => {
+        this.buffer += chunk.toString('latin1');
+        this.deliver();
+      });
+      socket.on('close', () => {
+        this.socket = undefined;
+        this.pending?.reject(new Error(`${this.host}:${this.port} closed the connection.`));
+        this.pending = undefined;
+      });
+    });
+  }
+
+  deliver() {
+    const at = this.buffer.indexOf('\n');
+    if (at < 0 || !this.pending) return;
+    const line = this.buffer.slice(0, at).replace(/\r$/, '');
+    this.buffer = this.buffer.slice(at + 1);
+    const p = this.pending;
+    this.pending = undefined;
+    clearTimeout(p.timer);
+    p.resolve(line);
+  }
+
+  /** A command that answers nothing. @param {string} command */
+  write(command) {
+    if (!this.socket) throw new Error('Not connected.');
+    this.socket.write(`${command}\n`);
+  }
+
+  /** A query: the command, then one line back. @param {string} command @param {number} timeoutMs */
+  query(command, timeoutMs = 5000) {
+    if (!this.socket) return Promise.reject(new Error('Not connected.'));
+    if (this.pending) return Promise.reject(new Error('A query is already waiting.'));
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => {
+        this.pending = undefined;
+        reject(new Error(`No reply to ${command} within ${timeoutMs} ms.`));
+      }, timeoutMs);
+      this.pending = { resolve, reject, timer };
+      this.socket?.write(`${command}\n`);
+      this.deliver();
+    });
+  }
+
+  close() {
+    this.socket?.destroy();
+    this.socket = undefined;
+  }
+}
+
+// ---- The FieldFox ----
+
+/** Keysight's reply to SYST:ERR? when all is well starts with 0 (or +0). */
+const noError = (reply) => /^\+?0\b/.test(reply.trim());
+
+/** Strips the quotes SCPI puts round strings. @param {string} s */
+const unquote = (s) => s.trim().replace(/^"(.*)"$/, '$1');
+
+/**
+ * One FieldFox on the network. Every method opens its own connection and closes it after,
+ * so a bridge left running does not hold the instrument's socket, and a FieldFox that was
+ * switched off and on again is simply found again next time.
+ */
+export class FieldFox {
+  /** @param {{ id: string; name: string; host: string; port?: number }} spec */
+  constructor(spec) {
+    this.id = spec.id;
+    this.name = spec.name;
+    this.host = spec.host;
+    this.port = spec.port ?? SCPI_PORT;
+    /** Sweeps queue up behind one another: an instrument sweeps one thing at a time. */
+    this.queue = Promise.resolve();
+  }
+
+  get address() {
+    return `${this.host}:${this.port}`;
+  }
+
+  /** Runs a task with the socket open, after whatever is already running. @template T @param {(s: ScpiSocket) => Promise<T>} task */
+  withSocket(task, connectTimeoutMs = 3000) {
+    const run = async () => {
+      const socket = new ScpiSocket(this.host, this.port);
+      await socket.open(connectTimeoutMs);
+      try {
+        return await task(socket);
+      } finally {
+        socket.close();
+      }
+    };
+    const result = this.queue.then(run, run);
+    this.queue = result.catch(() => {});
+    return result;
+  }
+
+  /** Who it is: identification, options and the modes it has. */
+  describe() {
+    return this.withSocket(async (s) => {
+      const idn = (await s.query('*IDN?')).trim();
+      const options = unquote(await s.query('*OPT?'));
+      // INST:CAT? answers "CAT","NA","SA": each name in its own quotes.
+      const modes = (await s.query('INST:CAT?')).split(',').map(unquote).filter(Boolean);
+      return { idn, options, modes };
+    });
+  }
+
+  /**
+   * One sweep in network-analyser mode.
+   * @param {{ parameter: 'S11' | 'S21'; startHz: number; stopHz: number; points: number; ifbwHz?: number }} request
+   */
+  sweep(request) {
+    return this.withSocket(async (s) => {
+      const err = async (what) => {
+        const reply = await s.query('SYST:ERR?');
+        if (!noError(reply)) throw new InstrumentError(`${what}: the FieldFox says ${reply.trim()}`);
+      };
+      s.write('*CLS');
+      // A mode switch is overlapped; *OPC? makes the next command wait for it. Only switch
+      // when needed - switching resets the mode's settings, calibration included.
+      const mode = unquote(await s.query('INST?'));
+      if (mode !== 'NA') {
+        const modes = unquote(await s.query('INST:CAT?'));
+        if (!/\bNA\b/.test(modes)) {
+          throw new InstrumentError(`This FieldFox has no network-analyser mode (it has ${modes || 'none it will name'}); EMWS needs S-parameters, which NA mode gives.`);
+        }
+        await s.query('INST "NA";*OPC?', 15000);
+      }
+      s.write(`CALC:PAR1:DEF ${request.parameter}`);
+      s.write('CALC:PAR1:SEL');
+      await err(`Defining ${request.parameter}`);
+      s.write(`SENS:FREQ:STAR ${request.startHz}`);
+      s.write(`SENS:FREQ:STOP ${request.stopHz}`);
+      s.write(`SENS:SWE:POIN ${request.points}`);
+      if (request.ifbwHz) s.write(`SENS:BWID ${request.ifbwHz}`);
+      s.write('FORM ASC,0');
+      await err('Setting the sweep up');
+      const wasContinuous = (await s.query('INIT:CONT?')).trim() !== '0';
+      s.write('INIT:CONT 0');
+      try {
+        // A long sweep at a narrow IF bandwidth can take a while: give it two minutes.
+        await s.query('INIT:IMM;*OPC?', 120000);
+        const frequenciesHz = parseNumbers(await s.query('SENS:FREQ:DATA?', 20000));
+        const pairs = parseNumbers(await s.query('CALC:DATA:SDATA?', 20000));
+        if (pairs.length !== frequenciesHz.length * 2) {
+          throw new InstrumentError(`The FieldFox returned ${pairs.length} values for ${frequenciesHz.length} frequencies; expected real and imaginary pairs.`);
+        }
+        const real = [];
+        const imag = [];
+        for (let i = 0; i < pairs.length; i += 2) {
+          real.push(pairs[i]);
+          imag.push(pairs[i + 1]);
+        }
+        const corrected = (await s.query('SENS:CORR:USER?')).trim() !== '0';
+        const method = corrected ? unquote(await s.query('SENS:CORR:COLL:METH:TYPE?')) : '';
+        await err('Reading the sweep');
+        return { frequenciesHz, real, imag, corrected, method };
+      } finally {
+        // Leave the instrument sweeping as it was found.
+        if (wasContinuous) s.write('INIT:CONT 1');
+      }
+    });
+  }
+}
+
+export class InstrumentError extends Error {}
+
+/** A comma-separated SCPI list, as numbers. @param {string} reply */
+export function parseNumbers(reply) {
+  const trimmed = reply.trim();
+  if (trimmed === '') return [];
+  return trimmed.split(',').map((t) => {
+    const v = Number(t);
+    if (!Number.isFinite(v)) throw new InstrumentError(`Not a number in the instrument's reply: "${t.slice(0, 20)}"`);
+    return v;
+  });
+}
+
+// ---- HTTP for the page ----
+
+/**
+ * Starts the bridge.
+ * @param {{ instruments: FieldFox[]; port?: number; host?: string; log?: (line: string) => void }} options
+ * @returns {Promise<{ url: string; close: () => Promise<void> }>}
+ */
+export function createBridge(options) {
+  const { instruments, log = () => {} } = options;
+  const byId = new Map(instruments.map((i) => [i.id, i]));
+  /** What each instrument said about itself, remembered for a little while. */
+  const descriptions = new Map();
+
+  const describeAll = async () => {
+    return Promise.all(
+      instruments.map(async (i) => {
+        const cached = descriptions.get(i.id);
+        if (cached && Date.now() - cached.at < 10000) return cached.info;
+        let info;
+        try {
+          const d = await i.describe();
+          info = { id: i.id, name: i.name, address: i.address, status: 'ok', ...d };
+        } catch (e) {
+          info = { id: i.id, name: i.name, address: i.address, status: 'unreachable', error: e instanceof Error ? e.message : String(e) };
+        }
+        descriptions.set(i.id, { at: Date.now(), info });
+        return info;
+      }),
+    );
+  };
+
+  const cors = (res) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    // Chromium asks a loopback service for leave before a page from the internet may call it.
+    res.setHeader('Access-Control-Allow-Private-Network', 'true');
+    res.setHeader('Cache-Control', 'no-store');
+  };
+  const json = (res, status, body) => {
+    cors(res);
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(body));
+  };
+
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url ?? '/', 'http://127.0.0.1');
+    try {
+      if (req.method === 'OPTIONS') {
+        cors(res);
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+      if (req.method === 'GET' && url.pathname === '/health') {
+        json(res, 200, { service: 'emws-vna-bridge', version: VERSION, kinds: ['vna'], instruments: await describeAll() });
+        return;
+      }
+      if (req.method === 'POST' && url.pathname === '/sweep') {
+        const body = await readJson(req);
+        const problem = validateSweep(body);
+        if (problem) {
+          json(res, 400, { error: problem });
+          return;
+        }
+        const instrument = byId.get(body.instrument);
+        if (!instrument) {
+          json(res, 404, { error: `No instrument called "${body.instrument}" here.` });
+          return;
+        }
+        log(`sweep ${body.parameter} ${body.startHz}-${body.stopHz} Hz, ${body.points} points on ${instrument.name}`);
+        const result = await instrument.sweep({ parameter: body.parameter, startHz: body.startHz, stopHz: body.stopHz, points: body.points, ifbwHz: body.ifbwHz });
+        json(res, 200, { instrument: instrument.id, parameter: body.parameter, ...result });
+        return;
+      }
+      json(res, 404, { error: 'Not here. The bridge answers GET /health and POST /sweep.' });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      log(`error: ${message}`);
+      // Whatever went wrong went wrong on the instrument's side of the bridge.
+      json(res, 502, { error: message });
+    }
+  });
+
+  return new Promise((resolve, reject) => {
+    server.once('error', reject);
+    server.listen(options.port ?? DEFAULT_HTTP_PORT, options.host ?? '127.0.0.1', () => {
+      const address = server.address();
+      const port = typeof address === 'object' && address ? address.port : options.port;
+      resolve({
+        url: `http://127.0.0.1:${port}`,
+        close: () => new Promise((done) => server.close(() => done(undefined))),
+      });
+    });
+  });
+}
+
+/** @param {unknown} body */
+export function validateSweep(body) {
+  if (!body || typeof body !== 'object') return 'The request must be a JSON object.';
+  const b = /** @type {Record<string, unknown>} */ (body);
+  if (typeof b.instrument !== 'string') return 'Say which instrument: "instrument".';
+  if (b.parameter !== 'S11' && b.parameter !== 'S21') return 'parameter must be "S11" or "S21".';
+  for (const key of ['startHz', 'stopHz', 'points']) {
+    if (typeof b[key] !== 'number' || !Number.isFinite(b[key])) return `${key} must be a number.`;
+  }
+  if (b.startHz <= 0 || b.stopHz <= b.startHz) return 'startHz must be above zero and stopHz above startHz.';
+  if (!Number.isInteger(b.points) || b.points < 2 || b.points > MAX_POINTS) return `points must be a whole number from 2 to ${MAX_POINTS}.`;
+  if (b.ifbwHz !== undefined && (typeof b.ifbwHz !== 'number' || !(b.ifbwHz > 0))) return 'ifbwHz, if given, must be above zero.';
+  return undefined;
+}
+
+function readJson(req) {
+  return new Promise((resolve, reject) => {
+    let text = '';
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      text += chunk;
+      if (text.length > 64 * 1024) {
+        reject(new Error('Request too large.'));
+        req.destroy();
+      }
+    });
+    req.on('end', () => {
+      try {
+        resolve(text === '' ? {} : JSON.parse(text));
+      } catch {
+        reject(new Error('The request body is not JSON.'));
+      }
+    });
+    req.on('error', reject);
+  });
+}
+
+// ---- command line ----
+
+/** @param {string[]} argv */
+export function parseArgs(argv) {
+  const spec = { fieldfox: /** @type {string[]} */ ([]), port: DEFAULT_HTTP_PORT, simulate: false, help: false };
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--fieldfox') spec.fieldfox.push(argv[++i] ?? '');
+    else if (a === '--port') spec.port = Number(argv[++i]);
+    else if (a === '--simulate') spec.simulate = true;
+    else if (a === '--help' || a === '-h') spec.help = true;
+    else throw new Error(`Unknown argument: ${a}`);
+  }
+  return spec;
+}
+
+/** "host", "host:port" or "[v6]:port" -> { host, port }. @param {string} address */
+export function parseAddress(address) {
+  const m = /^(?:\[([^\]]+)\]|([^:]+))(?::(\d+))?$/.exec(address.trim());
+  if (!m) throw new Error(`Not an address: "${address}". Use host or host:port.`);
+  return { host: m[1] ?? m[2], port: m[3] ? Number(m[3]) : SCPI_PORT };
+}
+
+async function main() {
+  const spec = parseArgs(process.argv.slice(2));
+  if (spec.help || (spec.fieldfox.length === 0 && !spec.simulate)) {
+    console.log('EMWS VNA bridge\n\n  node bridge.mjs --fieldfox <host[:port]> [--fieldfox ...] [--port 8075]\n  node bridge.mjs --simulate\n\nThen open EMWS; its "Measure it" buttons offer the instrument.');
+    process.exit(spec.help ? 0 : 2);
+  }
+  const instruments = spec.fieldfox.map((address, n) => {
+    const { host, port } = parseAddress(address);
+    return new FieldFox({ id: `fieldfox-${n + 1}`, name: spec.fieldfox.length > 1 ? `FieldFox ${n + 1}` : 'FieldFox', host, port });
+  });
+  if (spec.simulate) {
+    const { startFakeFieldFox } = await import('./fake-fieldfox.mjs');
+    const fake = await startFakeFieldFox({ port: 0 });
+    instruments.push(new FieldFox({ id: 'simulated', name: 'Simulated FieldFox', host: '127.0.0.1', port: fake.port }));
+    console.log(`simulated FieldFox on 127.0.0.1:${fake.port} (75 ohm + 0.5 uH on port 1; a 145 MHz low-pass to port 2)`);
+  }
+  const bridge = await createBridge({ instruments, port: spec.port, log: (line) => console.log(line) });
+  console.log(`EMWS VNA bridge ${VERSION} at ${bridge.url} - ${instruments.map((i) => `${i.name} (${i.address})`).join(', ')}`);
+  console.log('Open EMWS; its "Measure it" buttons offer the instrument. Ctrl+C stops the bridge.');
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((e) => {
+    console.error(e instanceof Error ? e.message : String(e));
+    process.exit(1);
+  });
+}

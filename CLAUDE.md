@@ -24,10 +24,17 @@ worker, WASM loading, routing, asset URLs or `web.config`, also `npm run preview
 
 **The smoke test spawns a real browser.** On Windows the spawned process is only a
 launcher; the browser must be closed over DevTools (`shutDownBrowser` in the script) or it
-and its profile are leaked - this machine was once found with 488 orphaned Edge processes
-and 23 GB of `%TEMP%emws-smoke-*`. If the script warns it could not remove a profile, the
-sandbox this project is often driven from can make some undeletable from inside it;
-delete them from a normal shell.
+is leaked - this machine was once found with 488 orphaned Edge processes and 23 GB of
+`%TEMP%emws-smoke-*`. **Every run reuses ONE profile folder**, `%TEMP%\emws-smoke-profile`
+(`SMOKE_PROFILE_DIR` moves it), and wipes the site's storage, cache and cookies over
+DevTools before navigating, so a run is as clean as a fresh profile (the `--pwa` offline
+test depends on that wipe). A second smoke running at the same time gets a throwaway
+`emws-smoke-*` folder and says so. Why fixed (2026-10-06): a fresh folder per run could
+not be deleted by ANYONE on ZR1JT's machine - not the sandbox's doing, as was believed, but
+ESET Internet Security's browser-data protection, which refuses every process but the
+browser access to the profile's data files whatever the ACLs say (takeown/icacls change
+nothing); 183 folders, 4.3 GB. To delete leftovers: ESET → Browser Privacy & Security →
+Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Recurse -Force`.
 
 ## Hard rules
 
@@ -609,6 +616,43 @@ delete them from a normal shell.
   3000 SOL-corrected points, self-resonance falls with turns. So driver + calibration work
   on real hardware; what remains unproven is only what hasn't been tried (the classic-H
   family on a real unit, S21, other firmware).
+
+### VNA bridge: a FieldFox on the LAN (`services/emws-vna-bridge/`, `src/lib/vna/bridge.ts`)
+
+- 2026-10-06, for ZR1JT's Keysight N9912A (LAN; their other VNA is HPIB). A page cannot
+  open a TCP socket, so `bridge.mjs` (plain Node, no deps, IN the repo - `.gitignore` now
+  ignores only `/services/emws-solver/`) speaks SCPI to the instrument and answers HTTP on
+  127.0.0.1:8075: `GET /health` (service 'emws-vna-bridge', kinds ['vna'], instruments with
+  *IDN?/*OPT?/INST:CAT?) and `POST /sweep` → `{ frequenciesHz, real, imag, corrected,
+  method }`. Optional by construction, like the solver. `npm run vna-bridge -- --fieldfox
+  <host[:port]>`; `--simulate` runs `fake-fieldfox.mjs`. Protocol + command list:
+  `docs/vna-bridge.md`.
+- **Commands are from Keysight's FieldFox programming guide, NA mode** (fetched 2026-10-06):
+  `INST?` then `INST "NA";*OPC?` ONLY if not already NA (switching resets the mode,
+  calibration included); `CALC:PAR1:DEF S11|S21`; `SENS:FREQ:STAR/STOP`, `SENS:SWE:POIN`,
+  `SENS:BWID`; `FORM ASC,0`; `INIT:CONT 0`, `INIT:IMM;*OPC?` (the guide: always single
+  sweep when programming); `SENS:FREQ:DATA?`; `CALC:DATA:SDATA?` = real,imag pairs,
+  corrected when correction is on; `SENS:CORR:USER?`; `SYST:ERR?` after each stage;
+  `INIT:CONT` restored. `INST:CAT?` answers `"CAT","NA","SA"` - each quoted (a first parse
+  took `CAT"`). Binary blocks are NOT used (plain ASCII; port 5024 forbids them anyway).
+- Page side: `BridgeInstrument` implements `Instrument` (kind 'bridge', `maxPoints` 10001 -
+  `maxPoints` is now on every Instrument; NanoVNA 401, V2 1024). Its readings are the
+  instrument's own correction: NO SOL/thru on the page, and `lastCorrection` lets
+  `MeasureWithVna` say when the instrument reports correction OFF. `src/ui/VnaSources.tsx`
+  is the shared chooser both measuring panels start from (NanoVNA button if Web Serial,
+  plus one button per bridge instrument, plus the "bridge found / not found at" line with
+  an editable address in `emws.vna.bridge.v1`). It looks for the bridge ONCE per page load
+  (module memo, 30 s): every look at an empty address is a refused connection in the
+  console, and the smoke `excuseOptionalProbes()` removes exactly those from its problems
+  (the pattern the --pwa test uses for the community probe).
+- `tests/vna-bridge.test.ts` runs the real bridge against the fake over real sockets/HTTP
+  (75 Ω + 0.5 µH to 4 places; S21 of the 145 MHz low-pass; the command sequence and the
+  no-switch-when-already-NA rule; error queue, dead instrument, unknown id; queued sweeps).
+  `--vna` smoke spawns `bridge.mjs --simulate`, points the page at it, and measures the
+  Smith load (same 75 Ω as the NanoVNAs) and the LC filter's S21 through it.
+- **No real FieldFox has been connected yet.** Written from the published reference; the
+  first bench session should bring back `*IDN?`, `*OPT?`, `INST:CAT?` and any `SYST:ERR?`.
+  CAT mode (no option 303) is not supported - said in the UI and the guide.
 
 ## Conventions
 

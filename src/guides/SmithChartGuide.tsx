@@ -39,7 +39,8 @@ export function SmithChartGuide() {
         <li>
           <strong>Measure it, live.</strong> Plug a NanoVNA in by USB, press <em>Connect a NanoVNA…</em>, choose its
           port when the browser asks, and <em>Measure the load</em>. The sweep comes straight in, named after the
-          instrument. Press it again after every adjustment and watch the match move.
+          instrument. Press it again after every adjustment and watch the match move. A bench or handheld VNA on
+          the network — a FieldFox — comes in the same way through the EMWS VNA bridge, described below.
         </li>
       </ul>
       <h3>Measuring with a NanoVNA</h3>
@@ -59,6 +60,30 @@ export function SmithChartGuide() {
       <p>
         If the port will not open, the usual reason is that another program — the NanoVNA app, a terminal —
         already has it. Close that first.
+      </p>
+      <h3>A bench or handheld VNA on the network</h3>
+      <p>
+        A Keysight FieldFox, and most bench analysers, talk SCPI over the LAN rather than over a serial port, and a
+        web page cannot open that kind of connection. The <strong>EMWS VNA bridge</strong> can: a small program that
+        runs on the computer the browser is on, talks to the instrument, and offers it to every <em>Measure it</em>
+        button beside the NanoVNA. It comes with EMWS, in <code>services/emws-vna-bridge</code>, needs Node and
+        nothing else, and starts with one line:
+      </p>
+      <pre>
+        <code>npm run vna-bridge -- --fieldfox 192.168.0.50</code>
+      </pre>
+      <p>
+        Then open EMWS: under the measuring buttons a line says the bridge was found, and a <em>Connect to
+        FieldFox (bridge)…</em> button appears. The instrument's own correction is what you get — calibrate it on the
+        instrument first, with QuickCal, CalReady or a cal kit, at the end of your cable — and if the instrument
+        reports its correction switched off, the page says so beside the readings. Sweeps use the instrument's
+        network-analyser mode, so it needs that option (303 on an N9912A); a cable-and-antenna-only unit is
+        reported as such. The bridge listens on this computer only (127.0.0.1), works from an https:// page as
+        well as a local one, and if it is not running nothing changes — the line under the buttons just says where
+        it was looked for, with a link to point it elsewhere. <code>--simulate</code> gives you a pretend FieldFox to
+        try the page with. Nothing in it has met a real FieldFox yet: it is written from Keysight's programming
+        guide and tested against a copy that answers as the guide says, and the first real instrument on the bench
+        will be the proof.
       </p>
 
       <h2>Building the network</h2>

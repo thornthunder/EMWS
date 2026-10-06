@@ -21,6 +21,7 @@
     "test": "node scripts/test.mjs",
     "test:watch": "vitest",
     "smoke": "node scripts/smoke-browser.mjs",
+    "vna-bridge": "node services/emws-vna-bridge/bridge.mjs",
     "build:engine": "node scripts/build-nec2c.mjs"
   },
   "dependencies": {

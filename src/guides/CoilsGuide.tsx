@@ -56,8 +56,8 @@ export function CoilsGuide() {
         your frequency and finds where the reactance goes through zero, which is the real self-resonance. <em>Use this Q</em>{' '}
         puts the measured figure where the other two tabs will find it. The live route needs a secure page (https:// or
         localhost) and a desktop Chromium browser; the Smith chart guide has the details, including what a NanoVNA-V2 needs
-        first. Measure the coil with short leads, away from metal: what the NanoVNA sees is the coil <em>plus</em> whatever
-        it is near.
+        first, and how a bench VNA on the network comes in through the EMWS VNA bridge. Measure the coil with short leads,
+        away from metal: what the instrument sees is the coil <em>plus</em> whatever it is near.
       </p>
 
       <h2>A trap for a multiband wire</h2>

@@ -55,6 +55,7 @@ const SYNC_BYTES = 10;
 
 export class NanoVnaV2 implements Instrument {
   readonly kind = 'nanovna-v2' as const;
+  readonly maxPoints = 1024;
   name = 'NanoVNA-V2';
 
   constructor(private readonly link: Link) {}

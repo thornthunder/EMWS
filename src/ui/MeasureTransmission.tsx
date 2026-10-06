@@ -9,9 +9,10 @@
 // Public domain (The Unlicense). By ZR1JT.
 
 import { useEffect, useRef, useState } from 'react';
-import { type Instrument, VnaError, connect, serialUnavailableReason } from '../lib/vna';
+import { type Instrument, VnaError } from '../lib/vna';
 import { type ThruCalibration, type TransmissionPoint, applyThru, makeThruCalibration, sameTransmissionFrequencies, thruCovers } from '../lib/vna/transmission';
 import { NumberField } from './NumberField';
+import { VnaSources } from './VnaSources';
 
 export interface MeasureTransmissionProps {
   startMHz: number;
@@ -22,7 +23,6 @@ export interface MeasureTransmissionProps {
 }
 
 export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, onMeasured }: MeasureTransmissionProps) {
-  const unavailable = serialUnavailableReason();
   const [instrument, setInstrument] = useState<Instrument | undefined>();
   const [range, setRange] = useState({ startMHz, stopMHz, points });
   const [busy, setBusy] = useState<string | undefined>();
@@ -42,20 +42,11 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
   }, [range.startMHz, range.stopMHz, range.points]);
   useEffect(() => () => void live.current?.close().catch(() => {}), []);
 
-  const say = (e: unknown) => setError(e instanceof VnaError ? e.message : e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+  const say = (e: unknown) => setError(e === undefined ? undefined : e instanceof VnaError ? e.message : e instanceof Error ? `${e.name}: ${e.message}` : String(e));
 
-  const open = async () => {
-    setError(undefined);
-    setBusy('Asking for the port…');
-    try {
-      const found = await connect();
-      live.current = found;
-      setInstrument(found);
-    } catch (e) {
-      say(e);
-    } finally {
-      setBusy(undefined);
-    }
+  const connected = (found: Instrument) => {
+    live.current = found;
+    setInstrument(found);
   };
 
   const close = async () => {
@@ -111,26 +102,14 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
     if (!raw) return;
     const points = needsCalibration && calibration ? applyThru(raw, calibration) : raw;
     setLastSweep({ points: points.length, at: new Date().toLocaleTimeString() });
-    onMeasured(points, `${instrument?.name ?? 'NanoVNA'}, ${range.startMHz}–${range.stopMHz} MHz`);
+    onMeasured(points, `${instrument?.name ?? 'VNA'}, ${range.startMHz}–${range.stopMHz} MHz`);
   };
-
-  if (unavailable) {
-    return (
-      <p className="muted vna-unavailable">
-        <strong>Measure with a NanoVNA:</strong> {unavailable}
-      </p>
-    );
-  }
 
   if (!instrument) {
     return (
       <div className="vna vna-s21">
-        <div className="button-row">
-          <button type="button" className="small" onClick={open} disabled={busy !== undefined}>
-            {busy ?? 'Connect a NanoVNA…'}
-          </button>
-          <span className="muted">Port 1 into the filter, port 2 out of it.</span>
-        </div>
+        <VnaSources onConnected={connected} busy={busy} setBusy={setBusy} onError={say} />
+        <p className="muted">Port 1 into the filter, port 2 out of it.</p>
         {error && <p className="alert-inline">{error}</p>}
       </div>
     );
@@ -147,7 +126,7 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
       <div className="field-row">
         <NumberField label="Sweep from" value={range.startMHz} above={0} unit="MHz" onCommit={(v) => setRange({ ...range, startMHz: Math.min(v, range.stopMHz * 0.99) })} />
         <NumberField label="to" value={range.stopMHz} above={0} unit="MHz" onCommit={(v) => setRange({ ...range, stopMHz: Math.max(v, range.startMHz * 1.01) })} />
-        <NumberField label="Points" value={range.points} min={2} integer onCommit={(v) => setRange({ ...range, points: Math.min(v, instrument.kind === 'nanovna-v2' ? 1024 : 401) })} />
+        <NumberField label="Points" value={range.points} min={2} integer onCommit={(v) => setRange({ ...range, points: Math.min(v, instrument.maxPoints) })} />
       </div>
       {needsCalibration ? (
         <div className="vna-calibration">
@@ -172,7 +151,9 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
           </div>
         </div>
       ) : (
-        <p className="muted">Readings carry the NanoVNA's own calibration: calibrate it on the instrument with its thru, at the ends of your two cables.</p>
+        <p className="muted">
+          Readings carry the instrument's own calibration: calibrate it on the instrument with its thru, at the ends of your two cables.
+        </p>
       )}
       <div className="button-row">
         <button type="button" className="small" onClick={measure} disabled={busy !== undefined || !calibrated} title={!calibrated ? 'Measure the thru first' : undefined}>

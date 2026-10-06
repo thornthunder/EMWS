@@ -1937,6 +1937,26 @@ button.danger {
   margin-top: 8px;
   font-size: 13px;
 }
+/* Where the bridge was looked for: one quiet line, with the address editable in place. */
+.vna-bridge-line {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+.vna-bridge-edit {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.vna-bridge-edit input {
+  width: 200px;
+  padding: 2px 6px;
+  font: inherit;
+  font-size: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+}
 .compare-source {
   margin: 4px 0 8px;
 }

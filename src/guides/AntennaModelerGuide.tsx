@@ -581,8 +581,9 @@ export function AntennaModelerGuide() {
         A model is a claim about a piece of wire. The way to find out how good a claim is to build the antenna,
         measure it, and hold the two side by side — which is what the <em>Compare with the real antenna</em>{' '}
         panel under the results is for. Give it a measurement, from a NanoVNA plugged in by USB (
-        <em>Connect a NanoVNA…</em>, then <em>Measure the antenna</em>) or from a <code>.s1p</code> it saved,
-        and:
+        <em>Connect a NanoVNA…</em>, then <em>Measure the antenna</em>), from a bench or handheld VNA on the
+        network through the EMWS VNA bridge (the Smith chart guide explains it), or from a <code>.s1p</code> it
+        saved, and:
       </p>
       <ul>
         <li>

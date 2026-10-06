@@ -14,11 +14,15 @@
 // compilation, relative asset URLs, and the server's MIME types and CSP header.
 // No dependencies: it speaks the DevTools protocol over Node's built-in WebSocket.
 //
-// HOUSEKEEPING. Each run makes a throwaway browser profile in the OS temp folder and
-// closes the browser properly afterwards (see shutDownBrowser at the bottom - the how and
-// the why are both there). A profile that cannot be removed is reported with its path;
-// stale ones are swept on the next run. If you see the warning repeatedly, look in
-// %TEMP% for emws-smoke-* folders - a few hundred megabytes each - and delete them.
+// HOUSEKEEPING. Every run uses the SAME browser profile folder, %TEMP%\emws-smoke-profile
+// (SMOKE_PROFILE_DIR to move it), wipes the site's storage over DevTools before it starts
+// so each run is as clean as a fresh profile, and closes the browser properly afterwards
+// (see shutDownBrowser at the bottom - the how and the why are both there). One folder,
+// about 25 MB, is the most that ever stays behind. It used to be a fresh folder per run,
+// and on a machine with ESET those could not be deleted by anyone: its browser-data
+// protection refuses every process but the browser itself access to the profile's data
+// files, whatever the permissions say - 183 folders and 4.3 GB had piled up. If a second
+// smoke is already running on the folder, this run falls back to a throwaway one.
 
 import { spawn } from 'node:child_process';
 import { execFileSync } from 'node:child_process';
@@ -1196,6 +1200,8 @@ async function runPwaTest({ evaluate, send, problems, log }) {
   // designed outcome (its panel simply stays away), so those failures are not loose problems.
   // Anything else that failed offline, a precached file that was not, stays reported.
   const offline = problems.splice(beforeOffline);
+  const bridgeLooks = excuseOptionalProbes(offline);
+  if (bridgeLooks) log(`    (${bridgeLooks})`);
   const probes = offline.filter((p) => p.includes('community/index.php'));
   let bare = probes.length;
   const kept = offline.filter((p) => {
@@ -1751,6 +1757,61 @@ async function runVnaTest({ evaluate, send, log }) {
   }
   const measuredDb = Number((readout.match(/measured\s*(-?[\d.]+)/) ?? [])[1]);
   check(Math.abs(measuredDb + 3.01) < 0.15, `the error terms are corrected away: the low-pass reads ${measuredDb} dB at 145 MHz (${readout.replace(/\s+/g, ' ').trim()})`);
+
+  // ---- A bench VNA through the EMWS VNA bridge: the real bridge program, a simulated FieldFox ----
+  // Nothing was listening so far, and the page says so, quietly.
+  check(await clickText('.measure-filter .vna button', 'Disconnect'), 'disconnect the V2');
+  check(await until(`/No EMWS VNA bridge at http:\\/\\/127\\.0\\.0\\.1:8075/.test(document.querySelector('.measure-filter .vna-bridge-line')?.textContent ?? '')`), 'with no bridge running, the page says where it looked');
+  const bridgePort = 8200 + Math.floor(Math.random() * 500);
+  const bridgeProcess = spawn(process.execPath, [join(process.cwd(), 'services', 'emws-vna-bridge', 'bridge.mjs'), '--simulate', '--port', String(bridgePort)], { stdio: ['ignore', 'pipe', 'pipe'] });
+  let bridgeOutput = '';
+  bridgeProcess.stdout.on('data', (d) => (bridgeOutput += d));
+  bridgeProcess.stderr.on('data', (d) => (bridgeOutput += d));
+  try {
+    const bridgeUrl = `http://127.0.0.1:${bridgePort}`;
+    const up = Date.now() + 10_000;
+    let healthy = false;
+    while (Date.now() < up && !healthy) {
+      try {
+        healthy = (await (await fetch(`${bridgeUrl}/health`)).json()).service === 'emws-vna-bridge';
+      } catch {
+        await sleep(200);
+      }
+    }
+    check(healthy, `the bridge is up at ${bridgeUrl} with a simulated FieldFox`);
+    // The page looks for the bridge at its default address; point it at this one and reload.
+    await evaluate(`localStorage.setItem('emws.vna.bridge.v1', ${JSON.stringify(bridgeUrl)})`);
+    await send('Page.navigate', { url: new URL('#/smith', baseUrl).href });
+    await send('Page.reload', {});
+    check(await until(`document.querySelector('h1')?.textContent === 'Smith chart and matching' && document.querySelector('.vna-bridge-line') !== null`, 30_000), 'Smith chart again');
+    check(await until(`(document.querySelector('.vna-bridge-line')?.textContent ?? '').includes('bridge found at')`), 'the page finds the bridge');
+    const beforeBridge = await evaluate(`document.querySelector('.form-section p.muted strong')?.textContent ?? ''`);
+    check(await clickText('.vna button', 'Connect to Simulated FieldFox'), 'Connect to Simulated FieldFox (bridge)…');
+    check(await until(`document.querySelector('.vna-status')?.textContent.includes('N9912A')`), `connected: ${await evaluate(`document.querySelector('.vna-status strong')?.textContent`)}`);
+    check(await evaluate(`document.querySelector('.vna-calibration') === null`), 'no calibration asked for: the instrument corrects its own readings');
+    check(await clickText('.vna button', 'Measure the load'), 'Measure the load through the bridge');
+    check(await until(`(document.querySelector('.form-section p.muted strong')?.textContent ?? '') !== ${JSON.stringify(beforeBridge)}`, 20_000), 'taken as the load');
+    const zBridge = await evaluate(`[...document.querySelectorAll('.summary > div')].map((d) => d.textContent).find((t) => /Load|impedance/i.test(t)) ?? document.querySelector('.summary')?.textContent ?? ''`);
+    check(zBridge === z, `the FieldFox's S11 lands as the same 75 ohms the NanoVNAs gave (${zBridge.replace(/\s+/g, ' ').slice(0, 60)})`);
+    const source = await evaluate(`document.querySelector('.form-section p.muted strong')?.textContent ?? ''`);
+    check(source.includes('Simulated FieldFox (N9912A)'), `named after the instrument and its model: ${source}`);
+    check(/sweep S11 .* on Simulated FieldFox/.test(bridgeOutput), 'and the bridge logged the sweep');
+    // Port 2 through the bridge as well: S21 of the simulated low-pass, no thru needed.
+    await send('Page.navigate', { url: new URL('#/lc', baseUrl).href });
+    check(await until(`document.querySelector('h1')?.textContent === 'Coils, traps and filters'`, 30_000), 'the coils, traps and filters tool again');
+    check(await clickText('.lc-tab', 'Stubs & cavities'), 'Stubs & cavities');
+    await evaluate(`document.querySelector('.measure-filter')?.setAttribute('open', '')`);
+    check(await until(`(document.querySelector('.measure-filter .vna-bridge-line')?.textContent ?? '').includes('bridge found at')`), 'the bridge is offered here too');
+    check(await clickText('.measure-filter .vna button', 'Connect to Simulated FieldFox'), 'connect through the bridge for port 2');
+    check(await until(`document.querySelector('.measure-filter .vna-status')?.textContent.includes('N9912A')`), 'connected');
+    check(await evaluate(`[...document.querySelectorAll('.measure-filter .vna button')].find((b) => b.textContent.trim() === 'Measure it')?.disabled === false`), 'it will measure S21 at once: the instrument carries its own thru');
+    check(await clickText('.measure-filter .vna button', 'Measure it'), 'Measure it');
+    check(await until(`(document.querySelector('.xy-chart .chart-legend')?.textContent ?? '').includes('measured')`, 20_000), 'the S21 measurement is drawn over the design');
+    check(/sweep S21 .* on Simulated FieldFox/.test(bridgeOutput), 'and the bridge logged that one too');
+  } finally {
+    bridgeProcess.kill();
+    await evaluate(`localStorage.removeItem('emws.vna.bridge.v1')`);
+  }
 }
 
 /**
@@ -2146,11 +2207,14 @@ if (!browserPath) {
   process.exit(2);
 }
 
-// Earlier runs that could not clean up leave their browser profiles here; each is a few
-// hundred megabytes. Sweep any older than an hour before adding another. Best effort:
-// one that is still locked, or that this process is not allowed to touch, is left alone.
+/** The one profile folder every run reuses; SMOKE_PROFILE_DIR overrides where it lives. */
+const FIXED_PROFILE_NAME = 'emws-smoke-profile';
+
+// Throwaway profiles from earlier versions of this script, or from a run that had to fall
+// back to one (below): sweep any older than an hour. Best effort - one still in use, or
+// one this process is not allowed to touch, is left alone.
 for (const name of readdirSync(tmpdir())) {
-  if (!name.startsWith('emws-smoke-')) continue;
+  if (!name.startsWith('emws-smoke-') || name === FIXED_PROFILE_NAME) continue;
   const dir = join(tmpdir(), name);
   try {
     if (Date.now() - statSync(dir).mtimeMs < 60 * 60 * 1000) continue;
@@ -2161,21 +2225,41 @@ for (const name of readdirSync(tmpdir())) {
 }
 
 const port = 9300 + Math.floor(Math.random() * 600);
-const profile = mkdtempSync(join(tmpdir(), 'emws-smoke-'));
-const browser = spawn(
-  browserPath,
-  [
-    '--headless=new',
-    '--disable-gpu',
-    '--no-first-run',
-    '--no-default-browser-check',
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profile}`,
-    '--window-size=1400,1100',
-    'about:blank',
-  ],
-  { stdio: 'ignore' },
-);
+/** Where the browser keeps its profile: the one fixed folder, unless a second run has it. */
+const fixedProfile = process.env.SMOKE_PROFILE_DIR || join(tmpdir(), FIXED_PROFILE_NAME);
+let profile = fixedProfile;
+/** The launcher process; the real browser's pid comes from DevTools (see shutDownBrowser). */
+let browser;
+
+/** Starts the browser on a profile folder and returns its DevTools page target, or undefined if it never came up. */
+async function launch(profileDir, waitMs) {
+  mkdirSync(profileDir, { recursive: true });
+  browser = spawn(
+    browserPath,
+    [
+      '--headless=new',
+      '--disable-gpu',
+      '--no-first-run',
+      '--no-default-browser-check',
+      `--remote-debugging-port=${port}`,
+      `--user-data-dir=${profileDir}`,
+      '--window-size=1400,1100',
+      'about:blank',
+    ],
+    { stdio: 'ignore' },
+  );
+  for (let waited = 0; waited < waitMs; waited += 250) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
+      const target = list.find((t) => t.type === 'page');
+      if (target) return target;
+    } catch {
+      // not up yet
+    }
+    await sleep(250);
+  }
+  return undefined;
+}
 
 let exitCode = 1;
 const editLog = [];
@@ -2183,16 +2267,14 @@ const editLog = [];
 let ws;
 let send;
 try {
-  // Wait for the DevTools endpoint, then find the page target.
-  let target;
-  for (let i = 0; i < 60 && !target; i++) {
-    try {
-      const list = await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
-      target = list.find((t) => t.type === 'page');
-    } catch {
-      // not up yet
-    }
-    if (!target) await sleep(250);
+  // Wait for the DevTools endpoint, then find the page target. A browser already running
+  // on the fixed profile (another smoke in another terminal) hands the launch off to itself
+  // and no new endpoint appears: then use a throwaway folder for this run, and say so.
+  let target = await launch(profile, 10_000);
+  if (!target) {
+    profile = mkdtempSync(join(tmpdir(), 'emws-smoke-'));
+    console.error(`note: the profile folder ${fixedProfile} is in use (another smoke running?); using ${profile} for this run.`);
+    target = await launch(profile, 15_000);
   }
   if (!target) throw new Error('The browser did not expose a DevTools page target.');
 
@@ -2390,6 +2472,12 @@ try {
     mobile: viewportWidth < 600,
   });
   if (dark) await send('Emulation.setEmulatedMedia', { features: [{ name: 'prefers-color-scheme', value: 'dark' }] });
+  // The profile folder is reused from run to run (see the HOUSEKEEPING note at the top), so
+  // the site's state is wiped here instead: every run still starts with no stored models or
+  // cores, no service worker and nothing cached, as a fresh profile would.
+  await send('Storage.clearDataForOrigin', { origin: new URL(baseUrl).origin, storageTypes: 'all' });
+  await send('Network.clearBrowserCache');
+  await send('Network.clearBrowserCookies');
   await send('Page.navigate', { url });
 
   const probe = `JSON.stringify({
@@ -2463,6 +2551,8 @@ try {
     console.log(`Title:    ${info.title ?? '(none)'}`);
     console.log(`Sections: ${info.headings.join(' · ') || '(none)'}`);
     console.log(`Links:    ${info.links}`);
+    const excused = excuseOptionalProbes(problems);
+    if (excused) editLog.push(`    (${excused})`);
     if (editLog.length) {
       console.log('Tool:');
       for (const line of editLog) console.log(`  ${line}`);
@@ -2556,6 +2646,8 @@ try {
   );
   console.log(`CSP:      ${header(page, 'content-security-policy') ?? '(no Content-Security-Policy header - expected on the dev/preview server, not on IIS)'}`);
   if (state?.alert) console.log(`Alert:    ${state.alert}`);
+  const excused = excuseOptionalProbes(problems);
+  if (excused) console.log(`Note:     ${excused}`);
   if (problems.length) {
     console.log('Problems:');
     for (const p of problems) console.log(`  - ${p}`);
@@ -2586,6 +2678,35 @@ try {
   await shutDownBrowser();
 }
 process.exit(exitCode);
+
+/**
+ * Every measuring panel looks once for the optional VNA bridge at its default address,
+ * and without one that look is a refused connection - the designed outcome, not a fault.
+ * Takes those out of the problems (the page's own line and the bare failure that comes
+ * with it) and says how many there were; anything else that failed stays.
+ */
+function excuseOptionalProbes(problems) {
+  const looks = problems.filter((p) => /127\.0\.0\.1:8075\/health/.test(p));
+  if (looks.length === 0) return undefined;
+  // Each page line ("network: Failed to load resource: net::ERR_X (url)") comes with one
+  // bare "request failed: net::ERR_X" - refused with no bridge, disconnected when offline.
+  const bare = new Map();
+  for (const look of looks) {
+    const key = `request failed: net::${(/net::(ERR_[A-Z_]+)/.exec(look) ?? [])[1] ?? ''}`;
+    bare.set(key, (bare.get(key) ?? 0) + 1);
+  }
+  const kept = problems.filter((p) => {
+    if (looks.includes(p)) return false;
+    const n = bare.get(p);
+    if (n) {
+      bare.set(p, n - 1);
+      return false;
+    }
+    return true;
+  });
+  problems.splice(0, problems.length, ...kept);
+  return `${looks.length} look(s) for the optional VNA bridge at 127.0.0.1:8075 failed, as expected without one`;
+}
 
 /**
  * Closing the browser properly, and saying so if it cannot be done.
@@ -2666,7 +2787,7 @@ async function shutDownBrowser() {
   for (let i = 0; i < 20 && !(quiet = !(await alive())); i++) await sleep(250);
 
   if (!quiet) {
-    const pid = realPid ?? browser.pid;
+    const pid = realPid ?? browser?.pid;
     if (process.platform === 'win32') {
       try {
         execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
@@ -2683,8 +2804,17 @@ async function shutDownBrowser() {
     for (let i = 0; i < 12 && !(quiet = !(await alive())); i++) await sleep(250);
   }
 
-  // The browser is gone by now, but Windows can take a while to let go of a profile a
-  // long run wrote heavily to. Keep trying for a good twenty seconds before giving up.
+  if (process.env.SMOKE_DEBUG) console.error(`shutdown: launcher pid=${browser?.pid} browser pid=${realPid} port quiet=${quiet}`);
+  if (!quiet) console.error(`\nWARNING: the browser is STILL RUNNING on ${profile} and could not be stopped.`);
+
+  // The fixed profile folder stays for the next run: only this run's own leftovers go.
+  // A throwaway one (a fallback launch) is removed - with patience, because Windows can
+  // take a while to let go of a profile a long run wrote heavily to - and reported if it
+  // will not go.
+  if (profile === fixedProfile) {
+    rmSync(join(profile, 'maa'), { recursive: true, force: true });
+    return;
+  }
   for (let attempt = 0; attempt < 40 && existsSync(profile); attempt++) {
     try {
       rmSync(profile, { recursive: true, force: true });
@@ -2692,12 +2822,11 @@ async function shutDownBrowser() {
       await sleep(500);
     }
   }
-  if (process.env.SMOKE_DEBUG) console.error(`shutdown: launcher pid=${browser.pid} browser pid=${realPid} port quiet=${quiet}`);
   if (existsSync(profile)) {
     console.error(
-      `\nWARNING: could not remove the browser profile ${profile}\n` +
-        `         (the browser ${quiet ? 'has exited' : 'is STILL RUNNING'}). ` +
-        'Each one is a few hundred megabytes; delete emws-smoke-* from the temp folder by hand.',
+      `\nWARNING: could not remove the throwaway browser profile ${profile}\n` +
+        '         (the browser has exited). Delete emws-smoke-* from the temp folder by hand - ' +
+        'with ESET, turn Browser Privacy & Security off for the moment it takes.',
     );
   }
 }

@@ -32,5 +32,6 @@ Desktop.ini
 .env.local
 
 # The NEC solver service, while it lives here. It will move to its own project, and it
-# links CUDA, which must stay clear of this repository's public-domain code.
-/services/
+# links CUDA, which must stay clear of this repository's public-domain code. The VNA
+# bridge beside it links nothing (plain Node, no dependencies) and is part of the repo.
+/services/emws-solver/

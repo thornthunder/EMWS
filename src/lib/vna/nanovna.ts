@@ -39,6 +39,7 @@ const endsWithPrompt = (bytes: Uint8Array) => decoder.decode(bytes).endsWith(PRO
 
 export class NanoVna implements Instrument {
   readonly kind = 'nanovna' as const;
+  readonly maxPoints = 401;
   name = 'NanoVNA';
   private scanSupported: boolean | undefined;
 
