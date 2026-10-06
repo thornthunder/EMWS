@@ -154,6 +154,49 @@ async function runSmithTest({ evaluate, send, log }) {
   check(now.steps === 3 && now.nodes === 3, 'the step table and the chart nodes agree with the chain');
   check(now.summary['Under 2:1'] !== '—', `with a usable bandwidth: ${now.summary['Under 2:1']}`);
 
+  // Fine adjustment with the wheel: click a component's Value box, roll a notch, then spin.
+  const valueBox = `[...document.querySelectorAll('.element-card label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === 'Value')?.querySelector('input')`;
+  const readValue = async () => Number(await evaluate(`${valueBox}?.value`));
+  const boxRect = JSON.parse(await evaluate(`(window.scrollTo(0, 0), JSON.stringify(${valueBox}.getBoundingClientRect()))`));
+  const over = { x: boxRect.left + boxRect.width / 2, y: boxRect.top + boxRect.height / 2 };
+  /** Wheel clicks sent back to back, as a spinning wheel delivers them - not one per round trip. */
+  const roll = (clicks) =>
+    Promise.all(Array.from({ length: clicks }, () => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: over.x, y: over.y, deltaX: 0, deltaY: -100 })));
+  // The rule the box follows (src/ui/number-step.ts): a notch adds the last digit shown, no
+  // finer than the fourth significant figure; a quick spin ten times that.
+  const nudged = (v, quick) => {
+    const text = String(Number(v.toPrecision(8)));
+    const shown = text.includes('.') ? text.length - text.indexOf('.') - 1 : 0;
+    const step = 10 ** -Math.min(shown, Math.max(0, 3 - Math.floor(Math.log10(Math.abs(v))))) * (quick ? 10 : 1);
+    return Number((v + step).toPrecision(10));
+  };
+  const untouched = await readValue();
+  await roll(1);
+  await sleep(200);
+  check((await readValue()) === untouched, 'the wheel over an unfocused box changes nothing');
+  await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: over.x, y: over.y, button: 'left', clickCount: 1 });
+  await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: over.x, y: over.y, button: 'left', clickCount: 1 });
+  await sleep(200);
+  const tableValue = () => evaluate(`document.querySelector('.chain-table tbody tr:nth-child(2) td:nth-child(3)')?.textContent ?? ''`);
+  const before = await readValue();
+  const tableBefore = await tableValue();
+  await roll(1);
+  await sleep(300);
+  const afterOne = await readValue();
+  check(afterOne === nudged(before, false), `one notch nudges the value by its last digit: ${before} -> ${afterOne}`);
+  await roll(3);
+  await sleep(400);
+  const afterSpin = await readValue();
+  // The first click of the spin is a slow one (the last was 300 ms ago); the next two are quick, ten times as big.
+  const step = nudged(before, false) - before;
+  const expected = Number((afterOne + 21 * step).toPrecision(10));
+  check(afterSpin === expected, `a quick spin nudges by the digit above: ${afterOne} -> ${afterSpin} (expected ${expected})`);
+  const tableAfter = await tableValue();
+  check(tableAfter !== tableBefore, `and the chain follows: ${tableBefore} -> ${tableAfter}`);
+  const wheelHint = await evaluate(`${valueBox}.closest('label').getAttribute('title') ?? ''`);
+  check(/mouse wheel/.test(wheelHint), 'the box says so when the pointer rests on it');
+  await evaluate(`document.activeElement?.blur()`);
+
   // The two tools talk to each other: model an antenna, then match it here.
   await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
   const deadline = Date.now() + 30_000;

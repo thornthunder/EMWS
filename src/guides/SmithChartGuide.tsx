@@ -101,8 +101,13 @@ export function SmithChartGuide() {
       <p>
         Every component has a slider, and the slider works in <strong>ohms of reactance</strong> rather than in
         microhenries, because that is what decides how far round the circle you slide. Type an exact value in the
-        box when you know what you want. <em>Switch out of circuit</em> takes a component out without deleting
-        it, for a quick before-and-after.
+        box when you know what you want. For the last fine trim, where the slider is too coarse, click the box and
+        roll the <strong>mouse wheel</strong>: each notch moves the last digit shown (a value of 120.5 nH by 0.1, 47 pF
+        by 1 - never finer than the fourth significant figure, so a solver's 72.4327 pF moves by 0.01), and a quick
+        spin moves the digit before it, ten times as much. Wheel up raises the value. The step is fixed from the
+        moment you click the box until you leave it, and the wheel never touches a box you have not clicked, so
+        scrolling the page is safe. The same works in a component's Q and cable boxes. <em>Switch out of circuit</em>{' '}
+        takes a component out without deleting it, for a quick before-and-after.
       </p>
       <p>
         Give an inductor or capacitor a <strong>Q</strong> and it stops being perfect: the tool adds the loss

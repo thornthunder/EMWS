@@ -308,7 +308,7 @@ function ElementCard({ element, index, count, designMHz, onChange, onMove, onRem
 
       {unit && (element.kind === 'inductor' || element.kind === 'capacitor' || element.kind === 'resistor') && (
         <div className="field-row">
-          <NumberField
+          <NumberField wheel
             label="Value"
             value={Number(
               ((element.kind === 'inductor' ? element.henries : element.kind === 'capacitor' ? element.farads : element.ohms) / unit.factor).toPrecision(6),
@@ -323,7 +323,7 @@ function ElementCard({ element, index, count, designMHz, onChange, onMove, onRem
             }}
           />
           {element.kind !== 'resistor' && (
-            <NumberField
+            <NumberField wheel
               label="Q (0 = ideal)"
               value={element.q ?? 0}
               min={0}
@@ -357,8 +357,8 @@ function ElementCard({ element, index, count, designMHz, onChange, onMove, onRem
             </select>
           )}
           <div className="field-row">
-            <NumberField label="Cable Z" value={element.z0} above={0} unit="Ω" onCommit={(v) => onChange({ z0: v } as Partial<Element>)} />
-            <NumberField
+            <NumberField wheel label="Cable Z" value={element.z0} above={0} unit="Ω" onCommit={(v) => onChange({ z0: v } as Partial<Element>)} />
+            <NumberField wheel
               label="Velocity factor"
               value={element.velocityFactor}
               above={0}
@@ -366,14 +366,14 @@ function ElementCard({ element, index, count, designMHz, onChange, onMove, onRem
             />
           </div>
           <div className="field-row">
-            <NumberField
+            <NumberField wheel
               label="Loss"
               value={element.lossDb100m}
               min={0}
               unit="dB/100 m"
               onCommit={(v) => onChange({ lossDb100m: v } as Partial<Element>)}
             />
-            <NumberField
+            <NumberField wheel
               label="at"
               value={element.lossRefMHz}
               above={0}

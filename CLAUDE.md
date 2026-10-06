@@ -274,6 +274,18 @@ delete them from a normal shell.
   frequency; a test asserts that.
 - Loads: typed R + jX (reactance follows frequency by default), Touchstone `.s1p`
   (`src/lib/touchstone.ts`), or the Antenna Modeler's last run via `src/lib/handoff.ts`.
+- **Mouse-wheel fine trim** (2026-10-06, from a user via ZR1JT: the log slider's 0.8 %/notch is
+  too coarse at the match). `NumberField wheel` (opt-in; on the six boxes of every component
+  card) nudges a FOCUSED box only - Chrome once shipped wheel-on-any-number-input and pulled it
+  for accidental edits. `src/ui/number-step.ts`: the slow step is the last digit shown, never
+  finer than the 4th significant figure (72.4327 pF -> 0.01), quick (< 120 ms between events,
+  by `e.timeStamp` because a slow re-render otherwise hides the spin) = ×10; wheel up raises.
+  The step is decided ON FOCUS and kept until blur: following "the last digit shown" as it
+  changed made 0.9 + 0.1 = 1 then step by 1, and snapping to the digit's grid escalated 72.44
+  -> 72.5 -> 73 (both seen). One wheel EVENT of ≥ 40 px is `round(|Δ| / 100)` notches (a
+  Windows click is 100 px and was counted twice at 40; merged clicks are several); touchpad
+  moves accumulate. `tests/number-field.test.ts`; the `--smith` smoke clicks a box, rolls one
+  notch, spins three (sent back to back) and reads the chain table.
 - Chart series colours are `--series-1..3` + `--series-more`, validated with the dataviz
   skill's palette checker for both surfaces; assign in fixed order, never cycle. Every step
   is also numbered, so colour is never the only cue.
