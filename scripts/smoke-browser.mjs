@@ -1241,6 +1241,22 @@ async function runFdtdTest({ evaluate, send, log, screenshot }) {
       })`),
     );
 
+  const typeNumber = async (label, text) => {
+    const focused = await evaluate(`(() => {
+      const input = [...document.querySelectorAll('.sandbox label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    })()`);
+    if (!focused) return false;
+    await send('Input.insertText', { text: String(text) });
+    for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+    await sleep(300);
+    return true;
+  };
+  const fieldValue = (label) => evaluate(`[...document.querySelectorAll('.sandbox label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input')?.value`);
+
   // A fresh start: the first scene, paused.
   await evaluate(`(localStorage.removeItem('emws.fdtd.v1'), location.reload())`);
   check(await until(`document.querySelector('canvas.field-canvas') !== null && document.querySelectorAll('.tool-buttons button').length === 5`, 15_000), 'the sandbox loads');
@@ -1249,6 +1265,37 @@ async function runFdtdTest({ evaluate, send, log, screenshot }) {
   check(now.legend.includes('10.0 × 6.7 wavelengths'), `the world is ten wavelengths wide: ${now.legend.trim()}`);
   check(now.gridNote.includes('200 × 133 cells'), `on a 200 x 133 grid: ${now.gridNote.trim()}`);
   check(now.play[0] === 'Play', 'paused at the start');
+
+  // Every control explains itself when the pointer rests on it.
+  const bare = JSON.parse(
+    await evaluate(`JSON.stringify([...document.querySelectorAll('.sandbox .panel label, .sandbox .panel button, .sandbox .field-status > div')]
+      .filter((el) => !el.closest('[title]')?.getAttribute('title'))
+      .map((el) => el.textContent.trim().slice(0, 30)))`),
+  );
+  check(bare.length === 0, `every control has hover text${bare.length ? `; these do not: ${bare.join(' | ')}` : ''}`);
+  const polarisationHint = await evaluate(`document.querySelector('.polarisation-picker')?.closest('label')?.getAttribute('title') ?? ''`);
+  check(/Brewster/.test(polarisationHint), `the polarisation picker says what Ez and Hz mean: "${polarisationHint.slice(0, 60)}…"`);
+
+  // The frequency scales the scene: a tenth of the frequency is ten times the metres and the same cells.
+  check(await typeNumber('Frequency', '100'), 'Frequency: 100 MHz');
+  now = await state();
+  check(now.gridNote.includes('200 × 133 cells of 149.9'), `the picture keeps its 200 x 133 cells: ${now.gridNote.trim()}`);
+  check((await fieldValue('Width')) === '30' && (await fieldValue('Height')) === '20', 'and the world is now 30 x 20 m');
+  check(await until(`JSON.parse(localStorage.getItem('emws.fdtd.v1')).shapes.every((s) => s.geometry.x1 === 14)`), 'with the wall drawn at 14 m instead of 1.4');
+  check(now.legend.includes('10.0 × 6.7 wavelengths'), 'still ten wavelengths wide');
+  // Held in metres instead, the same change leaves a one-wavelength world - and says so.
+  check(await click('.panel label.check', 'Scale the scene'), 'untick Scale the scene with the frequency');
+  check(await typeNumber('Frequency', '10'), 'Frequency: 10 MHz, metres held');
+  now = await state();
+  check(now.gridNote.includes('20 × 13 cells'), `the picture is now 20 x 13 cells: ${now.gridNote.trim()}`);
+  check(now.issues.some((t) => t.includes('only 1.0 × 0.7 wavelengths')), 'and the panel says the world is only a wavelength wide');
+  // Ctrl+Z inside a text box is the box's own undo, so leave the box first.
+  await evaluate(`document.activeElement?.blur()`);
+  for (let n = 0; n < 3; n++) {
+    for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'z', code: 'KeyZ', modifiers: 2, windowsVirtualKeyCode: 90 });
+    await sleep(200);
+  }
+  check((await fieldValue('Frequency')) === '1000' && (await fieldValue('Width')) === '3', 'three Ctrl+Z put the scene back at 1000 MHz and 3 m');
 
   // Play: the field must come up and time must pass.
   check(await click('.run-buttons button', 'Play'), 'Play');
@@ -1337,7 +1384,7 @@ async function runFdtdTest({ evaluate, send, log, screenshot }) {
   check((await evaluate(statusOf('Time'))) >= clockBefore, 'moving the probe does not restart the clock');
 
   // The same scene in Ez: horizontal polarisation reflects, so a standing wave forms over the ground.
-  check(await choose('Out of the screen', 'Ez'), 'Out of the screen: Ez');
+  check(await choose('Polarisation', 'Ez'), 'Polarisation: Ez');
   check(await until(`${statusOf('Peak |Ez|')} > 1.3`, 30_000), `horizontal polarisation stands over the ground (${(await state()).status['Peak |Ez|']})`);
   check(await until(`(document.querySelector('.probe-head p')?.textContent ?? '').includes('strongest at')`, 20_000), 'the probe records again from the new start');
   await shoot('brewster-ez');

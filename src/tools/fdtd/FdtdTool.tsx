@@ -34,6 +34,7 @@ import {
   saveScene,
   updateShape,
   updateSource,
+  withFrequency,
 } from './scene';
 import { type FieldEngine, type Polarisation, type Side, type SourceKind, makeEngine, planeWaveDirection } from './simulation';
 
@@ -56,6 +57,44 @@ const SIDES: { id: Side; label: string }[] = [
 
 const SPEEDS = [1, 2, 4, 8, 16];
 const ENVELOPE_DECAY = 0.998;
+
+/** What each control is for, shown when the pointer rests on it. One place, so the words stay in step. */
+const HINTS = {
+  startFrom: 'Load a ready-made scene. It replaces what is drawn and starts playing at once.',
+  frequency:
+    'The frequency of every continuous source and of the plane wave, in MHz. It sets the scale of the whole picture: a cell is a fixed fraction of the wavelength, so a 3 m world is ten wavelengths wide at 1000 MHz and one at 100 MHz.',
+  width: 'How wide the world is, in metres. The legend under the picture says how many wavelengths that is.',
+  height: 'How tall the world is, in metres.',
+  cellsPerWavelength:
+    'How finely space is divided: cells per wavelength. 20 is comfortable; below 10 the grid itself bends the waves. More cells cost time steeply - double them and every step is four times the work, and there are twice as many steps.',
+  polarisation:
+    'Which field points out of the screen, along the infinitely long objects. Ez: the electric field does - a wire antenna seen end-on, and horizontal polarisation if the bottom of the picture is the ground. Hz: the magnetic field does and the electric field lies in the picture - vertical polarisation over a ground, and the only one with a Brewster angle.',
+  scaleWithFrequency:
+    'When you change the frequency, grow or shrink the world and everything drawn in it with the wavelength, so the picture keeps its size in wavelengths and its detail. Conductivities in S/m do not scale, so a lossy ground means something different at each frequency. Untick to keep the metres instead.',
+  tools: 'Choose what a click or a drag on the picture does.',
+  epsr: 'Relative permittivity of the next dielectric drawn. Air 1, PTFE about 2.1, FR-4 about 4.4, fresh water about 80. Waves inside travel slower and are shorter by its square root.',
+  sigma: 'Conductivity of the next dielectric drawn, in siemens per metre - 0 for a lossless one. Average ground is about 0.005, sea water about 5.',
+  sourceKind: 'A continuous wave at the frequency above, or a single short pulse.',
+  sourceAmplitude: 'The strength of this source, relative: everything in the picture is measured against 1.',
+  sourcePhase: 'The phase of this continuous source, in degrees. Two sources with different phases make a phased array.',
+  thickness: 'How thick this conducting sheet is, in metres. 0 means one cell.',
+  shapeEpsr: 'Relative permittivity of this dielectric.',
+  shapeSigma: 'Conductivity of this dielectric, in siemens per metre.',
+  planeWaveOn: 'A straight wavefront filling the world from one side, as from a transmitter far away - the proper way to see diffraction, scattering and reflection from a ground.',
+  planeWaveSide: 'The side of the world the plane wave comes in through.',
+  planeWaveTilt: 'Degrees from square on, up to 85. From the top, a positive tilt leans the wave to the right; from the left, upwards. The arrow on the edge of the picture shows the direction of travel.',
+  planeWaveKind: 'A continuous wave at the frequency above, or a single pulse.',
+  planeWaveAmplitude: 'The strength of the plane wave, relative; 1 is the usual.',
+  play: 'Run or pause the clock (space bar).',
+  step: 'Advance ten time steps while paused, to watch a wave move slowly.',
+  reset: 'Back to the start: the fields are cleared and the clock goes to zero. The scene stays.',
+  speed: 'How many time steps are computed for each frame drawn. More is faster, at the cost of a jerkier picture.',
+  show: 'The field itself, swinging positive and negative as the wave passes, or its envelope - where the field has been strong recently, which shows standing waves, shadows and lobes.',
+  contrast: 'Turns the weak outer waves up. 1 scales the colours to the strongest field in the picture; 4 shows a field a quarter as strong at full colour.',
+  statusTime: 'How much time has been simulated, in nanoseconds and in periods of the frequency; and the number of time steps taken.',
+  statusPeak: 'The strongest field anywhere in the world right now, relative to a source of 1.',
+  statusSpeed: 'How many time steps a second this machine manages, and how many cells each step updates.',
+};
 
 /** The field out of the screen, by polarisation. */
 const fieldName = (p: Polarisation) => (p === 'te' ? 'Hz' : 'Ez');
@@ -391,6 +430,14 @@ export function FdtdTool() {
   }, [selected, deleteSelected]);
 
   const setWorld = (patch: Partial<Scene>) => dispatch({ type: 'edit', recipe: (s) => ({ ...s, ...patch }) });
+  const setFrequency = (fMHz: number) => {
+    // The probe is in metres but not in the scene: scale it too, so it stays where it is in the picture.
+    if (scene.scaleWithFrequency && probe && fMHz > 0 && scene.fMHz > 0) {
+      const ratio = scene.fMHz / fMHz;
+      setProbe({ x: probe.x * ratio, y: probe.y * ratio });
+    }
+    dispatch({ type: 'edit', recipe: (s) => withFrequency(s, fMHz) });
+  };
   const loadPreset = (id: string) => {
     const preset = presetById(id);
     if (!preset) return;
@@ -455,25 +502,28 @@ export function FdtdTool() {
         <aside className="panel">
           <section className="form-section">
             <h2>The world</h2>
-            <label className="field">
+            <label className="field" title={HINTS.startFrom}>
               <span className="field-label">Start from</span>
               <select className="preset-picker" value="" onChange={(e) => loadPreset(e.target.value)}>
                 <option value="">a scene…</option>
                 {PRESETS.map((p) => (
-                  <option key={p.id} value={p.id}>
+                  <option key={p.id} value={p.id} title={p.blurb}>
                     {p.name}
                   </option>
                 ))}
               </select>
             </label>
-            <NumberField label="Frequency" value={scene.fMHz} above={0} unit="MHz" onCommit={(v) => setWorld({ fMHz: v })} />
+            <NumberField label="Frequency" value={scene.fMHz} above={0} unit="MHz" onCommit={setFrequency} hint={HINTS.frequency} />
+            <label className="check" title={HINTS.scaleWithFrequency}>
+              <input type="checkbox" checked={scene.scaleWithFrequency} onChange={(e) => setWorld({ scaleWithFrequency: e.target.checked })} /> Scale the scene with the frequency
+            </label>
             <div className="field-row">
-              <NumberField label="Width" value={scene.widthM} above={0} unit="m" onCommit={(v) => setWorld({ widthM: v })} />
-              <NumberField label="Height" value={scene.heightM} above={0} unit="m" onCommit={(v) => setWorld({ heightM: v })} />
+              <NumberField label="Width" value={scene.widthM} above={0} unit="m" onCommit={(v) => setWorld({ widthM: v })} hint={HINTS.width} />
+              <NumberField label="Height" value={scene.heightM} above={0} unit="m" onCommit={(v) => setWorld({ heightM: v })} hint={HINTS.height} />
             </div>
-            <NumberField label="Cells per wavelength" value={scene.cellsPerWavelength} min={4} integer onCommit={(v) => setWorld({ cellsPerWavelength: v })} />
-            <label className="field">
-              <span className="field-label">Out of the screen</span>
+            <NumberField label="Cells per wavelength" value={scene.cellsPerWavelength} min={4} integer onCommit={(v) => setWorld({ cellsPerWavelength: v })} hint={HINTS.cellsPerWavelength} />
+            <label className="field" title={HINTS.polarisation}>
+              <span className="field-label">Polarisation</span>
               <select className="polarisation-picker" value={scene.polarisation} onChange={(e) => setWorld({ polarisation: e.target.value as Polarisation })}>
                 <option value="tm">Ez: E out of the screen</option>
                 <option value="te">Hz: E in the picture</option>
@@ -486,7 +536,7 @@ export function FdtdTool() {
 
           <section className="form-section">
             <h2>Draw</h2>
-            <div className="tool-buttons" role="group" aria-label="Drawing tool">
+            <div className="tool-buttons" role="group" aria-label="Drawing tool" title={HINTS.tools}>
               {TOOLS.map((t) => (
                 <button key={t.id} type="button" className="small" aria-pressed={tool === t.id} title={t.hint} onClick={() => setTool(t.id)}>
                   {t.label}
@@ -496,8 +546,8 @@ export function FdtdTool() {
             <p className="muted">{TOOLS.find((t) => t.id === tool)?.hint}</p>
             {tool === 'dielectric' && !selectedShape && (
               <div className="field-row">
-                <NumberField label="εr" value={newDielectric.epsr} min={1} onCommit={(v) => setNewDielectric((d) => ({ ...d, epsr: v }))} />
-                <NumberField label="σ" value={newDielectric.sigma} min={0} unit="S/m" onCommit={(v) => setNewDielectric((d) => ({ ...d, sigma: v }))} />
+                <NumberField label="εr" value={newDielectric.epsr} min={1} onCommit={(v) => setNewDielectric((d) => ({ ...d, epsr: v }))} hint={HINTS.epsr} />
+                <NumberField label="σ" value={newDielectric.sigma} min={0} unit="S/m" onCommit={(v) => setNewDielectric((d) => ({ ...d, sigma: v }))} hint={HINTS.sigma} />
               </div>
             )}
             {tool === 'source' && !selectedSource && (
@@ -510,14 +560,14 @@ export function FdtdTool() {
                 </p>
                 {selectedShape.material.kind === 'dielectric' && (
                   <div className="field-row">
-                    <NumberField label="εr" value={selectedShape.material.epsr} min={1} onCommit={(v) => dispatch({ type: 'edit', recipe: (s) => updateShape(s, selectedShape.id, { material: { ...selectedShape.material, epsr: v } }) })} />
-                    <NumberField label="σ" value={selectedShape.material.sigma} min={0} unit="S/m" onCommit={(v) => dispatch({ type: 'edit', recipe: (s) => updateShape(s, selectedShape.id, { material: { ...selectedShape.material, sigma: v } }) })} />
+                    <NumberField label="εr" value={selectedShape.material.epsr} min={1} onCommit={(v) => dispatch({ type: 'edit', recipe: (s) => updateShape(s, selectedShape.id, { material: { ...selectedShape.material, epsr: v } }) })} hint={HINTS.shapeEpsr} />
+                    <NumberField label="σ" value={selectedShape.material.sigma} min={0} unit="S/m" onCommit={(v) => dispatch({ type: 'edit', recipe: (s) => updateShape(s, selectedShape.id, { material: { ...selectedShape.material, sigma: v } }) })} hint={HINTS.shapeSigma} />
                   </div>
                 )}
                 {selectedShape.geometry.kind === 'line' && (
-                  <NumberField label="Thickness" value={selectedShape.geometry.widthM} min={0} unit="m" onCommit={(v) => dispatch({ type: 'edit', recipe: (s) => updateShape(s, selectedShape.id, { geometry: { ...(selectedShape.geometry as Extract<Geometry, { kind: 'line' }>), widthM: v } }) })} />
+                  <NumberField label="Thickness" value={selectedShape.geometry.widthM} min={0} unit="m" onCommit={(v) => dispatch({ type: 'edit', recipe: (s) => updateShape(s, selectedShape.id, { geometry: { ...(selectedShape.geometry as Extract<Geometry, { kind: 'line' }>), widthM: v } }) })} hint={HINTS.thickness} />
                 )}
-                <button type="button" className="small" onClick={deleteSelected}>
+                <button type="button" className="small" onClick={deleteSelected} title="Remove this object from the scene (Delete key).">
                   Delete it
                 </button>
               </div>
@@ -526,19 +576,19 @@ export function FdtdTool() {
               <div className="selected-item">
                 <p className="muted">Selected: a source</p>
                 <SourceFields value={selectedSource} onChange={(p) => dispatch({ type: 'edit', recipe: (s) => updateSource(s, selectedSource.id, p) })} />
-                <button type="button" className="small" onClick={deleteSelected}>
+                <button type="button" className="small" onClick={deleteSelected} title="Remove this source from the scene (Delete key).">
                   Delete it
                 </button>
               </div>
             )}
             <div className="button-row">
-              <button type="button" className="small" disabled={history.past.length === 0} onClick={() => dispatch({ type: 'undo' })} title="Ctrl+Z">
+              <button type="button" className="small" disabled={history.past.length === 0} onClick={() => dispatch({ type: 'undo' })} title="Take back the last edit (Ctrl+Z). A whole drag is one step.">
                 Undo
               </button>
-              <button type="button" className="small" disabled={history.future.length === 0} onClick={() => dispatch({ type: 'redo' })} title="Ctrl+Y">
+              <button type="button" className="small" disabled={history.future.length === 0} onClick={() => dispatch({ type: 'redo' })} title="Put back what Undo took away (Ctrl+Y).">
                 Redo
               </button>
-              <button type="button" className="small" disabled={scene.shapes.length + scene.sources.length === 0} onClick={() => dispatch({ type: 'edit', recipe: (s) => ({ ...s, shapes: [], sources: [] }) })}>
+              <button type="button" className="small" disabled={scene.shapes.length + scene.sources.length === 0} onClick={() => dispatch({ type: 'edit', recipe: (s) => ({ ...s, shapes: [], sources: [] }) })} title="Remove every object and source. The world, the frequency and the plane wave stay; Undo brings it all back.">
                 Clear
               </button>
             </div>
@@ -546,13 +596,13 @@ export function FdtdTool() {
 
           <section className="form-section plane-wave">
             <h2>Plane wave</h2>
-            <label className="check">
+            <label className="check" title={HINTS.planeWaveOn}>
               <input type="checkbox" checked={pw !== null} onChange={(e) => setPlaneWave(e.target.checked ? {} : null)} /> A plane wave comes in from outside
             </label>
             {pw && (
               <>
                 <div className="field-row">
-                  <label className="field">
+                  <label className="field" title={HINTS.planeWaveSide}>
                     <span className="field-label">From the</span>
                     <select value={pw.side} onChange={(e) => setPlaneWave({ side: e.target.value as Side })}>
                       {SIDES.map((s) => (
@@ -562,17 +612,17 @@ export function FdtdTool() {
                       ))}
                     </select>
                   </label>
-                  <NumberField label="Tilt" value={pw.angleDeg} unit="°" onCommit={(v) => setPlaneWave({ angleDeg: v })} />
+                  <NumberField label="Tilt" value={pw.angleDeg} unit="°" onCommit={(v) => setPlaneWave({ angleDeg: v })} hint={HINTS.planeWaveTilt} />
                 </div>
                 <div className="field-row">
-                  <label className="field">
+                  <label className="field" title={HINTS.planeWaveKind}>
                     <span className="field-label">Wave</span>
                     <select value={pw.kind} onChange={(e) => setPlaneWave({ kind: e.target.value as SourceKind })}>
                       <option value="sine">Continuous</option>
                       <option value="pulse">One pulse</option>
                     </select>
                   </label>
-                  <NumberField label="Amplitude" value={pw.amplitude} onCommit={(v) => setPlaneWave({ amplitude: v })} />
+                  <NumberField label="Amplitude" value={pw.amplitude} onCommit={(v) => setPlaneWave({ amplitude: v })} hint={HINTS.planeWaveAmplitude} />
                 </div>
               </>
             )}
@@ -584,18 +634,18 @@ export function FdtdTool() {
           <section className="form-section">
             <h2>Run</h2>
             <div className="button-row run-buttons">
-              <button type="button" className={running ? '' : 'primary'} onClick={() => setRunning((r) => !r)} title="Space">
+              <button type="button" className={running ? '' : 'primary'} onClick={() => setRunning((r) => !r)} title={HINTS.play}>
                 {running ? 'Pause' : 'Play'}
               </button>
-              <button type="button" className="small" onClick={stepOnce} disabled={running}>
+              <button type="button" className="small" onClick={stepOnce} disabled={running} title={HINTS.step}>
                 Step ×10
               </button>
-              <button type="button" className="small" onClick={reset}>
+              <button type="button" className="small" onClick={reset} title={HINTS.reset}>
                 Reset
               </button>
             </div>
             <div className="field-row">
-              <label className="field">
+              <label className="field" title={HINTS.speed}>
                 <span className="field-label">Speed</span>
                 <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))}>
                   {SPEEDS.map((s) => (
@@ -605,7 +655,7 @@ export function FdtdTool() {
                   ))}
                 </select>
               </label>
-              <label className="field">
+              <label className="field" title={HINTS.show}>
                 <span className="field-label">Show</span>
                 <select value={mode} onChange={(e) => setMode(e.target.value as PaintMode)}>
                   <option value="field">The field, {name}</option>
@@ -613,7 +663,7 @@ export function FdtdTool() {
                 </select>
               </label>
             </div>
-            <NumberField label="Contrast" value={contrast} min={1} onCommit={setContrast} />
+            <NumberField label="Contrast" value={contrast} min={1} onCommit={setContrast} hint={HINTS.contrast} />
           </section>
         </aside>
 
@@ -637,20 +687,20 @@ export function FdtdTool() {
           </figure>
 
           <dl className="summary field-status">
-            <div>
+            <div title={HINTS.statusTime}>
               <dt>Time</dt>
               <dd>
                 {(status.timeS * 1e9).toFixed(2)} ns<small>{(status.timeS / periodS).toFixed(1)} periods, step {status.step}</small>
               </dd>
             </div>
-            <div>
+            <div title={HINTS.statusPeak}>
               <dt>Peak |{name}|</dt>
               <dd>
                 {status.peak.toPrecision(3)}
                 <small>relative to a source of 1</small>
               </dd>
             </div>
-            <div>
+            <div title={HINTS.statusSpeed}>
               <dt>Speed</dt>
               <dd>
                 {status.stepsPerSecond > 0 ? `${status.stepsPerSecond} steps/s` : running ? '…' : 'paused'}
@@ -685,7 +735,7 @@ export function FdtdTool() {
                         : 'Press Play to record.'
                       : 'The probe is outside the world.'}
                 </p>
-                <button type="button" className="small" onClick={() => setProbe(undefined)}>
+                <button type="button" className="small" onClick={() => setProbe(undefined)} title="Take the probe off the picture and close these charts. Clicking with the Probe tool puts it back.">
                   Remove the probe
                 </button>
               </div>
@@ -741,7 +791,7 @@ export function FdtdTool() {
 function SourceFields({ value, onChange }: { value: Pick<Source, 'kind' | 'amplitude' | 'phaseDeg'>; onChange: (p: Partial<Pick<Source, 'kind' | 'amplitude' | 'phaseDeg'>>) => void }) {
   return (
     <>
-      <label className="field">
+      <label className="field" title={HINTS.sourceKind}>
         <span className="field-label">Source</span>
         <select value={value.kind} onChange={(e) => onChange({ kind: e.target.value as SourceKind })}>
           <option value="sine">Continuous, at the frequency above</option>
@@ -749,8 +799,8 @@ function SourceFields({ value, onChange }: { value: Pick<Source, 'kind' | 'ampli
         </select>
       </label>
       <div className="field-row">
-        <NumberField label="Amplitude" value={value.amplitude} onCommit={(v) => onChange({ amplitude: v })} />
-        <NumberField label="Phase" value={value.phaseDeg} unit="°" onCommit={(v) => onChange({ phaseDeg: v })} />
+        <NumberField label="Amplitude" value={value.amplitude} onCommit={(v) => onChange({ amplitude: v })} hint={HINTS.sourceAmplitude} />
+        <NumberField label="Phase" value={value.phaseDeg} unit="°" onCommit={(v) => onChange({ phaseDeg: v })} hint={HINTS.sourcePhase} />
       </div>
     </>
   );

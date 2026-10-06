@@ -16,13 +16,15 @@ export interface NumberFieldProps {
   /** Visually hide the label (it is still read out). */
   hideLabel?: boolean;
   className?: string;
+  /** A sentence shown when the pointer rests on the field: what it is and what it does. */
+  hint?: string;
 }
 
 export function formatValue(value: number): string {
   return String(Number(value.toPrecision(8)));
 }
 
-export function NumberField({ label, value, onCommit, min, above, integer, unit, hideLabel, className }: NumberFieldProps) {
+export function NumberField({ label, value, onCommit, min, above, integer, unit, hideLabel, className, hint }: NumberFieldProps) {
   const [draft, setDraft] = useState<string | null>(null);
   const parsed = draft === null ? value : Number(draft.trim().replace(',', '.'));
   const valid =
@@ -49,7 +51,7 @@ export function NumberField({ label, value, onCommit, min, above, integer, unit,
   };
 
   return (
-    <label className={`field ${className ?? ''}`}>
+    <label className={`field ${className ?? ''}`} title={hint}>
       <span className={hideLabel ? 'visually-hidden' : 'field-label'}>{label}</span>
       <span className="field-input">
         <input

@@ -34,7 +34,7 @@ export function FieldSandboxGuide() {
         </li>
         <li>
           Pick <strong>Brewster's angle</strong>. A plane wave comes down at a slant onto a ground, and above the ground there is
-          only the incoming wave: nothing comes back. Now change <em>Out of the screen</em> to <strong>Ez</strong>. Same ground,
+          only the incoming wave: nothing comes back. Now change <em>Polarisation</em> to <strong>Ez</strong>. Same ground,
           same angle, the other polarisation - and a standing wave of blobs forms above the ground, because this time a good
           part of the wave is reflected.
         </li>
@@ -53,7 +53,8 @@ export function FieldSandboxGuide() {
         one as 1/r.
       </p>
       <p>
-        <strong>Two polarisations.</strong> <em>Out of the screen</em> chooses which field points along those endless objects:
+        <strong>Two polarisations.</strong> <em>Polarisation</em> chooses which field points out of the screen, along those
+        endless objects:
       </p>
       <ul>
         <li>
@@ -73,10 +74,18 @@ export function FieldSandboxGuide() {
       </p>
       <p>
         <strong>The frequency sets the scale.</strong> The world is in metres, and the cell size is a chosen fraction of the
-        wavelength at the frequency you set, so a 3 m world at 1 GHz is ten wavelengths wide and at 100 MHz it is one. Change
-        the frequency and the wavelength of a continuous source changes with it; the scenes are drawn for 1 GHz, so at other
-        frequencies you will want to redraw them to the new wavelength. The legend under the picture says how many wavelengths
-        the world is.
+        wavelength at the frequency you set, so a 3 m world at 1 GHz is ten wavelengths wide and at 100 MHz it would be
+        one - twenty cells across, a blur. So by default the scene <strong>scales with the frequency</strong>: change 1000 MHz
+        to 100 and the world becomes 30 × 20 m, every sheet, slab, disc and source grows ten times with it, and the picture is
+        the same picture, with the same cells. For conductors and lossless dielectrics that is exact - the physics has no
+        size of its own, only sizes in wavelengths. A conductivity in S/m is the exception: it stays as you typed it, and
+        a lossy ground means something different at 7 MHz than at 1 GHz. Untick <em>Scale the scene with the frequency</em>
+        to hold the metres instead, for a real object at several frequencies; the panel then warns you when the world has
+        shrunk to under two wavelengths. The legend under the picture says how many wavelengths the world is.
+      </p>
+      <p>
+        <strong>Every control explains itself.</strong> Rest the pointer on any field, tick box, button or readout and a
+        sentence says what it is and what it does.
       </p>
       <p>
         <strong>The edges absorb.</strong> Round the world is an invisible layer (a perfectly matched layer, in the jargon) that

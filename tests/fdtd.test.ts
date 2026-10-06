@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { historyReducer, initialHistory } from '../src/lib/history';
 import { PRESETS, presetById } from '../src/tools/fdtd/presets';
 import { PROBE_SAMPLES, newProbeRecord, probeView, recordProbe, spectrum } from '../src/tools/fdtd/probe';
-import { CONDUCTOR, addShape, addSource, cellOf, dielectric, emptyScene, gridFor, hitTest, limits, rasterise, removeItem, shortening } from '../src/tools/fdtd/scene';
+import { CONDUCTOR, addShape, addSource, cellOf, dielectric, emptyScene, gridFor, hitTest, limits, rasterise, removeItem, shortening, withFrequency } from '../src/tools/fdtd/scene';
 import { C0, EPS0, type PlaneWaveSpec, type Polarisation, Simulation, makeEngine, ricker } from '../src/tools/fdtd/simulation';
 
 const F = 1e9;
@@ -431,6 +431,41 @@ describe('the scene', () => {
     expect(messages(grounded)).toContainEqual(expect.stringMatching(/warning: .*starts in empty space only/));
     const buried = addShape(lit, { kind: 'rect', x: 0, y: 0, w: 0.5, h: 2 }, dielectric(4)).scene;
     expect(messages(buried)).toContainEqual(expect.stringMatching(/error: The plane wave has no empty space/));
+  });
+
+  it('scales the world and everything drawn with the wavelength when the frequency changes', () => {
+    let scene = addShape(emptyScene(), { kind: 'line', x1: 1.4, y1: 0, x2: 1.4, y2: 0.78, widthM: 0.03 }, CONDUCTOR).scene;
+    scene = addShape(scene, { kind: 'rect', x: 1.6, y: 0, w: 0.5, h: 2 }, dielectric(4, 0.01)).scene;
+    scene = addShape(scene, { kind: 'disc', cx: 1.3, cy: 1.0, r: 0.15 }, CONDUCTOR).scene;
+    scene = addSource(scene, 0.5, 1.0).scene;
+    const before = gridFor(scene);
+    // Ten times the wavelength: ten times the metres, the same cells.
+    const low = withFrequency(scene, 100);
+    expect(low.fMHz).toBe(100);
+    expect([low.widthM, low.heightM]).toEqual([30, 20]);
+    expect(low.shapes[0]!.geometry).toEqual({ kind: 'line', x1: 14, y1: 0, x2: 14, y2: 7.8, widthM: 0.3 });
+    expect(low.shapes[1]!.geometry).toEqual({ kind: 'rect', x: 16, y: 0, w: 5, h: 20 });
+    expect(low.shapes[2]!.geometry).toEqual({ kind: 'disc', cx: 13, cy: 10, r: 1.5 });
+    expect(low.sources[0]).toMatchObject({ x: 5, y: 10 });
+    // Materials are not touched: εr is scale-free and σ deliberately stays as typed.
+    expect(low.shapes[1]!.material).toEqual(dielectric(4, 0.01));
+    const after = gridFor(low);
+    expect([after.innerNx, after.innerNy]).toEqual([before.innerNx, before.innerNy]);
+    expect(rasterise(low).pec.filter((v) => v === 1).length).toBe(rasterise(scene).pec.filter((v) => v === 1).length);
+    // Back again lands where it started, to six figures; 7.1 MHz reads tidily.
+    const back = withFrequency(low, 1000);
+    expect(back.widthM).toBe(3);
+    expect(back.shapes[0]!.geometry).toEqual(scene.shapes[0]!.geometry);
+    expect(withFrequency(scene, 7.1).widthM).toBe(422.535);
+    // Off, only the frequency changes - and the world is then a fraction of a wavelength, which is said.
+    const held = withFrequency({ ...scene, scaleWithFrequency: false }, 100);
+    expect(held.widthM).toBe(3);
+    expect(held.shapes).toBe(scene.shapes);
+    expect(limits(held).notes.map((n) => n.message)).toContainEqual(expect.stringMatching(/only 1\.0 × 0\.7 wavelengths - 20 × 13 cells/));
+    expect(limits(low).notes.some((n) => /wavelengths - /.test(n.message))).toBe(false);
+    // The same frequency, or a nonsense one, changes nothing else.
+    expect(withFrequency(scene, 1000)).toEqual(scene);
+    expect(withFrequency(scene, 0).widthM).toBe(3);
   });
 
   it('warns when a material is coarse inside even though the air is fine', () => {

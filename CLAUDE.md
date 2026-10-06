@@ -448,6 +448,19 @@ delete them from a normal shell.
   t = 0 - say so in UI text ("the scene is the simulation"). The probe (`probe.ts`: ring of
   4096 samples, Hann-windowed DFT DC..3f, dB below its own peak) is NOT in the scene: moving
   it must not restart the clock.
+- **The frequency scales the scene** (2026-10-06, ZR1JT saw the picture "lose resolution" at
+  a lower frequency: cells are per WAVELENGTH, so a 3 m world at 100 MHz is 20 × 13 cells).
+  `withFrequency(scene, f)` multiplies the world, every geometry (incl. line thickness) and
+  every source position by f_old/f_new when `scene.scaleWithFrequency` (default true, older
+  stored scenes default it), tidied to 6 significant figures; materials untouched - εr is
+  scale-free, σ in S/m deliberately is not, and the hint says so. The probe is scaled in the
+  tool. Off, `limits()` warns below `SMALL_WORLD_WAVELENGTHS` (2). The frequency field goes
+  through `setFrequency`, never `setWorld({ fMHz })`.
+- **Every control has hover text**: `HINTS` in `FdtdTool.tsx` (one place), `NumberField`'s new
+  `hint` prop -> `title` on its label, `title` on every `label.field`/`label.check`, button and
+  status card. The `--fdtd` smoke fails on any sandbox label, button or status card without
+  one. The polarisation picker is labelled "Polarisation" (was "Out of the screen", which
+  ZR1JT could not place); its options stay short, the hint carries the explanation.
 - `tests/fdtd.test.ts` holds the engine to physics: pulse peak arrives at d/c (±0.15 ns at
   30 cells/λ), grid wavelength = c/f within 3 %, PEC reflection inverted with the round-trip
   delay, εr = 4 doubles the travel time (±7 %), PML leaves < 1e-4 of the peak energy where a
@@ -463,7 +476,10 @@ delete them from a normal shell.
   5 mS/m, 70°, 40 cells/λ so the ground has 10): tests hold Brewster (TE < 0.04, TM within 0.03
   of 0.60) and average ground (both within 0.05 of Fresnel at 0° and 77°; pseudo-Brewster 76.7°
   from vertical = 13.3° elevation, |Γ| 0.186).
-- `npm run smoke -- --fdtd` plays a scene, checks both signs are painted and the wall is
+- `npm run smoke -- --fdtd` checks every control has hover text, types 100 MHz and sees the
+  same 200 × 133 cells in a 30 × 20 m world (then 10 MHz with scaling off: 20 × 13 cells and
+  the warning; Ctrl+Z ×3 restores - after BLURRING the field, or the box's own undo takes it),
+  plays a scene, checks both signs are painted and the wall is
   ink, draws a sheet with real mouse input, undoes it with Ctrl+Z, buries a source and reads
   the warning; then Brewster in Hz (peak < 1.25 after 15 ns), the probe (spectrum peak at
   1000 MHz, moving it keeps the clock), Ez over the same ground (peak > 1.3), and the 40 m

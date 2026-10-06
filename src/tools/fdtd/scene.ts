@@ -56,6 +56,12 @@ export interface Scene {
   /** Which field points out of the screen: Ez ('tm') or Hz ('te'). */
   polarisation: Polarisation;
   planeWave: ScenePlaneWave | null;
+  /**
+   * When the frequency changes, scale the world and everything drawn in it with the
+   * wavelength, so the picture keeps its size in wavelengths (and its cells). Off, the
+   * metres stay and the picture coarsens as the wavelength grows.
+   */
+  scaleWithFrequency: boolean;
   shapes: Shape[];
   sources: Source[];
 }
@@ -78,7 +84,7 @@ export function sceneId(kind: string): string {
 
 /** Three metres by two at 1 GHz: ten wavelengths by six or so, at 20 cells a wavelength. */
 export function emptyScene(): Scene {
-  return { fMHz: 1000, widthM: 3, heightM: 2, cellsPerWavelength: 20, pmlCells: 10, polarisation: 'tm', planeWave: null, shapes: [], sources: [] };
+  return { fMHz: 1000, widthM: 3, heightM: 2, cellsPerWavelength: 20, pmlCells: 10, polarisation: 'tm', planeWave: null, scaleWithFrequency: true, shapes: [], sources: [] };
 }
 
 export interface Grid {
@@ -233,6 +239,42 @@ export function removeItem(scene: Scene, id: string): Scene {
   return { ...scene, shapes: scene.shapes.filter((s) => s.id !== id), sources: scene.sources.filter((s) => s.id !== id) };
 }
 
+/** Tidies a scaled length so 3 m × (1000 / 7.1) reads 422.535, not 422.53521126760563. */
+const tidy = (v: number) => Number(v.toPrecision(6));
+
+/** A geometry with every length multiplied by a ratio. */
+export function scaleGeometry(geometry: Geometry, ratio: number): Geometry {
+  switch (geometry.kind) {
+    case 'line':
+      return { ...geometry, x1: tidy(geometry.x1 * ratio), y1: tidy(geometry.y1 * ratio), x2: tidy(geometry.x2 * ratio), y2: tidy(geometry.y2 * ratio), widthM: tidy(geometry.widthM * ratio) };
+    case 'rect':
+      return { ...geometry, x: tidy(geometry.x * ratio), y: tidy(geometry.y * ratio), w: tidy(geometry.w * ratio), h: tidy(geometry.h * ratio) };
+    case 'disc':
+      return { ...geometry, cx: tidy(geometry.cx * ratio), cy: tidy(geometry.cy * ratio), r: tidy(geometry.r * ratio) };
+  }
+}
+
+/**
+ * The scene at a new frequency. With `scaleWithFrequency` on, the world and everything
+ * drawn in it grow or shrink with the wavelength, so the picture - in wavelengths, and in
+ * cells - is the same as before: conductors and lossless dielectrics behave identically
+ * at any frequency once scaled. Materials are untouched: εr is scale-free, but a
+ * conductivity in S/m is not, so a lossy ground means something different at each
+ * frequency (the tool says so). Off, only the frequency changes.
+ */
+export function withFrequency(scene: Scene, fMHz: number): Scene {
+  if (!(fMHz > 0) || !(scene.fMHz > 0) || !scene.scaleWithFrequency || fMHz === scene.fMHz) return { ...scene, fMHz };
+  const ratio = scene.fMHz / fMHz;
+  return {
+    ...scene,
+    fMHz,
+    widthM: tidy(scene.widthM * ratio),
+    heightM: tidy(scene.heightM * ratio),
+    shapes: scene.shapes.map((s) => ({ ...s, geometry: scaleGeometry(s.geometry, ratio) })),
+    sources: scene.sources.map((s) => ({ ...s, x: tidy(s.x * ratio), y: tidy(s.y * ratio) })),
+  };
+}
+
 export type Hit = { kind: 'source'; id: string } | { kind: 'shape'; id: string };
 
 /** What is under a point: a source within the tolerance first, else the topmost shape there or near its edge. */
@@ -266,6 +308,8 @@ export const COURANT = 0.7;
 export const COMFORTABLE_CELLS_PER_WAVELENGTH = 10;
 /** Above this many cells a laptop stops keeping up. */
 export const COMFORTABLE_CELLS = 300_000;
+/** A world narrower than this, in wavelengths, is a few cells across and shows little. */
+export const SMALL_WORLD_WAVELENGTHS = 2;
 
 /**
  * How many times shorter a wave is inside a material than in free space: the real part of
@@ -312,6 +356,12 @@ export function limits(scene: Scene, raster?: Raster): Limits {
     }
   }
   if (cells > COMFORTABLE_CELLS) notes.push({ severity: 'warning', message: `${cells.toLocaleString()} cells will step slowly. A smaller world, a higher frequency or fewer cells a wavelength all help.` });
+  if (scene.fMHz > 0 && scene.widthM > 0 && scene.heightM > 0 && Math.min(scene.widthM, scene.heightM) < SMALL_WORLD_WAVELENGTHS * lambdaM) {
+    notes.push({
+      severity: 'warning',
+      message: `The world is only ${(scene.widthM / lambdaM).toFixed(1)} × ${(scene.heightM / lambdaM).toFixed(1)} wavelengths - ${grid.innerNx} × ${grid.innerNy} cells, so the picture is coarse and there is little wave in it to see. Make it bigger in metres, or tick Scale the scene with the frequency and set the frequency again.`,
+    });
+  }
   if (scene.sources.length === 0 && !scene.planeWave) {
     notes.push({ severity: 'warning', message: 'There is no source yet, so nothing will happen when it runs. Choose the Source tool and click where the wave should start, or bring in a plane wave.' });
   }
@@ -357,6 +407,7 @@ export function loadScene(): Scene | undefined {
     if (![scene.fMHz, scene.widthM, scene.heightM, scene.cellsPerWavelength, scene.pmlCells].every(finite)) return undefined;
     if (!Array.isArray(scene.shapes) || !Array.isArray(scene.sources)) return undefined;
     if (scene.polarisation !== 'tm' && scene.polarisation !== 'te') scene.polarisation = 'tm';
+    if (typeof scene.scaleWithFrequency !== 'boolean') scene.scaleWithFrequency = true;
     const pw = scene.planeWave;
     const sides: Side[] = ['left', 'right', 'top', 'bottom'];
     if (pw && !(sides.includes(pw.side) && finite(pw.angleDeg) && finite(pw.amplitude) && (pw.kind === 'sine' || pw.kind === 'pulse'))) scene.planeWave = null;
