@@ -126,11 +126,12 @@ describe('a sweep through the bridge', () => {
     expect(fake.state.log).toContain('CALC:PAR1:DEF S21');
   });
 
-  it('says so when the instrument has its correction off', async () => {
+  it('says so when the instrument has its correction off, and names CalReady when that is all there is', async () => {
     const info = (await probeBridge(bridge.url))!.instruments[1]!;
     const vna = new BridgeInstrument(bridge.url, info);
     await vna.sweep({ startMHz: 1, stopMHz: 2, points: 2 });
     expect(vna.lastCorrection).toEqual({ corrected: false, method: '' });
+    expect(fake.state.log.filter((c) => c.startsWith('SENS:CORR')).slice(-3)).toEqual(['SENS:CORR?', 'SENS:CORR:USER?', 'SENS:CORR:COLL:METH:TYPE?']);
   });
 
   it('turns the instrument\'s error queue and a dead instrument into readable errors', async () => {
@@ -217,6 +218,8 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(sent.some((l) => l.startsWith('INIT:IMM'))).toBe(false);
     expect(sent.some((l) => l.startsWith('INIT:CONT 1'))).toBe(false);
     expect(sent.some((l) => l.startsWith('CALC:DATA:SDATA?'))).toBe(true);
+    // Run 5's lesson: no user calibration is not "uncorrected" - it is CalReady, at the port.
+    expect(vna.lastCorrection).toEqual({ corrected: true, method: 'CalReady' });
     // Next time it does not ask again, and never asks to switch mode again either.
     exchange.length = 0;
     await vna.sweepTransmission({ startMHz: 140, stopMHz: 150, points: 11 });

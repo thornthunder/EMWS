@@ -679,8 +679,13 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   `SENS:SWE:MTIM?`/`TIME?` ×2 + 0.5 s, else 1 s guessed, 60 s cap), `readFrequencies` falls
   back to a linear layout, `readTrace` tries `TRACE_QUERIES` (five spellings) then points at
   `--probe`. The fake's `legacy` mode refuses every define spelling AND all of INIT, answers
-  `SENS:SWE:MTIM?` 0.15. Fifth report shows whether FREQ:DATA?/SDATA? exist there. CAT-only
-  units stay unsupported.
+  `SENS:SWE:MTIM?` 0.15. **Run 5 MEASURED** (screenshot only, no log): 101 points on the
+  Smith chart - the first real FieldFox sweep in EMWS. Its page said "correction OFF" because
+  the bridge asked only `SENS:CORR:USER?`; a FieldFox with no user cal is CalReady-corrected
+  (factory cal at the port), so now `SENS:CORR?` decides corrected, USER decides the method
+  ('CalReady' when off), and the page explains CalReady vs a cal at the cable's end. The
+  tester's SITE was an older build (no orange S11 note shown): deploy before the next round.
+  Still wanted: a sweep log and the probe file. CAT-only units stay unsupported.
 
 ## Conventions
 

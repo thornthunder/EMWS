@@ -171,7 +171,9 @@ export function startFakeFieldFox(options = {}) {
       }
       return out.join(',');
     }
-    if (upper === 'SENS:CORR:USER?') return state.correction ? '1' : '0';
+    // Correction: the legacy unit, as found, had no user calibration - CalReady only.
+    if (upper === 'SENS:CORR?') return state.correction || legacy ? '1' : '0';
+    if (upper === 'SENS:CORR:USER?') return state.correction && !legacy ? '1' : '0';
     if (upper === 'SENS:CORR:COLL:METH:TYPE?') return '"QuickCal"';
     state.errors.push(`-113,"Undefined header;${spelt.split(' ')[0]}<Err>"`);
     return undefined;

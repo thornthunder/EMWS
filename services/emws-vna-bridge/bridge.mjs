@@ -378,15 +378,25 @@ export class FieldFox {
           imag.push(pairs[i + 1]);
         }
         // Whether the readings are corrected is worth knowing but not worth losing a sweep
-        // over: a firmware that does not answer these is reported as "not known".
+        // over: a firmware that does not answer these is reported as "not known". Two
+        // questions, because a FieldFox with no user calibration is still corrected by
+        // CalReady, its factory calibration at its own port: SENS:CORR? says whether any
+        // correction is on, SENS:CORR:USER? whether it is the person's own (QuickCal or a
+        // kit, at the end of their cable). Reporting only the second once told a tester
+        // their readings were uncorrected when they were CalReady-corrected.
         let corrected;
         let method = '';
         try {
-          corrected = (await this.ask(s, 'SENS:CORR:USER?', 'Correction state')).trim() !== '0';
-          if (corrected) method = unquote(await this.ask(s, 'SENS:CORR:COLL:METH:TYPE?', 'Calibration method'));
+          corrected = (await this.ask(s, 'SENS:CORR?', 'Correction state')).trim() !== '0';
+          if (corrected) {
+            const user = (await this.ask(s, 'SENS:CORR:USER?', 'User correction state')).trim() !== '0';
+            method = user ? unquote(await this.ask(s, 'SENS:CORR:COLL:METH:TYPE?', 'Calibration method')) : 'CalReady';
+          }
         } catch (e) {
           this.log?.(`  (${e instanceof Error ? e.message : String(e)} - correction state not known)`);
           s.write('*CLS');
+          corrected = undefined;
+          method = '';
         }
         return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: defined.set ? '' : `The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.` };
       } finally {

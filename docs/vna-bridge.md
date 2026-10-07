@@ -89,8 +89,9 @@ INIT:IMM;*OPC?                asks SENS:SWE:MTIM? and waits out two sweeps inste
 SENS:FREQ:DATA?               the x axis (laid out from the request if refused)
 CALC:DATA:SDATA?              real,imag pairs; corrected when correction is on; four
                               other spellings tried if refused, then --probe is the ask
-SENS:CORR:USER?               correction state - "not known" if the firmware lacks these,
-SENS:CORR:COLL:METH:TYPE?     never a lost sweep
+SENS:CORR?                    any correction on? "not known" if the firmware lacks these,
+SENS:CORR:USER?               never a lost sweep; user cal on? if not, it is CalReady,
+SENS:CORR:COLL:METH:TYPE?     the factory calibration at the port - the page says so
 INIT:CONT 1                   if it was sweeping when found
 ```
 
@@ -131,5 +132,10 @@ on that firmware (and the marker, it turns out, is positional: `CALC:PAR1` exist
 under it does not). So the bridge now treats trigger control as optional - it waits out
 two sweeps at the instrument's own rate and reads - and reads the trace in five spellings
 before giving up. The fake's `legacy` mode replays every refusal word for word and answers
-everything else, so those paths are tested. Whether `SENS:FREQ:DATA?` and `CALC:DATA:SDATA?`
-exist on A.07.75 is what the fifth run shows; the probe file would show it all at once.
+everything else, so those paths are tested. **Run 5 measured**: 101 points, 140-150 MHz,
+on the Smith chart - the first real FieldFox sweep in EMWS. The page said the readings
+were uncorrected; they were CalReady-corrected (no user calibration), because the bridge
+had asked only `SENS:CORR:USER?`. It now asks `SENS:CORR?` first and names CalReady as
+such. Still wanted from that unit: the `--log` of a sweep (which read spellings took) and
+the `--probe` file, so S11 selection and triggering can be written for its firmware instead
+of worked around.
