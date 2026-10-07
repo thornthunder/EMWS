@@ -9,7 +9,7 @@
 // Public domain (The Unlicense). By ZR1JT.
 
 import { useEffect, useRef, useState } from 'react';
-import { type Instrument, VnaError } from '../lib/vna';
+import { type BridgeInstrument, type Instrument, VnaError } from '../lib/vna';
 import { type ThruCalibration, type TransmissionPoint, applyThru, makeThruCalibration, sameTransmissionFrequencies, thruCovers } from '../lib/vna/transmission';
 import { NumberField } from './NumberField';
 import { VnaSources } from './VnaSources';
@@ -153,6 +153,12 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
       ) : (
         <p className="muted">
           Readings carry the instrument's own calibration: calibrate it on the instrument with its thru, at the ends of your two cables.
+        </p>
+      )}
+      {instrument.kind === 'bridge' && (instrument as BridgeInstrument).lastParameterNote && (
+        <p className="alert-inline">
+          The instrument's firmware would not let the bridge choose S21, so what came back is whatever trace it was showing. Put S21 on trace 1 on
+          the instrument itself, then measure again - and please send the bridge's log.
         </p>
       )}
       <div className="button-row">

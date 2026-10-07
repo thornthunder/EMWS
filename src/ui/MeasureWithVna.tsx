@@ -129,6 +129,7 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
     );
   }
   const correction = instrument.kind === 'bridge' ? (instrument as BridgeInstrument).lastCorrection : undefined;
+  const parameterNote = instrument.kind === 'bridge' ? (instrument as BridgeInstrument).lastParameterNote : undefined;
 
   return (
     <div className="vna">
@@ -176,6 +177,12 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
       )}
       {correction && correction.corrected === false && (
         <p className="alert-inline">The instrument reports that its correction is OFF: these readings are uncorrected. Calibrate it, then measure again.</p>
+      )}
+      {parameterNote && (
+        <p className="alert-inline">
+          The instrument's firmware would not let the bridge choose S11, so what came back is whatever trace it was showing. Put S11 on trace 1 on
+          the instrument itself, then measure again - and please send the bridge's log.
+        </p>
       )}
 
       <div className="button-row">

@@ -36,6 +36,9 @@ export interface SweepResult {
   /** Undefined when the instrument would not say. */
   corrected: boolean | undefined;
   method: string;
+  /** False when no spelling of "define S11" was accepted and the trace shown was swept instead. */
+  parameterSet: boolean;
+  parameterNote: string;
 }
 
 export const PARAMETER_FORMS: { define: string; select: string }[];
@@ -48,16 +51,17 @@ export class FieldFox {
   readonly host: string;
   readonly port: number;
   readonly address: string;
-  parameterForm: number | undefined;
+  parameterForm: number | 'none' | undefined;
   describe(): Promise<{ idn: string; options: string; modes: string[] }>;
   sweep(request: SweepRequest): Promise<SweepResult>;
+  probe(): Promise<string[]>;
 }
 
 export class InstrumentError extends Error {}
 
 export function parseNumbers(reply: string): number[];
 export function validateSweep(body: unknown): string | undefined;
-export function parseArgs(argv: string[]): { fieldfox: string[]; port: number; simulate: boolean; log: boolean; help: boolean };
+export function parseArgs(argv: string[]): { fieldfox: string[]; port: number; simulate: boolean; log: boolean; probe: boolean; help: boolean };
 export function parseAddress(address: string): { host: string; port: number };
 
 export function createBridge(options: {

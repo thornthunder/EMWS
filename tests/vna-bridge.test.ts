@@ -185,7 +185,7 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(modelFromIdn(info.idn)).toBe('N9914A');
   });
 
-  it('sweeps anyway: waits for the mode switch to land, tries the spellings in turn, and remembers the one that took', async () => {
+  it('sweeps anyway: waits for the mode switch, tries every spelling, then sweeps the trace shown and says so', async () => {
     const info = (await probeBridge(old.url))!.instruments[0]!;
     const vna = new BridgeInstrument(old.url, info);
     exchange.length = 0;
@@ -194,27 +194,41 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(points[0]!.z.re).toBeCloseTo(75, 3);
     const sent = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
     const heard = exchange.filter((l) => l.startsWith('< ')).map((l) => l.slice(2));
-    // Both short spellings were tried and refused with the real error text, one message each,
-    // with SYST:ERR? on the same message so the refusal came back as an answer.
-    expect(sent).toContain('CALC:PAR1:DEF S11;SYST:ERR?');
-    expect(heard).toContain('-113,"Undefined header;CALC:PAR1:DEF<Err>"');
-    expect(sent).toContain('CALC:PAR:DEF S11;SYST:ERR?');
-    expect(heard).toContain('-113,"Undefined header;CALC:PAR:DEF<Err>"');
-    // Then the long spelling (the fake's hypothesis of what A.07.75 takes), which worked.
-    expect(sent.indexOf('CALCulate:PARameter1:DEFine S11;SYST:ERR?')).toBeGreaterThan(sent.indexOf('CALC:PAR:DEF S11;SYST:ERR?'));
-    expect(fieldfox.parameterForm).toBe(2);
+    // All four spellings were tried, one message each with SYST:ERR? on it, and refused with
+    // the real error text - the header echoed back in capitals, as the instrument does.
+    for (const form of ['CALC:PAR1:DEF', 'CALC:PAR:DEF', 'CALCulate:PARameter1:DEFine', 'CALCulate:PARameter:DEFine']) {
+      expect(sent).toContain(`${form} S11;:SYST:ERR?`);
+      expect(heard).toContain(`-113,"Undefined header;${form.toUpperCase()}<Err>"`);
+    }
     // The switch was confirmed by asking, not assumed from *OPC?: INST? was asked again after it.
-    const switched = sent.indexOf('INST "NA";*OPC?;SYST:ERR?');
+    const switched = sent.indexOf('INST "NA";*OPC?;:SYST:ERR?');
     expect(switched).toBeGreaterThan(-1);
     expect(sent.slice(switched + 1)).toContain('INST?');
     expect(legacy.state.mode).toBe('NA');
-    // Next time it goes straight to the spelling that worked, and never asks to switch again.
+    // The sweep went ahead on the trace the instrument shows, and the page is told the choice was not the bridge's.
+    expect(fieldfox.parameterForm).toBe('none');
+    expect(vna.lastParameterNote).toMatch(/would not let the bridge choose S11/);
+    expect(exchange.some((l) => /no spelling of "define S11" is accepted/.test(l))).toBe(true);
+    expect(sent.some((l) => l.startsWith('SENS:FREQ:STAR 140000000'))).toBe(true);
+    expect(sent.some((l) => l.startsWith('CALC:DATA:SDATA?'))).toBe(true);
+    // Next time it does not ask again, and never asks to switch mode again either.
     exchange.length = 0;
     await vna.sweepTransmission({ startMHz: 140, stopMHz: 150, points: 11 });
     const again = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
-    expect(again.some((l) => l.startsWith('CALC:PAR1:DEF'))).toBe(false);
-    expect(again).toContain('CALCulate:PARameter1:DEFine S21;SYST:ERR?');
+    expect(again.some((l) => /DEF/i.test(l))).toBe(false);
     expect(again.some((l) => l.startsWith('INST "NA"'))).toBe(false);
+    expect(vna.lastParameterNote).toMatch(/S21/);
+  });
+
+  it('can be asked what it knows, for the next report', async () => {
+    const lines = await fieldfox.probe();
+    expect(lines.find((l) => l.startsWith('*IDN?'))).toBe('*IDN? => Keysight Technologies,N9914A,MY53104315,A.07.75');
+    expect(lines.find((l) => l.startsWith('SYST:VERS?'))).toBe('SYST:VERS? => 1999.0');
+    expect(lines.find((l) => l.startsWith('CALC:PAR1:DEF?'))).toMatch(/REFUSED: -113/);
+    expect(lines.find((l) => l.startsWith('SENS:SWE:POIN?'))).toMatch(/=> \d+$/);
+    expect(lines.find((l) => l.startsWith('CALC:DATA:SDATA?'))).toMatch(/values\)$/);
+    expect(lines.find((l) => l.startsWith('CALC:MEAS1:DEF S11'))).toMatch(/REFUSED/);
+    expect(lines.some((l) => l.includes('NO ANSWER'))).toBe(false);
   });
 
   it('a query the firmware does not know is an answer, not a twenty-second silence', async () => {
@@ -234,7 +248,7 @@ describe('the bridge\'s small parsers', () => {
     expect(parseAddress('192.168.0.50')).toEqual({ host: '192.168.0.50', port: 5025 });
     expect(parseAddress('lab-ff:5026')).toEqual({ host: 'lab-ff', port: 5026 });
     expect(parseAddress('[fe80::1]:5025')).toEqual({ host: 'fe80::1', port: 5025 });
-    expect(parseArgs(['--fieldfox', 'a', '--fieldfox', 'b:1', '--port', '9000', '--log'])).toEqual({ fieldfox: ['a', 'b:1'], port: 9000, simulate: false, log: true, help: false });
+    expect(parseArgs(['--fieldfox', 'a', '--fieldfox', 'b:1', '--port', '9000', '--log'])).toEqual({ fieldfox: ['a', 'b:1'], port: 9000, simulate: false, log: true, probe: false, help: false });
     expect(() => parseArgs(['--bogus'])).toThrow(/Unknown argument/);
     expect(validateSweep({ instrument: 'x', parameter: 'S11', startHz: 1e6, stopHz: 2e6, points: 101 })).toBeUndefined();
     expect(validateSweep({ instrument: 'x', parameter: 'S12', startHz: 1e6, stopHz: 2e6, points: 101 })).toMatch(/S11/);

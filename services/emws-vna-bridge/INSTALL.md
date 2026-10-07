@@ -143,9 +143,25 @@ What to look for:
   *the FieldFox says -222,"Data out of range"*. Copy it exactly, together with the lines
   the PowerShell window printed just before it (`--log` above): those show which command
   the instrument objected to.
-- Older firmware names some commands differently. The bridge knows one such difference
-  already (an N9914A on firmware A.07.75 taught it) and tries both forms; if yours refuses
-  something else, the log is what lets that be added.
+- Older firmware does not have every command the current manuals list. An N9914A on
+  firmware A.07.75 taught the bridge that it cannot choose S11 on such a unit at all, so
+  on one of those the bridge sweeps **whatever trace the instrument is showing** and the
+  page says so in orange. Put S11 on trace 1 on the instrument's own screen before you
+  measure (and S21 for a through measurement), and the sweep is yours.
+
+## Step 6 – if it still will not measure: ask the instrument what it knows
+
+Run the bridge once more with `--probe` instead of `--log`:
+
+```powershell
+node bridge.mjs --fieldfox 192.168.0.50 --probe
+```
+
+It does not start the bridge. It asks the FieldFox about sixty harmless questions – which
+commands it knows, what its sweep is set to, whether it can read a trace – changes nothing,
+prints the answers, writes them to a file called `probe-fieldfox-1-<date>.txt` in the same
+folder, and stops. **That file is the report.** It tells us the firmware's own vocabulary,
+which is what the fix has to be written in.
 
 Then, if you have two cables and something to measure through – a filter, an attenuator
 – go to **Coils & Filters → Stubs & cavities**, open *Measure the filter you built*, and
@@ -167,7 +183,8 @@ use normally the moment you stop. The bridge only ever listens on your own PC
 | `Test-NetConnection` says False | Wrong address, different network, or the FieldFox's LAN is off. The bridge cannot do anything until this is True. |
 | `/health` shows `"status":"unreachable"` | The bridge could not connect on port 5025; the `error` text says more. |
 | `/health` shows modes without `NA` | The instrument has no network-analyser option. The bridge cannot measure with it as it stands – that is a result worth reporting. |
-| *the FieldFox says …* | The instrument refused a command. Copy the text exactly; it tells us which command and why. |
+| *the FieldFox says …* | The instrument refused a command. Copy the text exactly; it tells us which command and why. Then run step 6. |
+| An orange note that the bridge could not choose S11 | Your firmware has no command for it. Select S11 (or S21) on the instrument itself and measure again; the readings are what the screen shows. |
 | The reading is wrong in a way you can describe | Say what was on the port, what the FieldFox's own screen showed, and what EMWS showed. |
 
 ## What to send back
@@ -178,5 +195,6 @@ use normally the moment you stop. The bridge only ever listens on your own PC
 4. Any error text, copied exactly, and the lines the PowerShell window printed – with
    `--log`, that is the whole conversation with the instrument, which is ideal.
 5. Your firmware version, which is the last part of the `idn` line.
+6. If measuring failed, the `probe-…txt` file from step 6.
 
 That is enough to fix anything that needs fixing. Thanks again – 73.

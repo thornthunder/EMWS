@@ -74,7 +74,9 @@ INST?                         ...or does not: asked again until it answers "NA" 
 CALC:PAR1:DEF S11             or S21: the guide's spelling, then if refused, in turn:
 CALC:PAR:DEF S11                no trace number
 CALCulate:PARameter1:DEFine S11 long mnemonics
-CALCulate:PARameter:DEFine S11  (the spelling that took is remembered for the session)
+CALCulate:PARameter:DEFine S11  (the spelling that took is remembered for the session;
+                                 if none takes, the trace the instrument shows is swept
+                                 and the result says so - the person chooses S11 on it)
 CALC:PAR1:SEL                 in the same spelling; a refusal here is logged and ignored
 SENS:FREQ:STAR <Hz>
 SENS:FREQ:STOP <Hz>
@@ -95,7 +97,10 @@ Each sweep opens its own connection and closes it after, so a bridge left runnin
 no socket on the instrument.
 
 `--log` prints every command and reply; a report with that in it is a report that can be
-acted on.
+acted on. `--probe` asks the instrument some sixty harmless questions (which commands it
+knows, what its sweep is set to, whether a trace can be read, every spelling of "define
+S11" and a few more), writes the answers to `probe-<id>-<date>.txt`, and stops: the way to
+learn a firmware's vocabulary when the guides do not match it.
 
 ## Standing
 
@@ -111,10 +116,15 @@ identified it. Run 1: the sweep died at `CALC:PAR1:DEF S11` with `-113,"Undefine
 header;CALC:PAR1:DEF<Err>"`. Run 2, with the log on: `INST?` answered `"NA"`, and both
 `CALC:PAR1:DEF` and `CALC:PAR:DEF` were refused the same way. Keysight's own guide for
 firmware A.08.15/A.09.15 (the oldest obtainable; its `DEFine` page dates from 2012) gives
-exactly `CALC:PAR1:DEF S11` for NA mode, so the command is not new. What was different
-about the refused commands: they were writes with an argument, sent four to a burst as
-separate lines, where everything that worked was a single query sent alone and awaited.
-Hence the one-message-one-answer rule above, and the long spellings as further
-candidates. The fake's `legacy` mode replays the two refusals word for word and - as a
-hypothesis, flagged as such in its source - accepts the long spelling, so the fallback is
-exercised. The third real run, with `--log`, decides it.
+exactly `CALC:PAR1:DEF S11` for NA mode, so the command is not new. Run 3, every
+command in a message of its own: all four spellings refused alike, the long ones echoed
+back in capitals - that firmware simply has no `CALC…:DEF` in NA mode, whatever the guides
+say. So the bridge no longer needs it: when no spelling takes, it sweeps the trace the
+instrument is showing and the result carries `parameterSet: false` with a note, which the
+page shows; the person selects S11 on the front panel. The one-message-one-answer rule
+stays, because it is right anyway and it turned every refusal into a readable answer.
+`--probe` was added for the next step: learning that firmware's vocabulary from the
+instrument instead of guessing at it. The fake's `legacy` mode replays all four refusals
+word for word and answers everything else, so the sweep-what-is-shown path and the probe
+are tested. Whether the rest of the sequence (frequencies, trigger, `SDATA`) runs on that
+firmware is what the fourth run shows.

@@ -164,9 +164,9 @@ export class FieldFox {
     this.queue = Promise.resolve();
     /**
      * How this instrument's firmware takes a trace's parameter - which of PARAMETER_FORMS
-     * worked - learnt on the first sweep. An N9914A on A.07.75 answered the first two with
-     * -113 "Undefined header" (see fake-fieldfox.mjs); which it accepts is not yet known.
-     * @type {number | undefined}
+     * worked, or 'none' - learnt on the first sweep. An N9914A on A.07.75 refuses them all
+     * with -113 "Undefined header" (see fake-fieldfox.mjs).
+     * @type {number | 'none' | undefined}
      */
     this.parameterForm = undefined;
   }
@@ -216,6 +216,8 @@ export class FieldFox {
       throw new InstrumentError(`This FieldFox has no network-analyser mode (it has ${modes || 'none it will name'}); EMWS needs S-parameters, which NA mode gives.`);
     }
     await this.ask(s, 'INST "NA";*OPC?', 'Switching to NA mode', 15000);
+    // A new mode may take a different spelling, or none: find out again.
+    this.parameterForm = undefined;
     for (let attempt = 0; attempt < 40; attempt++) {
       if (unquote(await s.query('INST?')) === 'NA') return;
       await new Promise((r) => setTimeout(r, 250));
@@ -231,7 +233,8 @@ export class FieldFox {
    * @param {ScpiSocket} s @param {string} command @param {string} what
    */
   async set(s, command, what) {
-    const reply = await s.query(`${command};SYST:ERR?`);
+    // The leading colon puts SYST:ERR? at the root whatever path the command left us on.
+    const reply = await s.query(`${command};:SYST:ERR?`);
     if (!noError(lastUnit(reply))) throw new InstrumentError(`${what} (${command}): the FieldFox says ${lastUnit(reply).trim()}`);
   }
 
@@ -240,23 +243,71 @@ export class FieldFox {
    * @param {ScpiSocket} s @param {string} query @param {string} what @param {number} [timeoutMs]
    */
   async ask(s, query, what, timeoutMs) {
-    const reply = await s.query(`${query};SYST:ERR?`, timeoutMs);
+    const reply = await s.query(`${query};:SYST:ERR?`, timeoutMs);
     const { value, error } = splitReply(reply);
     if (!noError(error)) throw new InstrumentError(`${what} (${query}): the FieldFox says ${error.trim()}`);
     return value;
   }
 
   /**
-   * Defines and selects the trace's parameter, in whichever spelling this firmware takes.
+   * Asks the instrument a battery of harmless questions and reports which it answers: the
+   * way to learn a firmware's vocabulary when the guides do not match it. Nothing in the
+   * list changes a setting; the define attempts at the end only repeat what a sweep would
+   * try. Each line of the report is "command => answer" or "command => REFUSED: reason".
+   */
+  probe() {
+    return this.withSocket(async (s) => {
+      const lines = [];
+      const one = async (command, timeoutMs = 5000) => {
+        try {
+          const reply = await s.query(`${command};:SYST:ERR?`, timeoutMs);
+          const { value, error } = splitReply(reply);
+          const shown = value.length > 120 ? `${value.slice(0, 120)}… (${value.length} chars, ${value.split(',').length} values)` : value;
+          lines.push(noError(error) ? `${command} => ${shown}` : `${command} => REFUSED: ${error.trim()}`);
+        } catch (e) {
+          lines.push(`${command} => NO ANSWER (${e instanceof Error ? e.message : String(e)})`);
+        }
+        s.write('*CLS');
+      };
+      await one('*IDN?');
+      await one('*OPT?');
+      await one('SYST:VERS?');
+      await one('INST:CAT?');
+      await one('INST?');
+      await one('INST:SEL?');
+      lines.push('--- is CALCulate there at all, in this mode? ---');
+      for (const q of ['CALC:PAR:COUN?', 'CALC:PAR1:DEF?', 'CALC:PAR:DEF?', 'CALC1:PAR1:DEF?', 'CALC1:PAR:DEF?', 'CALC:FORM?', 'CALC:MARK1:STAT?', 'CALC:SMO:STAT?', 'CALC:TRAN:TIME:STAT?']) await one(q);
+      lines.push('--- the sweep settings ---');
+      for (const q of ['SENS:FREQ:STAR?', 'SENS:FREQ:STOP?', 'SENS:FREQ:CENT?', 'SENS:FREQ:SPAN?', 'SENS:SWE:POIN?', 'SENS:BWID?', 'SENS:BAND?', 'SENS:SWE:TIME?', 'SENS:SWE:MTIM?', 'SENS:AVER:COUN?', 'INIT:CONT?', 'FORM?', 'FORM:DATA?', 'TRIG:SOUR?', 'SOUR:POW?', 'DISP:WIND:SPL?']) await one(q);
+      lines.push('--- the data (lengths only) ---');
+      for (const q of ['SENS:FREQ:DATA?', 'CALC:DATA:SDATA?', 'CALC:DATA:FDATA?', 'CALC1:DATA:SDATA?', 'CALC:SEL:DATA:SDATA?', 'TRAC:DATA?', 'TRAC1:DATA?']) await one(q, 20000);
+      lines.push('--- calibration ---');
+      for (const q of ['SENS:CORR?', 'SENS:CORR:USER?', 'SENS:CORR:COLL:METH:TYPE?', 'SENS:CORR:CALR:TYPE?', 'SENS:CORR:IMP?']) await one(q);
+      lines.push('--- choosing S11: every spelling a sweep would try, and a few more ---');
+      for (const c of ['CALC:PAR1:DEF S11', 'CALC:PAR:DEF S11', 'CALC1:PAR1:DEF S11', 'CALC1:PAR:DEF S11', "CALC:PAR1:DEF 'S11'", 'CALC:PAR1:DEF "S11"', 'CALC:PAR1:SEL', 'CALC:PAR:SEL', 'CALC:MEAS1:DEF S11', 'CALC:MEAS:DEF S11', 'CALC:PAR1:DEF:S11', 'CALC:PAR1:FUNC S11']) await one(c);
+      lines.push('--- can it list its own commands? (some Keysight firmware can) ---');
+      await one('SYST:HELP:HEAD?', 20000);
+      return lines;
+    });
+  }
+
+  /**
+   * Defines and selects the trace's parameter, in whichever spelling this firmware takes -
+   * or, when it takes none of them, says so and leaves the trace as the instrument shows
+   * it. An N9914A on A.07.75 refuses every spelling in NA mode while answering everything
+   * else, and a sweep of the trace on its screen is worth far more than no sweep: the
+   * person selects S11 on the front panel, and the page says the choice was theirs.
    * @param {ScpiSocket} s @param {'S11' | 'S21'} parameter
+   * @returns {Promise<{ set: boolean; refusals: string[] }>}
    */
   async defineParameter(s, parameter) {
     const refusals = [];
+    if (this.parameterForm === 'none') return { set: false, refusals: ['refused on an earlier sweep'] };
     const candidates = this.parameterForm !== undefined ? [this.parameterForm] : PARAMETER_FORMS.map((_, n) => n);
     for (const n of candidates) {
       const form = PARAMETER_FORMS[n];
       s.write('*CLS');
-      const reply = lastUnit(await s.query(`${form.define} ${parameter};SYST:ERR?`));
+      const reply = lastUnit(await s.query(`${form.define} ${parameter};:SYST:ERR?`));
       if (!noError(reply)) {
         refusals.push(`${form.define}: ${reply.trim()}`);
         continue;
@@ -264,15 +315,17 @@ export class FieldFox {
       this.parameterForm = n;
       // Selecting the trace matters only with several; one trace is selected already. A
       // firmware that refuses the select is told so in the log and otherwise left alone.
-      const selected = lastUnit(await s.query(`${form.select};SYST:ERR?`));
+      const selected = lastUnit(await s.query(`${form.select};:SYST:ERR?`));
       if (!noError(selected)) {
         this.log?.(`  (${form.select} refused: ${selected.trim()} - carrying on with the trace as it is)`);
         s.write('*CLS');
       }
-      return;
+      return { set: true, refusals };
     }
-    this.parameterForm = undefined;
-    throw new InstrumentError(`Defining ${parameter}: the FieldFox refused every spelling - ${refusals.join('; ')}`);
+    this.parameterForm = 'none';
+    this.log?.(`  (no spelling of "define ${parameter}" is accepted; sweeping the trace the instrument shows)`);
+    s.write('*CLS');
+    return { set: false, refusals };
   }
 
   /**
@@ -284,7 +337,7 @@ export class FieldFox {
       await this.set(s, '*CLS', 'Clearing the error queue');
       // Only switch when needed - switching resets the mode's settings, calibration included.
       await this.enterNaMode(s);
-      await this.defineParameter(s, request.parameter);
+      const defined = await this.defineParameter(s, request.parameter);
       await this.set(s, `SENS:FREQ:STAR ${request.startHz}`, 'Start frequency');
       await this.set(s, `SENS:FREQ:STOP ${request.stopHz}`, 'Stop frequency');
       await this.set(s, `SENS:SWE:POIN ${request.points}`, 'Points');
@@ -317,7 +370,7 @@ export class FieldFox {
           this.log?.(`  (${e instanceof Error ? e.message : String(e)} - correction state not known)`);
           s.write('*CLS');
         }
-        return { frequenciesHz, real, imag, corrected, method };
+        return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: defined.set ? '' : `The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.` };
       } finally {
         // Leave the instrument sweeping as it was found.
         if (wasContinuous) s.write('INIT:CONT 1');
@@ -489,13 +542,14 @@ function readJson(req) {
 
 /** @param {string[]} argv */
 export function parseArgs(argv) {
-  const spec = { fieldfox: /** @type {string[]} */ ([]), port: DEFAULT_HTTP_PORT, simulate: false, log: false, help: false };
+  const spec = { fieldfox: /** @type {string[]} */ ([]), port: DEFAULT_HTTP_PORT, simulate: false, log: false, probe: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fieldfox') spec.fieldfox.push(argv[++i] ?? '');
     else if (a === '--port') spec.port = Number(argv[++i]);
     else if (a === '--simulate') spec.simulate = true;
     else if (a === '--log') spec.log = true;
+    else if (a === '--probe') spec.probe = true;
     else if (a === '--help' || a === '-h') spec.help = true;
     else throw new Error(`Unknown argument: ${a}`);
   }
@@ -513,8 +567,9 @@ async function main() {
   const spec = parseArgs(process.argv.slice(2));
   if (spec.help || (spec.fieldfox.length === 0 && !spec.simulate)) {
     console.log(
-      'EMWS VNA bridge\n\n  node bridge.mjs --fieldfox <host[:port]> [--fieldfox ...] [--port 8075] [--log]\n  node bridge.mjs --simulate\n\n' +
-        'Then open EMWS; its "Measure it" buttons offer the instrument. --log prints every command and reply.',
+      'EMWS VNA bridge\n\n  node bridge.mjs --fieldfox <host[:port]> [--fieldfox ...] [--port 8075] [--log]\n  node bridge.mjs --fieldfox <host[:port]> --probe\n  node bridge.mjs --simulate\n\n' +
+        'Then open EMWS; its "Measure it" buttons offer the instrument. --log prints every command and reply;\n' +
+        '--probe asks the instrument which commands it knows, writes the answers to a file, and stops.',
     );
     process.exit(spec.help ? 0 : 2);
   }
@@ -528,6 +583,18 @@ async function main() {
     const fake = await startFakeFieldFox({ port: 0 });
     instruments.push(new FieldFox({ id: 'simulated', name: 'Simulated FieldFox', host: '127.0.0.1', port: fake.port, log: scpiLog }));
     console.log(`simulated FieldFox on 127.0.0.1:${fake.port} (75 ohm + 0.5 uH on port 1; a 145 MHz low-pass to port 2)`);
+  }
+  if (spec.probe) {
+    const { writeFileSync } = await import('node:fs');
+    for (const instrument of instruments) {
+      console.log(`probing ${instrument.name} at ${instrument.address}…`);
+      const lines = await instrument.probe();
+      const file = `probe-${instrument.id}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.txt`;
+      writeFileSync(file, `${lines.join('\n')}\n`);
+      for (const line of lines) console.log(`  ${line}`);
+      console.log(`written to ${file} - please send that file.`);
+    }
+    process.exit(0);
   }
   const bridge = await createBridge({ instruments, port: spec.port, log: (line) => console.log(line) });
   console.log(`EMWS VNA bridge ${VERSION} at ${bridge.url} - ${instruments.map((i) => `${i.name} (${i.address})`).join(', ')}`);

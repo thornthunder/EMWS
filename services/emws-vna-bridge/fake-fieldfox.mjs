@@ -17,10 +17,12 @@ const IDN = 'Keysight Technologies,N9912A,MY00000000,A.12.95';
 const OPTIONS = '"104,110,303,230"';
 const MODES = '"CAT","NA","SA"';
 /**
- * The first real FieldFox the bridge met (2026-10-07): an N9914A on firmware A.07.75, which
- * refused CALC:PAR1:DEF with -113 "Undefined header" - the trace-numbered form the current
- * guide gives - and listed one of its modes twice. In `legacy` mode the fake answers as it
- * did, so the bridge's fallback is tested against the real refusal, word for word.
+ * The first real FieldFox the bridge met (2026-10-07): an N9914A on firmware A.07.75. In NA
+ * mode it answers everything else and refuses EVERY spelling of "define the parameter" -
+ * CALC:PAR1:DEF, CALC:PAR:DEF, and both long forms - with -113 "Undefined header", and it
+ * lists one of its modes twice. In `legacy` mode the fake answers as it did, word for word,
+ * so the bridge's way round it (sweep the trace shown, and say so) is tested against the
+ * real refusals.
  */
 const LEGACY_IDN = 'Keysight Technologies,N9914A,MY53104315,A.07.75';
 const LEGACY_OPTIONS = '"210,010,310,235,233,211"';
@@ -63,12 +65,13 @@ export function startFakeFieldFox(options = {}) {
   };
 
   /** @param {string} cmd @returns {string | undefined} */
-  const handle = (cmd) => {
+  const handle = (raw) => {
+    // A leading colon means "from the root", which is where every command here starts anyway.
+    const cmd = raw.replace(/^:/, '');
     state.log.push(cmd);
     const spelt = cmd.toUpperCase();
     // Long mnemonics mean the same as short ones; the matching below is on the short ones.
-    const upper = spelt.replace(/CALCULATE/g, 'CALC').replace(/PARAMETER/g, 'PAR').replace(/DEFINE/g, 'DEF').replace(/SELECT/g, 'SEL');
-    const longForm = /DEFINE|SELECT/.test(spelt);
+    const upper = spelt.replace(/CALCULATE/g, 'CALC').replace(/PARAMETER/g, 'PAR').replace(/DEFINE/g, 'DEF').replace(/SELECT/g, 'SEL').replace(/SYSTEM/g, 'SYST').replace(/VERSION/g, 'VERS');
     const arg = cmd.replace(/^\S+\s*/, '').trim();
     const number = () => {
       const v = Number(arg);
@@ -82,7 +85,8 @@ export function startFakeFieldFox(options = {}) {
       return undefined;
     }
     if (upper === '*OPC?') return '1';
-    if (upper === 'SYST:ERR?') return state.errors.shift() ?? '+0,"No error"';
+    if (upper === 'SYST:ERR?') return state.errors.shift() ?? (legacy ? '0,"No error"' : '+0,"No error"');
+    if (upper === 'SYST:VERS?') return '1999.0';
     if (upper === 'INST:CAT?') return legacy ? LEGACY_MODES : MODES;
     if (upper === 'INST?' || upper === 'INST:SEL?') return `"${state.mode}"`;
     if (/^INST(:SEL)?\s/.test(upper)) {
@@ -93,19 +97,30 @@ export function startFakeFieldFox(options = {}) {
       else state.mode = mode;
       return undefined;
     }
+    if (/^CALC:PAR1?:DEF\?$/.test(upper)) {
+      if (legacy || state.mode !== 'NA') {
+        state.errors.push(`-113,"Undefined header;${spelt}<Err>"`);
+        return undefined;
+      }
+      return state.parameter;
+    }
     if (/^CALC:PAR1?:DEF\s/.test(upper)) {
-      // SEEN on the N9914A, A.07.75: both short spellings refused, in NA mode, with this
-      // very text. HYPOTHESIS, until its owner's next report: the long spelling is taken.
-      if (legacy && !longForm) state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
-      else if (state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
+      // SEEN on the N9914A, A.07.75, in NA mode: every spelling refused, with this very
+      // text (the header echoed as sent, in capitals).
+      if (legacy || state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${spelt.split(' ')[0]}<Err>"`);
       else if (!['S11', 'S21'].includes(arg.toUpperCase())) state.errors.push('-224,"Illegal parameter value"');
       else state.parameter = arg.toUpperCase();
       return undefined;
     }
     if (upper === 'CALC:PAR1:SEL' || upper === 'CALC:PAR:SEL') {
-      if ((legacy && !longForm) || state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd}<Err>"`);
+      if (legacy || state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${spelt}<Err>"`);
       return undefined;
     }
+    if (upper === 'SENS:FREQ:STAR?') return String(state.startHz);
+    if (upper === 'SENS:FREQ:STOP?') return String(state.stopHz);
+    if (upper === 'SENS:SWE:POIN?') return String(state.points);
+    if (upper === 'SENS:BWID?') return String(state.ifbwHz);
+    if (upper === 'FORM?') return state.format;
     if (/^SENS:FREQ:STAR\s/.test(upper)) {
       state.startHz = number();
       return undefined;
@@ -149,7 +164,7 @@ export function startFakeFieldFox(options = {}) {
     }
     if (upper === 'SENS:CORR:USER?') return state.correction ? '1' : '0';
     if (upper === 'SENS:CORR:COLL:METH:TYPE?') return '"QuickCal"';
-    state.errors.push('-113,"Undefined header"');
+    state.errors.push(`-113,"Undefined header;${spelt.split(' ')[0]}<Err>"`);
     return undefined;
   };
 

@@ -664,10 +664,18 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   `PARAMETER_FORMS` tries short numbered, short plain, long numbered, long plain and
   remembers the index; a refused SEL is logged, not fatal; correction-state queries can fail
   without losing the sweep (`corrected: undefined` -> the page says nothing). `enterNaMode`
-  re-asks `INST?` until NA. `fake-fieldfox.mjs { legacy: true }` replays both refusals word
-  for word, answers compound messages on one line per IEEE 488.2, and accepts the long
-  spelling AS A HYPOTHESIS (flagged in source and test). Third report decides. CAT-only
-  units stay unsupported.
+  re-asks `INST?` until NA. Run 3 (`VNA_Error.txt`): ALL FOUR spellings refused, one message
+  each, in NA mode - the burst theory died too; that firmware has no `CALC…:DEF`. So
+  `defineParameter` returns `{ set: false }` instead of throwing (`parameterForm = 'none'`,
+  reset on a mode switch), the sweep reads the trace SHOWN, the result carries
+  `parameterSet`/`parameterNote`, `BridgeInstrument.lastParameterNote` and both measuring
+  panels show an orange note (select S11/S21 on the front panel). `--probe` asks ~60 harmless
+  queries (incl. `SYST:HELP:HEAD?`, which some Keysight firmware answers with its whole
+  command tree) and writes `probe-<id>-<date>.txt` - INSTALL.md step 6. Compound messages
+  use `;:SYST:ERR?` with the leading colon (root path). The fake's `legacy` mode now
+  refuses every define spelling (the hypothesis is gone) and answers the probe. Fourth
+  report shows whether the rest of the sequence runs on A.07.75. CAT-only units stay
+  unsupported.
 
 ## Conventions
 
