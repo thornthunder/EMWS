@@ -278,13 +278,16 @@ export class FieldFox {
       lines.push('--- is CALCulate there at all, in this mode? ---');
       for (const q of ['CALC:PAR:COUN?', 'CALC:PAR1:DEF?', 'CALC:PAR:DEF?', 'CALC1:PAR1:DEF?', 'CALC1:PAR:DEF?', 'CALC:FORM?', 'CALC:MARK1:STAT?', 'CALC:SMO:STAT?', 'CALC:TRAN:TIME:STAT?']) await one(q);
       lines.push('--- the sweep settings ---');
-      for (const q of ['SENS:FREQ:STAR?', 'SENS:FREQ:STOP?', 'SENS:FREQ:CENT?', 'SENS:FREQ:SPAN?', 'SENS:SWE:POIN?', 'SENS:BWID?', 'SENS:BAND?', 'SENS:SWE:TIME?', 'SENS:SWE:MTIM?', 'SENS:AVER:COUN?', 'INIT:CONT?', 'FORM?', 'FORM:DATA?', 'TRIG:SOUR?', 'SOUR:POW?', 'DISP:WIND:SPL?']) await one(q);
+      for (const q of ['SENS:FREQ:STAR?', 'SENS:FREQ:STOP?', 'SENS:FREQ:CENT?', 'SENS:FREQ:SPAN?', 'SENS:SWE:POIN?', 'SENS:BWID?', 'SENS:BAND?', 'SENS:SWE:TIME?', 'SENS:SWE:MTIM?', 'SENS:AVER:COUN?', 'FORM?', 'FORM:DATA?', 'SOUR:POW?', 'DISP:WIND:SPL?']) await one(q);
+      lines.push('--- triggering ---');
+      for (const q of ['INIT:CONT?', 'INITiate:CONTinuous?', 'TRIG:SOUR?', 'TRIGger:SOURce?', 'SENS:SWE:MODE?', 'TRIG:SING?', 'ABOR?', 'SENS:SWE:TRIG?', 'STAT:OPER:COND?', 'STAT:OPER:AVER:COND?']) await one(q);
       lines.push('--- the data (lengths only) ---');
-      for (const q of ['SENS:FREQ:DATA?', 'CALC:DATA:SDATA?', 'CALC:DATA:FDATA?', 'CALC1:DATA:SDATA?', 'CALC:SEL:DATA:SDATA?', 'TRAC:DATA?', 'TRAC1:DATA?']) await one(q, 20000);
+      for (const q of TRACE_QUERIES) await one(q, 20000);
+      for (const q of ['SENS:FREQ:DATA?', 'CALC:DATA:FDATA?', 'CALC:SEL:DATA:FDATA?', 'TRAC:DATA?', 'TRAC1:DATA?', 'CALC:MEAS:DATA?']) await one(q, 20000);
       lines.push('--- calibration ---');
       for (const q of ['SENS:CORR?', 'SENS:CORR:USER?', 'SENS:CORR:COLL:METH:TYPE?', 'SENS:CORR:CALR:TYPE?', 'SENS:CORR:IMP?']) await one(q);
       lines.push('--- choosing S11: every spelling a sweep would try, and a few more ---');
-      for (const c of ['CALC:PAR1:DEF S11', 'CALC:PAR:DEF S11', 'CALC1:PAR1:DEF S11', 'CALC1:PAR:DEF S11', "CALC:PAR1:DEF 'S11'", 'CALC:PAR1:DEF "S11"', 'CALC:PAR1:SEL', 'CALC:PAR:SEL', 'CALC:MEAS1:DEF S11', 'CALC:MEAS:DEF S11', 'CALC:PAR1:DEF:S11', 'CALC:PAR1:FUNC S11']) await one(c);
+      for (const c of ['CALC:PAR1:DEF S11', 'CALC:PAR:DEF S11', 'CALC1:PAR1:DEF S11', 'CALC1:PAR:DEF S11', "CALC:PAR1:DEF 'S11'", 'CALC:PAR1:DEF "S11"', 'CALC:PAR1:SEL', 'CALC:PAR:SEL', 'CALC:MEAS1:DEF S11', 'CALC:MEAS:DEF S11', 'CALC:PAR1:DEF:S11', 'CALC:PAR1:FUNC S11', 'CALC:PAR1:MEAS S11', 'CALC:PAR1 S11', 'SENS:FUNC "S11"', 'CALC:PAR1:CAT?', 'CALC:PAR:CAT?']) await one(c);
       lines.push('--- can it list its own commands? (some Keysight firmware can) ---');
       await one('SYST:HELP:HEAD?', 20000);
       return lines;
@@ -343,13 +346,28 @@ export class FieldFox {
       await this.set(s, `SENS:SWE:POIN ${request.points}`, 'Points');
       if (request.ifbwHz) await this.set(s, `SENS:BWID ${request.ifbwHz}`, 'IF bandwidth');
       await this.set(s, 'FORM ASC,0', 'Data format');
-      const wasContinuous = (await this.ask(s, 'INIT:CONT?', 'Trigger state')).trim() !== '0';
-      await this.set(s, 'INIT:CONT 0', 'Single sweep');
+      // Single-sweep triggering, as the guide insists - where the firmware has it. An
+      // N9914A on A.07.75 has no INITiate subsystem at all; it sweeps on its own, so there
+      // the bridge waits out two sweeps at the new settings and reads what it then holds.
+      let wasContinuous = false;
+      let triggered = false;
       try {
-        // A long sweep at a narrow IF bandwidth can take a while: give it two minutes.
-        await this.ask(s, 'INIT:IMM;*OPC?', 'Triggering the sweep', 120000);
-        const frequenciesHz = parseNumbers(await this.ask(s, 'SENS:FREQ:DATA?', 'Reading the frequencies', 20000));
-        const pairs = parseNumbers(await this.ask(s, 'CALC:DATA:SDATA?', 'Reading the trace', 20000));
+        wasContinuous = (await this.ask(s, 'INIT:CONT?', 'Trigger state')).trim() !== '0';
+        await this.set(s, 'INIT:CONT 0', 'Single sweep');
+        triggered = true;
+      } catch (e) {
+        this.log?.(`  (${e instanceof Error ? e.message : String(e)} - no trigger control on this firmware; letting it sweep on its own)`);
+        s.write('*CLS');
+      }
+      try {
+        if (triggered) {
+          // A long sweep at a narrow IF bandwidth can take a while: give it two minutes.
+          await this.ask(s, 'INIT:IMM;*OPC?', 'Triggering the sweep', 120000);
+        } else {
+          await this.waitForSweeps(s, 2);
+        }
+        const frequenciesHz = await this.readFrequencies(s, request);
+        const pairs = await this.readTrace(s);
         if (pairs.length !== frequenciesHz.length * 2) {
           throw new InstrumentError(`The FieldFox returned ${pairs.length} values for ${frequenciesHz.length} frequencies; expected real and imaginary pairs.`);
         }
@@ -373,9 +391,65 @@ export class FieldFox {
         return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: defined.set ? '' : `The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.` };
       } finally {
         // Leave the instrument sweeping as it was found.
-        if (wasContinuous) s.write('INIT:CONT 1');
+        if (triggered && wasContinuous) s.write('INIT:CONT 1');
       }
     });
+  }
+
+  /**
+   * On a firmware with no trigger control: how long one sweep takes, asked of the
+   * instrument, or a guess if it will not say; then that many sweeps' worth of waiting.
+   * @param {ScpiSocket} s @param {number} sweeps
+   */
+  async waitForSweeps(s, sweeps) {
+    let seconds = 1;
+    for (const q of ['SENS:SWE:MTIM?', 'SENS:SWE:TIME?']) {
+      try {
+        const v = Number(await this.ask(s, q, 'Sweep time'));
+        if (Number.isFinite(v) && v > 0) {
+          seconds = v;
+          break;
+        }
+      } catch {
+        s.write('*CLS');
+      }
+    }
+    const waitMs = Math.min(60000, Math.round((sweeps * seconds + 0.5) * 1000));
+    this.log?.(`  (waiting ${waitMs} ms for ${sweeps} sweeps of ${seconds} s)`);
+    await new Promise((r) => setTimeout(r, waitMs));
+  }
+
+  /**
+   * The x axis: asked of the instrument, or laid out from the request when the firmware
+   * will not say (a linear sweep, which is all the bridge asks for).
+   * @param {ScpiSocket} s @param {{ startHz: number; stopHz: number; points: number }} request
+   */
+  async readFrequencies(s, request) {
+    try {
+      return parseNumbers(await this.ask(s, 'SENS:FREQ:DATA?', 'Reading the frequencies', 20000));
+    } catch (e) {
+      this.log?.(`  (${e instanceof Error ? e.message : String(e)} - laying the frequencies out from the request)`);
+      s.write('*CLS');
+      return Array.from({ length: request.points }, (_, i) => request.startHz + ((request.stopHz - request.startHz) * i) / (request.points - 1));
+    }
+  }
+
+  /**
+   * The trace as real,imag pairs, in whichever spelling the firmware takes; every refusal
+   * is named if none does, with the probe as the next step.
+   * @param {ScpiSocket} s
+   */
+  async readTrace(s) {
+    const refusals = [];
+    for (const q of TRACE_QUERIES) {
+      try {
+        return parseNumbers(await this.ask(s, q, 'Reading the trace', 20000));
+      } catch (e) {
+        refusals.push(e instanceof Error ? e.message : String(e));
+        s.write('*CLS');
+      }
+    }
+    throw new InstrumentError(`The trace could not be read in any spelling the bridge knows - ${refusals.join('; ')}. Run the bridge with --probe and send the file it writes.`);
   }
 }
 
@@ -392,6 +466,9 @@ export const PARAMETER_FORMS = [
   { define: 'CALCulate:PARameter1:DEFine', select: 'CALCulate:PARameter1:SELect' },
   { define: 'CALCulate:PARameter:DEFine', select: 'CALCulate:PARameter:SELect' },
 ];
+
+/** The spellings tried for "the trace, unformatted, real and imaginary", in order. */
+export const TRACE_QUERIES = ['CALC:DATA:SDATA?', 'CALC:SEL:DATA:SDATA?', 'CALC1:DATA:SDATA?', 'CALCulate:DATA:SDATa?', 'CALC:PAR1:DATA:SDATA?'];
 
 /** A comma-separated SCPI list, as numbers. @param {string} reply */
 export function parseNumbers(reply) {

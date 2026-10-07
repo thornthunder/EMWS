@@ -672,10 +672,15 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   panels show an orange note (select S11/S21 on the front panel). `--probe` asks ~60 harmless
   queries (incl. `SYST:HELP:HEAD?`, which some Keysight firmware answers with its whole
   command tree) and writes `probe-<id>-<date>.txt` - INSTALL.md step 6. Compound messages
-  use `;:SYST:ERR?` with the leading colon (root path). The fake's `legacy` mode now
-  refuses every define spelling (the hypothesis is gone) and answers the probe. Fourth
-  report shows whether the rest of the sequence runs on A.07.75. CAT-only units stay
-  unsupported.
+  use `;:SYST:ERR?` with the leading colon (root path). Run 4 (`VNA_Error5.txt`): STAR/STOP/
+  POIN/FORM accepted; `INIT:CONT?` -> `-113,"Undefined header;INIT<Err>"` - the `<Err>`
+  marker is POSITIONAL (after the first unknown node): no INITiate subsystem on A.07.75, and
+  `CALC:PAR1` exists but `DEF` does not. So trigger control is optional (`waitForSweeps`:
+  `SENS:SWE:MTIM?`/`TIME?` ×2 + 0.5 s, else 1 s guessed, 60 s cap), `readFrequencies` falls
+  back to a linear layout, `readTrace` tries `TRACE_QUERIES` (five spellings) then points at
+  `--probe`. The fake's `legacy` mode refuses every define spelling AND all of INIT, answers
+  `SENS:SWE:MTIM?` 0.15. Fifth report shows whether FREQ:DATA?/SDATA? exist there. CAT-only
+  units stay unsupported.
 
 ## Conventions
 

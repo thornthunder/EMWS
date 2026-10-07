@@ -83,11 +83,12 @@ SENS:FREQ:STOP <Hz>
 SENS:SWE:POIN <n>
 SENS:BWID <Hz>                only if asked for
 FORM ASC,0
-INIT:CONT?                    remembered, restored at the end
-INIT:CONT 0
-INIT:IMM;*OPC?                single sweep, as the guide insists
-SENS:FREQ:DATA?               the x axis
-CALC:DATA:SDATA?              real,imag pairs; corrected when correction is on
+INIT:CONT?                    remembered, restored at the end - where the firmware has
+INIT:CONT 0                   INITiate at all; A.07.75 has none, and there the bridge
+INIT:IMM;*OPC?                asks SENS:SWE:MTIM? and waits out two sweeps instead
+SENS:FREQ:DATA?               the x axis (laid out from the request if refused)
+CALC:DATA:SDATA?              real,imag pairs; corrected when correction is on; four
+                              other spellings tried if refused, then --probe is the ask
 SENS:CORR:USER?               correction state - "not known" if the firmware lacks these,
 SENS:CORR:COLL:METH:TYPE?     never a lost sweep
 INIT:CONT 1                   if it was sweeping when found
@@ -124,7 +125,11 @@ instrument is showing and the result carries `parameterSet: false` with a note, 
 page shows; the person selects S11 on the front panel. The one-message-one-answer rule
 stays, because it is right anyway and it turned every refusal into a readable answer.
 `--probe` was added for the next step: learning that firmware's vocabulary from the
-instrument instead of guessing at it. The fake's `legacy` mode replays all four refusals
-word for word and answers everything else, so the sweep-what-is-shown path and the probe
-are tested. Whether the rest of the sequence (frequencies, trigger, `SDATA`) runs on that
-firmware is what the fourth run shows.
+instrument instead of guessing at it. Run 4: frequencies, points and format all
+accepted; `INIT:CONT?` refused with the marker right after `INIT` - no `INITiate` at all
+on that firmware (and the marker, it turns out, is positional: `CALC:PAR1` exists, `DEF`
+under it does not). So the bridge now treats trigger control as optional - it waits out
+two sweeps at the instrument's own rate and reads - and reads the trace in five spellings
+before giving up. The fake's `legacy` mode replays every refusal word for word and answers
+everything else, so those paths are tested. Whether `SENS:FREQ:DATA?` and `CALC:DATA:SDATA?`
+exist on A.07.75 is what the fifth run shows; the probe file would show it all at once.

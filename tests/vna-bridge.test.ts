@@ -210,6 +210,12 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(vna.lastParameterNote).toMatch(/would not let the bridge choose S11/);
     expect(exchange.some((l) => /no spelling of "define S11" is accepted/.test(l))).toBe(true);
     expect(sent.some((l) => l.startsWith('SENS:FREQ:STAR 140000000'))).toBe(true);
+    // No INITiate on this firmware (run 4): the trigger refusal is read, the sweep is waited out instead, nothing is triggered.
+    expect(heard).toContain('-113,"Undefined header;INIT<Err>"');
+    expect(exchange.some((l) => /no trigger control on this firmware/.test(l))).toBe(true);
+    expect(exchange.some((l) => /waiting 800 ms for 2 sweeps of 0.15 s/.test(l))).toBe(true);
+    expect(sent.some((l) => l.startsWith('INIT:IMM'))).toBe(false);
+    expect(sent.some((l) => l.startsWith('INIT:CONT 1'))).toBe(false);
     expect(sent.some((l) => l.startsWith('CALC:DATA:SDATA?'))).toBe(true);
     // Next time it does not ask again, and never asks to switch mode again either.
     exchange.length = 0;
@@ -225,6 +231,7 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(lines.find((l) => l.startsWith('*IDN?'))).toBe('*IDN? => Keysight Technologies,N9914A,MY53104315,A.07.75');
     expect(lines.find((l) => l.startsWith('SYST:VERS?'))).toBe('SYST:VERS? => 1999.0');
     expect(lines.find((l) => l.startsWith('CALC:PAR1:DEF?'))).toMatch(/REFUSED: -113/);
+    expect(lines.find((l) => l.startsWith('INIT:CONT?'))).toMatch(/REFUSED: -113,"Undefined header;INIT<Err>"/);
     expect(lines.find((l) => l.startsWith('SENS:SWE:POIN?'))).toMatch(/=> \d+$/);
     expect(lines.find((l) => l.startsWith('CALC:DATA:SDATA?'))).toMatch(/values\)$/);
     expect(lines.find((l) => l.startsWith('CALC:MEAS1:DEF S11'))).toMatch(/REFUSED/);

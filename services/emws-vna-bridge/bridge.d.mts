@@ -42,6 +42,7 @@ export interface SweepResult {
 }
 
 export const PARAMETER_FORMS: { define: string; select: string }[];
+export const TRACE_QUERIES: string[];
 export function splitReply(reply: string): { value: string; error: string };
 
 export class FieldFox {

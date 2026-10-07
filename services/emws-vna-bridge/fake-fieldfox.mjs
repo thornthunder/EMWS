@@ -143,12 +143,21 @@ export function startFakeFieldFox(options = {}) {
       state.format = arg.toUpperCase().replace(/\s/g, '');
       return undefined;
     }
-    if (upper === 'INIT:CONT?') return state.continuous ? '1' : '0';
-    if (/^INIT:CONT\s/.test(upper)) {
-      state.continuous = !/^(0|OFF)$/i.test(arg);
-      return undefined;
+    if (/^INIT/.test(upper)) {
+      // SEEN on the N9914A, A.07.75: no INITiate subsystem at all - the marker sits right
+      // after INIT. It sweeps continuously on its own.
+      if (legacy) {
+        state.errors.push('-113,"Undefined header;INIT<Err>"');
+        return undefined;
+      }
+      if (upper === 'INIT:CONT?') return state.continuous ? '1' : '0';
+      if (/^INIT:CONT\s/.test(upper)) {
+        state.continuous = !/^(0|OFF)$/i.test(arg);
+        return undefined;
+      }
+      if (upper === 'INIT:IMM' || upper === 'INIT') return undefined;
     }
-    if (upper === 'INIT:IMM' || upper === 'INIT') return undefined;
+    if (upper === 'SENS:SWE:MTIM?' || upper === 'SENS:SWE:TIME?') return '0.15';
     if (upper === 'SENS:FREQ:DATA?') return frequencies().join(',');
     if (upper === 'CALC:DATA:SDATA?') {
       if (state.mode !== 'NA') {
