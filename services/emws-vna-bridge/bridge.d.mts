@@ -33,9 +33,13 @@ export interface SweepResult {
   frequenciesHz: number[];
   real: number[];
   imag: number[];
-  corrected: boolean;
+  /** Undefined when the instrument would not say. */
+  corrected: boolean | undefined;
   method: string;
 }
+
+export const PARAMETER_FORMS: { define: string; select: string }[];
+export function splitReply(reply: string): { value: string; error: string };
 
 export class FieldFox {
   constructor(spec: FieldFoxSpec);
@@ -44,7 +48,7 @@ export class FieldFox {
   readonly host: string;
   readonly port: number;
   readonly address: string;
-  parameterForm: 'numbered' | 'plain' | undefined;
+  parameterForm: number | undefined;
   describe(): Promise<{ idn: string; options: string; modes: string[] }>;
   sweep(request: SweepRequest): Promise<SweepResult>;
 }

@@ -4,7 +4,7 @@
 // by arithmetic the answers can be checked against.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FieldFox, createBridge, parseAddress, parseArgs, parseNumbers, validateSweep } from '../services/emws-vna-bridge/bridge.mjs';
+import { FieldFox, createBridge, parseAddress, parseArgs, parseNumbers, splitReply, validateSweep } from '../services/emws-vna-bridge/bridge.mjs';
 import { antennaGamma, lowPassS21, splitCommands, startFakeFieldFox } from '../services/emws-vna-bridge/fake-fieldfox.mjs';
 import { BridgeInstrument, modelFromIdn, probeBridge } from '../src/lib/vna/bridge';
 
@@ -98,9 +98,11 @@ describe('a sweep through the bridge', () => {
     expect(log).toContain('SENS:FREQ:STOP 7300000');
     expect(log).toContain('SENS:SWE:POIN 11');
     expect(log).toContain('FORM ASC,0');
+    // Every setting travels with SYST:ERR? on the same message, so each gets one answer.
+    expect(log[log.indexOf('SENS:SWE:POIN 11') + 1]).toBe('SYST:ERR?');
     // Single-sweep triggering, then the x axis and the complex trace, then back to continuous.
     const trigger = log.indexOf('INIT:IMM');
-    expect(log[trigger - 1]).toBe('INIT:CONT 0');
+    expect(log[trigger - 2]).toBe('INIT:CONT 0');
     expect(log[trigger + 1]).toBe('*OPC?');
     expect(log.indexOf('SENS:FREQ:DATA?')).toBeGreaterThan(trigger);
     expect(log.indexOf('CALC:DATA:SDATA?')).toBeGreaterThan(trigger);
@@ -183,33 +185,44 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(modelFromIdn(info.idn)).toBe('N9914A');
   });
 
-  it('sweeps anyway: waits for the mode switch to land, falls back to CALC:PAR:DEF, and remembers', async () => {
+  it('sweeps anyway: waits for the mode switch to land, tries the spellings in turn, and remembers the one that took', async () => {
     const info = (await probeBridge(old.url))!.instruments[0]!;
     const vna = new BridgeInstrument(old.url, info);
     exchange.length = 0;
     const points = await vna.sweep({ startMHz: 140, stopMHz: 150, points: 101 });
     expect(points).toHaveLength(101);
     expect(points[0]!.z.re).toBeCloseTo(75, 3);
-    // The numbered form was tried, refused with the real error text, and the plain form took.
     const sent = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
     const heard = exchange.filter((l) => l.startsWith('< ')).map((l) => l.slice(2));
-    expect(sent).toContain('CALC:PAR1:DEF S11');
+    // Both short spellings were tried and refused with the real error text, one message each,
+    // with SYST:ERR? on the same message so the refusal came back as an answer.
+    expect(sent).toContain('CALC:PAR1:DEF S11;SYST:ERR?');
     expect(heard).toContain('-113,"Undefined header;CALC:PAR1:DEF<Err>"');
-    expect(sent.indexOf('CALC:PAR:DEF S11')).toBeGreaterThan(sent.indexOf('CALC:PAR1:DEF S11'));
-    expect(sent).toContain('CALC:PAR:SEL');
+    expect(sent).toContain('CALC:PAR:DEF S11;SYST:ERR?');
+    expect(heard).toContain('-113,"Undefined header;CALC:PAR:DEF<Err>"');
+    // Then the long spelling (the fake's hypothesis of what A.07.75 takes), which worked.
+    expect(sent.indexOf('CALCulate:PARameter1:DEFine S11;SYST:ERR?')).toBeGreaterThan(sent.indexOf('CALC:PAR:DEF S11;SYST:ERR?'));
+    expect(fieldfox.parameterForm).toBe(2);
     // The switch was confirmed by asking, not assumed from *OPC?: INST? was asked again after it.
-    const switched = sent.indexOf('INST "NA";*OPC?');
+    const switched = sent.indexOf('INST "NA";*OPC?;SYST:ERR?');
     expect(switched).toBeGreaterThan(-1);
     expect(sent.slice(switched + 1)).toContain('INST?');
     expect(legacy.state.mode).toBe('NA');
-    expect(fieldfox.parameterForm).toBe('plain');
-    // Next time it goes straight to the form that worked, and never asks to switch again.
+    // Next time it goes straight to the spelling that worked, and never asks to switch again.
     exchange.length = 0;
     await vna.sweepTransmission({ startMHz: 140, stopMHz: 150, points: 11 });
     const again = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
-    expect(again).not.toContain('CALC:PAR1:DEF S21');
-    expect(again).toContain('CALC:PAR:DEF S21');
-    expect(again).not.toContain('INST "NA";*OPC?');
+    expect(again.some((l) => l.startsWith('CALC:PAR1:DEF'))).toBe(false);
+    expect(again).toContain('CALCulate:PARameter1:DEFine S21;SYST:ERR?');
+    expect(again.some((l) => l.startsWith('INST "NA"'))).toBe(false);
+  });
+
+  it('a query the firmware does not know is an answer, not a twenty-second silence', async () => {
+    // Compound replies: the value and the error share one line; an unknown query leaves only the error.
+    expect(splitReply('1;+0,"No error"')).toEqual({ value: '1', error: '+0,"No error"' });
+    expect(splitReply('1.0E+08,2.0E+08;0,"No error"')).toEqual({ value: '1.0E+08,2.0E+08', error: '0,"No error"' });
+    expect(splitReply('-113,"Undefined header;SENS:CORR:USER?<Err>"')).toEqual({ value: '', error: '-113,"Undefined header;SENS:CORR:USER?<Err>"' });
+    expect(splitReply('"NA"')).toEqual({ value: '"NA"', error: '0,"No error"' });
   });
 });
 

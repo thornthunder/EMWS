@@ -60,30 +60,34 @@ one). One sweep runs at a time per instrument; others queue.
 
 From Keysight's FieldFox programming guide, NA mode:
 
+Every command goes in a message of its own with `SYST:ERR?` on the end, so each message
+gets exactly one answer: the value (if a query) and the instrument's verdict on the
+command, on one line as IEEE 488.2 says (`1;+0,"No error"`). A refusal therefore names the
+command refused, and a query the firmware does not know comes back as its error instead of
+as twenty seconds of silence.
+
 ```
 *CLS
 INST?                         only switch when not already in NA mode:
 INST "NA";*OPC?               a mode switch is overlapped, *OPC? waits for it...
 INST?                         ...or does not: asked again until it answers "NA" (10 s)
-*CLS
-CALC:PAR1:DEF S11             or S21 - the current guide's trace-numbered form;
-CALC:PAR1:SEL                 if SYST:ERR? refuses it (-113 on an N9914A, A.07.75):
-CALC:PAR:DEF S11              the plain form, remembered for the rest of the session
-CALC:PAR:SEL
+CALC:PAR1:DEF S11             or S21: the guide's spelling, then if refused, in turn:
+CALC:PAR:DEF S11                no trace number
+CALCulate:PARameter1:DEFine S11 long mnemonics
+CALCulate:PARameter:DEFine S11  (the spelling that took is remembered for the session)
+CALC:PAR1:SEL                 in the same spelling; a refusal here is logged and ignored
 SENS:FREQ:STAR <Hz>
 SENS:FREQ:STOP <Hz>
 SENS:SWE:POIN <n>
 SENS:BWID <Hz>                only if asked for
 FORM ASC,0
-SYST:ERR?                     must be 0
 INIT:CONT?                    remembered, restored at the end
 INIT:CONT 0
 INIT:IMM;*OPC?                single sweep, as the guide insists
 SENS:FREQ:DATA?               the x axis
 CALC:DATA:SDATA?              real,imag pairs; corrected when correction is on
-SENS:CORR:USER?               correction state
-SENS:CORR:COLL:METH:TYPE?     which calibration
-SYST:ERR?
+SENS:CORR:USER?               correction state - "not known" if the firmware lacks these,
+SENS:CORR:COLL:METH:TYPE?     never a lost sweep
 INIT:CONT 1                   if it was sweeping when found
 ```
 
@@ -102,10 +106,15 @@ that a wrong command lands in. `tests/vna-bridge.test.ts` drives the real bridge
 it; `npm run smoke -- --vna` does the same through the browser.
 
 **First real instrument, 2026-10-07:** an N9914A on firmware A.07.75 (options 210, 010,
-310, 235, 233, 211; modes CPM, SA, NA, CAT). The bridge found and identified it, and the
-sweep failed at `CALC:PAR1:DEF` with `-113,"Undefined header;CALC:PAR1:DEF<Err>"` - the
-trace-numbered form in the current guide, which that firmware does not have (its mode
-list also named one mode twice). The bridge now confirms the mode switch landed by asking
-`INST?` again, tries the plain `CALC:PAR:DEF` when the numbered form is refused, and the
-fake's `legacy` mode replays that instrument word for word in the tests. The second real
-run is what proves the rest of the sequence on that firmware.
+310, 235, 233, 211; modes CPM, SA, NA, CAT - one listed twice). The bridge found and
+identified it. Run 1: the sweep died at `CALC:PAR1:DEF S11` with `-113,"Undefined
+header;CALC:PAR1:DEF<Err>"`. Run 2, with the log on: `INST?` answered `"NA"`, and both
+`CALC:PAR1:DEF` and `CALC:PAR:DEF` were refused the same way. Keysight's own guide for
+firmware A.08.15/A.09.15 (the oldest obtainable; its `DEFine` page dates from 2012) gives
+exactly `CALC:PAR1:DEF S11` for NA mode, so the command is not new. What was different
+about the refused commands: they were writes with an argument, sent four to a burst as
+separate lines, where everything that worked was a single query sent alone and awaited.
+Hence the one-message-one-answer rule above, and the long spellings as further
+candidates. The fake's `legacy` mode replays the two refusals word for word and - as a
+hypothesis, flagged as such in its source - accepts the long spelling, so the fallback is
+exercised. The third real run, with `--log`, decides it.

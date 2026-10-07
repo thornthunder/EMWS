@@ -132,6 +132,22 @@ const noError = (reply) => /^\+?0\b/.test(reply.trim());
 const unquote = (s) => s.trim().replace(/^"(.*)"$/, '$1');
 
 /**
+ * A message with SYST:ERR? on the end answers "<value>;<code>,"<text>"" on one line (IEEE
+ * 488.2: one response message, units separated by semicolons). When the first unit was a
+ * query the instrument does not know, nothing comes back for it and the whole line is the
+ * error. Splits at the last semicolon that precedes something shaped like an error.
+ * @param {string} reply
+ */
+export function splitReply(reply) {
+  const m = /^(?:(.*);)?\s*([+-]?\d+\s*,\s*".*")\s*$/s.exec(reply);
+  if (!m) return { value: reply.trim(), error: '0,"No error"' };
+  return { value: (m[1] ?? '').trim(), error: m[2] };
+}
+
+/** The last unit of a compound response: the SYST:ERR? answer. @param {string} reply */
+const lastUnit = (reply) => splitReply(reply).error;
+
+/**
  * One FieldFox on the network. Every method opens its own connection and closes it after,
  * so a bridge left running does not hold the instrument's socket, and a FieldFox that was
  * switched off and on again is simply found again next time.
@@ -147,10 +163,10 @@ export class FieldFox {
     /** Sweeps queue up behind one another: an instrument sweeps one thing at a time. */
     this.queue = Promise.resolve();
     /**
-     * How this instrument's firmware names a trace's parameter: 'numbered' (CALC:PAR1:DEF,
-     * the current guide) or 'plain' (CALC:PAR:DEF). Learnt on the first sweep: an N9914A on
-     * A.07.75 answered the numbered form with -113 "Undefined header".
-     * @type {'numbered' | 'plain' | undefined}
+     * How this instrument's firmware takes a trace's parameter - which of PARAMETER_FORMS
+     * worked - learnt on the first sweep. An N9914A on A.07.75 answered the first two with
+     * -113 "Undefined header" (see fake-fieldfox.mjs); which it accepts is not yet known.
+     * @type {number | undefined}
      */
     this.parameterForm = undefined;
   }
@@ -199,7 +215,7 @@ export class FieldFox {
     if (!/\bNA\b/.test(modes)) {
       throw new InstrumentError(`This FieldFox has no network-analyser mode (it has ${modes || 'none it will name'}); EMWS needs S-parameters, which NA mode gives.`);
     }
-    await s.query('INST "NA";*OPC?', 15000);
+    await this.ask(s, 'INST "NA";*OPC?', 'Switching to NA mode', 15000);
     for (let attempt = 0; attempt < 40; attempt++) {
       if (unquote(await s.query('INST?')) === 'NA') return;
       await new Promise((r) => setTimeout(r, 250));
@@ -208,25 +224,55 @@ export class FieldFox {
   }
 
   /**
-   * Defines and selects the trace's parameter, in whichever form this firmware takes.
+   * One setting: the command with SYST:ERR? on the same message, so every message gets one
+   * answer, and a refusal names the command refused. The first real FieldFox refused
+   * commands it documents when four were sent in a burst as separate lines; a query it does
+   * not know gets no reply at all, which this turns into an answer instead of a timeout.
+   * @param {ScpiSocket} s @param {string} command @param {string} what
+   */
+  async set(s, command, what) {
+    const reply = await s.query(`${command};SYST:ERR?`);
+    if (!noError(lastUnit(reply))) throw new InstrumentError(`${what} (${command}): the FieldFox says ${lastUnit(reply).trim()}`);
+  }
+
+  /**
+   * A query with SYST:ERR? on the same message: the value, or the instrument's reason.
+   * @param {ScpiSocket} s @param {string} query @param {string} what @param {number} [timeoutMs]
+   */
+  async ask(s, query, what, timeoutMs) {
+    const reply = await s.query(`${query};SYST:ERR?`, timeoutMs);
+    const { value, error } = splitReply(reply);
+    if (!noError(error)) throw new InstrumentError(`${what} (${query}): the FieldFox says ${error.trim()}`);
+    return value;
+  }
+
+  /**
+   * Defines and selects the trace's parameter, in whichever spelling this firmware takes.
    * @param {ScpiSocket} s @param {'S11' | 'S21'} parameter
    */
   async defineParameter(s, parameter) {
-    const forms = /** @type {const} */ (['numbered', 'plain']);
     const refusals = [];
-    for (const form of this.parameterForm ? [this.parameterForm] : forms) {
+    const candidates = this.parameterForm !== undefined ? [this.parameterForm] : PARAMETER_FORMS.map((_, n) => n);
+    for (const n of candidates) {
+      const form = PARAMETER_FORMS[n];
       s.write('*CLS');
-      s.write(form === 'numbered' ? `CALC:PAR1:DEF ${parameter}` : `CALC:PAR:DEF ${parameter}`);
-      s.write(form === 'numbered' ? 'CALC:PAR1:SEL' : 'CALC:PAR:SEL');
-      const reply = await s.query('SYST:ERR?');
-      if (noError(reply)) {
-        this.parameterForm = form;
-        return;
+      const reply = lastUnit(await s.query(`${form.define} ${parameter};SYST:ERR?`));
+      if (!noError(reply)) {
+        refusals.push(`${form.define}: ${reply.trim()}`);
+        continue;
       }
-      refusals.push(`${form === 'numbered' ? 'CALC:PAR1:DEF' : 'CALC:PAR:DEF'}: ${reply.trim()}`);
+      this.parameterForm = n;
+      // Selecting the trace matters only with several; one trace is selected already. A
+      // firmware that refuses the select is told so in the log and otherwise left alone.
+      const selected = lastUnit(await s.query(`${form.select};SYST:ERR?`));
+      if (!noError(selected)) {
+        this.log?.(`  (${form.select} refused: ${selected.trim()} - carrying on with the trace as it is)`);
+        s.write('*CLS');
+      }
+      return;
     }
     this.parameterForm = undefined;
-    throw new InstrumentError(`Defining ${parameter}: the FieldFox refused it - ${refusals.join('; ')}`);
+    throw new InstrumentError(`Defining ${parameter}: the FieldFox refused every spelling - ${refusals.join('; ')}`);
   }
 
   /**
@@ -235,27 +281,22 @@ export class FieldFox {
    */
   sweep(request) {
     return this.withSocket(async (s) => {
-      const err = async (what) => {
-        const reply = await s.query('SYST:ERR?');
-        if (!noError(reply)) throw new InstrumentError(`${what}: the FieldFox says ${reply.trim()}`);
-      };
-      s.write('*CLS');
+      await this.set(s, '*CLS', 'Clearing the error queue');
       // Only switch when needed - switching resets the mode's settings, calibration included.
       await this.enterNaMode(s);
       await this.defineParameter(s, request.parameter);
-      s.write(`SENS:FREQ:STAR ${request.startHz}`);
-      s.write(`SENS:FREQ:STOP ${request.stopHz}`);
-      s.write(`SENS:SWE:POIN ${request.points}`);
-      if (request.ifbwHz) s.write(`SENS:BWID ${request.ifbwHz}`);
-      s.write('FORM ASC,0');
-      await err('Setting the sweep up');
-      const wasContinuous = (await s.query('INIT:CONT?')).trim() !== '0';
-      s.write('INIT:CONT 0');
+      await this.set(s, `SENS:FREQ:STAR ${request.startHz}`, 'Start frequency');
+      await this.set(s, `SENS:FREQ:STOP ${request.stopHz}`, 'Stop frequency');
+      await this.set(s, `SENS:SWE:POIN ${request.points}`, 'Points');
+      if (request.ifbwHz) await this.set(s, `SENS:BWID ${request.ifbwHz}`, 'IF bandwidth');
+      await this.set(s, 'FORM ASC,0', 'Data format');
+      const wasContinuous = (await this.ask(s, 'INIT:CONT?', 'Trigger state')).trim() !== '0';
+      await this.set(s, 'INIT:CONT 0', 'Single sweep');
       try {
         // A long sweep at a narrow IF bandwidth can take a while: give it two minutes.
-        await s.query('INIT:IMM;*OPC?', 120000);
-        const frequenciesHz = parseNumbers(await s.query('SENS:FREQ:DATA?', 20000));
-        const pairs = parseNumbers(await s.query('CALC:DATA:SDATA?', 20000));
+        await this.ask(s, 'INIT:IMM;*OPC?', 'Triggering the sweep', 120000);
+        const frequenciesHz = parseNumbers(await this.ask(s, 'SENS:FREQ:DATA?', 'Reading the frequencies', 20000));
+        const pairs = parseNumbers(await this.ask(s, 'CALC:DATA:SDATA?', 'Reading the trace', 20000));
         if (pairs.length !== frequenciesHz.length * 2) {
           throw new InstrumentError(`The FieldFox returned ${pairs.length} values for ${frequenciesHz.length} frequencies; expected real and imaginary pairs.`);
         }
@@ -265,9 +306,17 @@ export class FieldFox {
           real.push(pairs[i]);
           imag.push(pairs[i + 1]);
         }
-        const corrected = (await s.query('SENS:CORR:USER?')).trim() !== '0';
-        const method = corrected ? unquote(await s.query('SENS:CORR:COLL:METH:TYPE?')) : '';
-        await err('Reading the sweep');
+        // Whether the readings are corrected is worth knowing but not worth losing a sweep
+        // over: a firmware that does not answer these is reported as "not known".
+        let corrected;
+        let method = '';
+        try {
+          corrected = (await this.ask(s, 'SENS:CORR:USER?', 'Correction state')).trim() !== '0';
+          if (corrected) method = unquote(await this.ask(s, 'SENS:CORR:COLL:METH:TYPE?', 'Calibration method'));
+        } catch (e) {
+          this.log?.(`  (${e instanceof Error ? e.message : String(e)} - correction state not known)`);
+          s.write('*CLS');
+        }
         return { frequenciesHz, real, imag, corrected, method };
       } finally {
         // Leave the instrument sweeping as it was found.
@@ -278,6 +327,18 @@ export class FieldFox {
 }
 
 export class InstrumentError extends Error {}
+
+/**
+ * The spellings tried for "measure S11 on trace 1", in order. The first is the guide's;
+ * the rest are what an older parser might want instead: no trace number, or the long
+ * mnemonics (a short-form table that lacks DEF still has DEFine).
+ */
+export const PARAMETER_FORMS = [
+  { define: 'CALC:PAR1:DEF', select: 'CALC:PAR1:SEL' },
+  { define: 'CALC:PAR:DEF', select: 'CALC:PAR:SEL' },
+  { define: 'CALCulate:PARameter1:DEFine', select: 'CALCulate:PARameter1:SELect' },
+  { define: 'CALCulate:PARameter:DEFine', select: 'CALCulate:PARameter:SELect' },
+];
 
 /** A comma-separated SCPI list, as numbers. @param {string} reply */
 export function parseNumbers(reply) {

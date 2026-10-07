@@ -97,7 +97,8 @@ interface SweepReply {
   frequenciesHz: number[];
   real: number[];
   imag: number[];
-  corrected: boolean;
+  /** Absent when the instrument would not say. */
+  corrected?: boolean;
   method: string;
 }
 
@@ -111,8 +112,8 @@ export class BridgeInstrument implements Instrument {
   readonly kind = 'bridge' as const;
   readonly name: string;
   readonly maxPoints = BRIDGE_MAX_POINTS;
-  /** What the instrument said about its correction on the last sweep; undefined before one. */
-  lastCorrection: { corrected: boolean; method: string } | undefined;
+  /** What the instrument said about its correction on the last sweep; undefined before one, `corrected` undefined when it would not say. */
+  lastCorrection: { corrected: boolean | undefined; method: string } | undefined;
 
   constructor(
     readonly url: string,
@@ -180,7 +181,7 @@ export class BridgeInstrument implements Instrument {
       body.imag.length === body.frequenciesHz.length &&
       body.frequenciesHz.every((v) => typeof v === 'number' && Number.isFinite(v));
     if (!ok) throw new VnaError('The VNA bridge answered, but not with a sweep.');
-    this.lastCorrection = { corrected: body.corrected === true, method: typeof body.method === 'string' ? body.method : '' };
+    this.lastCorrection = { corrected: typeof body.corrected === 'boolean' ? body.corrected : undefined, method: typeof body.method === 'string' ? body.method : '' };
     request.onProgress?.(1, 1);
     return body as SweepReply;
   }

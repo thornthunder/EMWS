@@ -174,7 +174,7 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
           your cable. Sweeps go through the EMWS VNA bridge on this machine.
         </p>
       )}
-      {correction && !correction.corrected && (
+      {correction && correction.corrected === false && (
         <p className="alert-inline">The instrument reports that its correction is OFF: these readings are uncorrected. Calibrate it, then measure again.</p>
       )}
 

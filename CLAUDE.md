@@ -652,15 +652,22 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   Smith load (same 75 Ω as the NanoVNAs) and the LC filter's S21 through it.
 - **First real FieldFox, 2026-10-07** (a tester's N9914A, firmware A.07.75, options
   210/010/310/235/233/211, modes CPM/SA/NA/CAT; report in `D:\Code\Sample Data\VNA_Report.txt`):
-  found and identified; the sweep died at `CALC:PAR1:DEF` with `-113,"Undefined
-  header;CALC:PAR1:DEF<Err>"` - the current guide's trace-numbered form, which A.07.75
-  (older than the guide's A.08.19 baseline) lacks. Fixes: `enterNaMode` re-asks `INST?`
-  until it says NA (an early `*OPC?` leaves the CAT tree in force, where PAR1 is undefined
-  too); `defineParameter` tries numbered then plain `CALC:PAR:DEF` and REMEMBERS the form per
-  instrument; `--log` prints the whole exchange (INSTALL.md tells testers to run with it);
-  `INST:CAT?` duplicates are collapsed. `fake-fieldfox.mjs { legacy: true }` replays that
-  unit word for word and the test asserts the fallback. Still unproven on it: everything
-  after DEF (SDATA etc.) - wait for the second report. CAT-only units stay unsupported.
+  found and identified; run 1 died at `CALC:PAR1:DEF` with `-113,"Undefined
+  header;CALC:PAR1:DEF<Err>"`; run 2 (with `--log`, `D:\Code\Sample Data\VNA.txt`) showed
+  `INST?` = "NA" and BOTH `CALC:PAR1:DEF` and `CALC:PAR:DEF` refused alike. The command is
+  NOT new: Keysight's A.08.15/A.09.15 guide (fetched with `curl -k`, read by inflating the
+  PDF's streams - `scratchpad/pdfgrep.mjs`; no PDF renderer here) gives `CALC:PAR1:DEF S11`
+  on a 2012-dated page. What differed: the refused commands were argument-carrying WRITES
+  sent four to a burst; every success was a lone awaited query. So now: EVERY command
+  travels as `cmd;SYST:ERR?` in its own message (`set()`/`ask()`, `splitReply()` parses
+  `value;code,"text"`; an unknown query answers only the error instead of silence);
+  `PARAMETER_FORMS` tries short numbered, short plain, long numbered, long plain and
+  remembers the index; a refused SEL is logged, not fatal; correction-state queries can fail
+  without losing the sweep (`corrected: undefined` -> the page says nothing). `enterNaMode`
+  re-asks `INST?` until NA. `fake-fieldfox.mjs { legacy: true }` replays both refusals word
+  for word, answers compound messages on one line per IEEE 488.2, and accepts the long
+  spelling AS A HYPOTHESIS (flagged in source and test). Third report decides. CAT-only
+  units stay unsupported.
 
 ## Conventions
 

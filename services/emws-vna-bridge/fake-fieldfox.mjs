@@ -65,7 +65,10 @@ export function startFakeFieldFox(options = {}) {
   /** @param {string} cmd @returns {string | undefined} */
   const handle = (cmd) => {
     state.log.push(cmd);
-    const upper = cmd.toUpperCase();
+    const spelt = cmd.toUpperCase();
+    // Long mnemonics mean the same as short ones; the matching below is on the short ones.
+    const upper = spelt.replace(/CALCULATE/g, 'CALC').replace(/PARAMETER/g, 'PAR').replace(/DEFINE/g, 'DEF').replace(/SELECT/g, 'SEL');
+    const longForm = /DEFINE|SELECT/.test(spelt);
     const arg = cmd.replace(/^\S+\s*/, '').trim();
     const number = () => {
       const v = Number(arg);
@@ -91,15 +94,16 @@ export function startFakeFieldFox(options = {}) {
       return undefined;
     }
     if (/^CALC:PAR1?:DEF\s/.test(upper)) {
-      const numbered = /^CALC:PAR1:/.test(upper);
-      if (legacy && numbered) state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
+      // SEEN on the N9914A, A.07.75: both short spellings refused, in NA mode, with this
+      // very text. HYPOTHESIS, until its owner's next report: the long spelling is taken.
+      if (legacy && !longForm) state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
       else if (state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
       else if (!['S11', 'S21'].includes(arg.toUpperCase())) state.errors.push('-224,"Illegal parameter value"');
       else state.parameter = arg.toUpperCase();
       return undefined;
     }
     if (upper === 'CALC:PAR1:SEL' || upper === 'CALC:PAR:SEL') {
-      if ((legacy && upper === 'CALC:PAR1:SEL') || state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd}<Err>"`);
+      if ((legacy && !longForm) || state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd}<Err>"`);
       return undefined;
     }
     if (/^SENS:FREQ:STAR\s/.test(upper)) {
@@ -159,11 +163,15 @@ export function startFakeFieldFox(options = {}) {
       while ((at = buffer.indexOf('\n')) >= 0) {
         const line = buffer.slice(0, at).replace(/\r$/, '');
         buffer = buffer.slice(at + 1);
-        // Several commands may share a line, joined by semicolons outside quotes.
+        // Several commands may share a line, joined by semicolons outside quotes, and their
+        // answers share one line the same way (IEEE 488.2: one response message per
+        // program message). A command that is not a query, or not understood, answers nothing.
+        const replies = [];
         for (const cmd of splitCommands(line)) {
           const reply = handle(cmd.trim());
-          if (reply !== undefined) socket.write(`${reply}\n`);
+          if (reply !== undefined) replies.push(reply);
         }
+        if (replies.length) socket.write(`${replies.join(';')}\n`);
       }
     });
     socket.on('error', () => {});
