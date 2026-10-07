@@ -63,9 +63,13 @@ From Keysight's FieldFox programming guide, NA mode:
 ```
 *CLS
 INST?                         only switch when not already in NA mode:
-INST "NA";*OPC?               a mode switch is overlapped, *OPC? waits for it
-CALC:PAR1:DEF S11             or S21
-CALC:PAR1:SEL
+INST "NA";*OPC?               a mode switch is overlapped, *OPC? waits for it...
+INST?                         ...or does not: asked again until it answers "NA" (10 s)
+*CLS
+CALC:PAR1:DEF S11             or S21 - the current guide's trace-numbered form;
+CALC:PAR1:SEL                 if SYST:ERR? refuses it (-113 on an N9914A, A.07.75):
+CALC:PAR:DEF S11              the plain form, remembered for the rest of the session
+CALC:PAR:SEL
 SENS:FREQ:STAR <Hz>
 SENS:FREQ:STOP <Hz>
 SENS:SWE:POIN <n>
@@ -86,12 +90,22 @@ INIT:CONT 1                   if it was sweeping when found
 Each sweep opens its own connection and closes it after, so a bridge left running holds
 no socket on the instrument.
 
+`--log` prints every command and reply; a report with that in it is a report that can be
+acted on.
+
 ## Standing
 
-Nothing here has met a real FieldFox. It is written from the published command reference
-and tested, end to end, against `fake-fieldfox.mjs`: a SCPI server that answers as the
-guide says an N9912A does, measuring 75 Ω + 0.5 µH on port 1 and a 145 MHz low-pass to
-port 2, with an error queue that a wrong command lands in. `tests/vna-bridge.test.ts`
-drives the real bridge against it; `npm run smoke -- --vna` does the same through the
-browser. The first real instrument on the bench is the proof, and the `*IDN?`/`*OPT?`
-replies and any `SYST:ERR?` text it produces are what to bring back if it disagrees.
+Written from the published command reference and tested, end to end, against
+`fake-fieldfox.mjs`: a SCPI server that answers as the guide says an N9912A does,
+measuring 75 Ω + 0.5 µH on port 1 and a 145 MHz low-pass to port 2, with an error queue
+that a wrong command lands in. `tests/vna-bridge.test.ts` drives the real bridge against
+it; `npm run smoke -- --vna` does the same through the browser.
+
+**First real instrument, 2026-10-07:** an N9914A on firmware A.07.75 (options 210, 010,
+310, 235, 233, 211; modes CPM, SA, NA, CAT). The bridge found and identified it, and the
+sweep failed at `CALC:PAR1:DEF` with `-113,"Undefined header;CALC:PAR1:DEF<Err>"` - the
+trace-numbered form in the current guide, which that firmware does not have (its mode
+list also named one mode twice). The bridge now confirms the mode switch landed by asking
+`INST?` again, tries the plain `CALC:PAR:DEF` when the numbered form is refused, and the
+fake's `legacy` mode replays that instrument word for word in the tests. The second real
+run is what proves the rest of the sequence on that firmware.

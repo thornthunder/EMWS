@@ -18,6 +18,7 @@ export interface FieldFoxSpec {
   name: string;
   host: string;
   port?: number;
+  log?: (line: string) => void;
 }
 
 export interface SweepRequest {
@@ -43,6 +44,7 @@ export class FieldFox {
   readonly host: string;
   readonly port: number;
   readonly address: string;
+  parameterForm: 'numbered' | 'plain' | undefined;
   describe(): Promise<{ idn: string; options: string; modes: string[] }>;
   sweep(request: SweepRequest): Promise<SweepResult>;
 }
@@ -51,7 +53,7 @@ export class InstrumentError extends Error {}
 
 export function parseNumbers(reply: string): number[];
 export function validateSweep(body: unknown): string | undefined;
-export function parseArgs(argv: string[]): { fieldfox: string[]; port: number; simulate: boolean; help: boolean };
+export function parseArgs(argv: string[]): { fieldfox: string[]; port: number; simulate: boolean; log: boolean; help: boolean };
 export function parseAddress(address: string): { host: string; port: number };
 
 export function createBridge(options: {

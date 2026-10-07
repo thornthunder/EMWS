@@ -650,9 +650,17 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   no-switch-when-already-NA rule; error queue, dead instrument, unknown id; queued sweeps).
   `--vna` smoke spawns `bridge.mjs --simulate`, points the page at it, and measures the
   Smith load (same 75 Ω as the NanoVNAs) and the LC filter's S21 through it.
-- **No real FieldFox has been connected yet.** Written from the published reference; the
-  first bench session should bring back `*IDN?`, `*OPT?`, `INST:CAT?` and any `SYST:ERR?`.
-  CAT mode (no option 303) is not supported - said in the UI and the guide.
+- **First real FieldFox, 2026-10-07** (a tester's N9914A, firmware A.07.75, options
+  210/010/310/235/233/211, modes CPM/SA/NA/CAT; report in `D:\Code\Sample Data\VNA_Report.txt`):
+  found and identified; the sweep died at `CALC:PAR1:DEF` with `-113,"Undefined
+  header;CALC:PAR1:DEF<Err>"` - the current guide's trace-numbered form, which A.07.75
+  (older than the guide's A.08.19 baseline) lacks. Fixes: `enterNaMode` re-asks `INST?`
+  until it says NA (an early `*OPC?` leaves the CAT tree in force, where PAR1 is undefined
+  too); `defineParameter` tries numbered then plain `CALC:PAR:DEF` and REMEMBERS the form per
+  instrument; `--log` prints the whole exchange (INSTALL.md tells testers to run with it);
+  `INST:CAT?` duplicates are collapsed. `fake-fieldfox.mjs { legacy: true }` replays that
+  unit word for word and the test asserts the fallback. Still unproven on it: everything
+  after DEF (SDATA etc.) - wait for the second report. CAT-only units stay unsupported.
 
 ## Conventions
 

@@ -18,7 +18,7 @@ export interface FakeFieldFoxState {
   log: string[];
 }
 
-export function startFakeFieldFox(options?: { port?: number; correction?: boolean }): Promise<{
+export function startFakeFieldFox(options?: { port?: number; correction?: boolean; legacy?: boolean }): Promise<{
   port: number;
   close: () => Promise<void>;
   state: FakeFieldFoxState;

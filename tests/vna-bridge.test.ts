@@ -156,6 +156,63 @@ describe('a sweep through the bridge', () => {
   });
 });
 
+describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
+  // Reported 2026-10-07 by its owner: found and identified, then refused CALC:PAR1:DEF with
+  // -113 "Undefined header;CALC:PAR1:DEF<Err>" at "Measure the load". The legacy fake
+  // answers exactly so, and finishes a mode switch only after it has answered *OPC?.
+  let legacy: Awaited<ReturnType<typeof startFakeFieldFox>>;
+  let old: Awaited<ReturnType<typeof createBridge>>;
+  const exchange: string[] = [];
+  let fieldfox: FieldFox;
+
+  beforeAll(async () => {
+    legacy = await startFakeFieldFox({ port: 0, legacy: true });
+    fieldfox = new FieldFox({ id: 'n9914a', name: 'FieldFox', host: '127.0.0.1', port: legacy.port, log: (line) => exchange.push(line) });
+    old = await createBridge({ port: 0, instruments: [fieldfox] });
+  });
+  afterAll(async () => {
+    await old.close();
+    await legacy.close();
+  });
+
+  it('is identified as reported, with its duplicated mode listed once', async () => {
+    const info = (await probeBridge(old.url))!.instruments[0]!;
+    expect(info.idn).toBe('Keysight Technologies,N9914A,MY53104315,A.07.75');
+    expect(info.options).toBe('210,010,310,235,233,211');
+    expect(info.modes).toEqual(['CPM', 'SA', 'NA', 'CAT']);
+    expect(modelFromIdn(info.idn)).toBe('N9914A');
+  });
+
+  it('sweeps anyway: waits for the mode switch to land, falls back to CALC:PAR:DEF, and remembers', async () => {
+    const info = (await probeBridge(old.url))!.instruments[0]!;
+    const vna = new BridgeInstrument(old.url, info);
+    exchange.length = 0;
+    const points = await vna.sweep({ startMHz: 140, stopMHz: 150, points: 101 });
+    expect(points).toHaveLength(101);
+    expect(points[0]!.z.re).toBeCloseTo(75, 3);
+    // The numbered form was tried, refused with the real error text, and the plain form took.
+    const sent = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
+    const heard = exchange.filter((l) => l.startsWith('< ')).map((l) => l.slice(2));
+    expect(sent).toContain('CALC:PAR1:DEF S11');
+    expect(heard).toContain('-113,"Undefined header;CALC:PAR1:DEF<Err>"');
+    expect(sent.indexOf('CALC:PAR:DEF S11')).toBeGreaterThan(sent.indexOf('CALC:PAR1:DEF S11'));
+    expect(sent).toContain('CALC:PAR:SEL');
+    // The switch was confirmed by asking, not assumed from *OPC?: INST? was asked again after it.
+    const switched = sent.indexOf('INST "NA";*OPC?');
+    expect(switched).toBeGreaterThan(-1);
+    expect(sent.slice(switched + 1)).toContain('INST?');
+    expect(legacy.state.mode).toBe('NA');
+    expect(fieldfox.parameterForm).toBe('plain');
+    // Next time it goes straight to the form that worked, and never asks to switch again.
+    exchange.length = 0;
+    await vna.sweepTransmission({ startMHz: 140, stopMHz: 150, points: 11 });
+    const again = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
+    expect(again).not.toContain('CALC:PAR1:DEF S21');
+    expect(again).toContain('CALC:PAR:DEF S21');
+    expect(again).not.toContain('INST "NA";*OPC?');
+  });
+});
+
 describe('the bridge\'s small parsers', () => {
   it('reads SCPI lists, addresses and arguments', () => {
     expect(parseNumbers(' 1.5E+06,2,-3e-1 \n')).toEqual([1.5e6, 2, -0.3]);
@@ -164,7 +221,7 @@ describe('the bridge\'s small parsers', () => {
     expect(parseAddress('192.168.0.50')).toEqual({ host: '192.168.0.50', port: 5025 });
     expect(parseAddress('lab-ff:5026')).toEqual({ host: 'lab-ff', port: 5026 });
     expect(parseAddress('[fe80::1]:5025')).toEqual({ host: 'fe80::1', port: 5025 });
-    expect(parseArgs(['--fieldfox', 'a', '--fieldfox', 'b:1', '--port', '9000'])).toEqual({ fieldfox: ['a', 'b:1'], port: 9000, simulate: false, help: false });
+    expect(parseArgs(['--fieldfox', 'a', '--fieldfox', 'b:1', '--port', '9000', '--log'])).toEqual({ fieldfox: ['a', 'b:1'], port: 9000, simulate: false, log: true, help: false });
     expect(() => parseArgs(['--bogus'])).toThrow(/Unknown argument/);
     expect(validateSweep({ instrument: 'x', parameter: 'S11', startHz: 1e6, stopHz: 2e6, points: 101 })).toBeUndefined();
     expect(validateSweep({ instrument: 'x', parameter: 'S12', startHz: 1e6, stopHz: 2e6, points: 101 })).toMatch(/S11/);

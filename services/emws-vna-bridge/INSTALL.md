@@ -20,10 +20,10 @@ Everything here is public domain, like the rest of EMWS.
   download, run the installer, accept the defaults. Nothing else gets installed.
 - The folder you were sent: `emws-vna-bridge`, with `bridge.mjs`, `fake-fieldfox.mjs`
   and these notes in it. Put it anywhere, for example `C:\emws-vna-bridge`.
-- A FieldFox with the **network analyser** option (option 303 on an N9912A). The bridge
-  measures in NA mode because that is the mode that gives true S-parameters; a unit with
-  only the cable-and-antenna mode will be reported as such, and that is a useful result
-  too.
+- A FieldFox with the **network analyser** mode (option 303 on an N9912A; 210 or 211 on
+  the N991xA combination analysers). The bridge measures in NA mode because that is the
+  mode that gives true S-parameters. Step 4 shows what your unit has; a unit with only the
+  cable-and-antenna mode will be reported as such, and that is a useful result too.
 - Chrome or Edge for the web page.
 
 ## Step 1 – check Node is installed
@@ -93,11 +93,13 @@ or something between them is blocking it – the bridge cannot help until that s
 
 ```powershell
 cd C:\emws-vna-bridge
-node bridge.mjs --fieldfox 192.168.0.50
+node bridge.mjs --fieldfox 192.168.0.50 --log
 ```
 
 (with your instrument's address). It prints the bridge's address as before, and
-`FieldFox (192.168.0.50:5025)`.
+`FieldFox (192.168.0.50:5025)`. The `--log` makes it print every command it sends the
+FieldFox and every answer it gets back, which is the most useful thing to send with a
+report; leave it off for everyday use.
 
 Now the most useful single check: in the browser, open
 
@@ -138,7 +140,12 @@ What to look for:
 - The PowerShell window prints one line per sweep, such as
   `sweep S11 14000000-14350000 Hz, 201 points on FieldFox`.
 - If the page shows an error, it is worded as the FieldFox reported it – for example
-  *the FieldFox says -222,"Data out of range"*. Copy it exactly.
+  *the FieldFox says -222,"Data out of range"*. Copy it exactly, together with the lines
+  the PowerShell window printed just before it (`--log` above): those show which command
+  the instrument objected to.
+- Older firmware names some commands differently. The bridge knows one such difference
+  already (an N9914A on firmware A.07.75 taught it) and tries both forms; if yours refuses
+  something else, the log is what lets that be added.
 
 Then, if you have two cables and something to measure through – a filter, an attenuator
 – go to **Coils & Filters → Stubs & cavities**, open *Measure the filter you built*, and
@@ -168,7 +175,8 @@ use normally the moment you stop. The bridge only ever listens on your own PC
 1. The whole text of `http://127.0.0.1:8075/health`.
 2. What was on the port, and what the FieldFox's own screen showed for it.
 3. What EMWS showed – a screenshot of the Smith chart after *Measure the load* is ideal.
-4. Any error text, copied exactly, and the lines the PowerShell window printed.
+4. Any error text, copied exactly, and the lines the PowerShell window printed – with
+   `--log`, that is the whole conversation with the instrument, which is ideal.
 5. Your firmware version, which is the last part of the `idn` line.
 
 That is enough to fix anything that needs fixing. Thanks again – 73.

@@ -16,6 +16,15 @@ import { createServer } from 'node:net';
 const IDN = 'Keysight Technologies,N9912A,MY00000000,A.12.95';
 const OPTIONS = '"104,110,303,230"';
 const MODES = '"CAT","NA","SA"';
+/**
+ * The first real FieldFox the bridge met (2026-10-07): an N9914A on firmware A.07.75, which
+ * refused CALC:PAR1:DEF with -113 "Undefined header" - the trace-numbered form the current
+ * guide gives - and listed one of its modes twice. In `legacy` mode the fake answers as it
+ * did, so the bridge's fallback is tested against the real refusal, word for word.
+ */
+const LEGACY_IDN = 'Keysight Technologies,N9914A,MY53104315,A.07.75';
+const LEGACY_OPTIONS = '"210,010,310,235,233,211"';
+const LEGACY_MODES = '"CPM","CPM","SA","NA","CAT"';
 
 /** S11 of 75 ohms + 0.5 uH against 50 ohms. @param {number} hz */
 export function antennaGamma(hz) {
@@ -32,10 +41,11 @@ export function lowPassS21(hz) {
 }
 
 /**
- * @param {{ port?: number; correction?: boolean }} options
+ * @param {{ port?: number; correction?: boolean; legacy?: boolean }} options
  * @returns {Promise<{ port: number; close: () => Promise<void>; state: Record<string, unknown> }>}
  */
 export function startFakeFieldFox(options = {}) {
+  const legacy = options.legacy ?? false;
   const state = {
     mode: 'CAT',
     startHz: 2e6,
@@ -62,29 +72,36 @@ export function startFakeFieldFox(options = {}) {
       if (!Number.isFinite(v)) state.errors.push('-104,"Data type error"');
       return v;
     };
-    if (upper === '*IDN?') return IDN;
-    if (upper === '*OPT?') return OPTIONS;
+    if (upper === '*IDN?') return legacy ? LEGACY_IDN : IDN;
+    if (upper === '*OPT?') return legacy ? LEGACY_OPTIONS : OPTIONS;
     if (upper === '*CLS') {
       state.errors = [];
       return undefined;
     }
     if (upper === '*OPC?') return '1';
     if (upper === 'SYST:ERR?') return state.errors.shift() ?? '+0,"No error"';
-    if (upper === 'INST:CAT?') return MODES;
+    if (upper === 'INST:CAT?') return legacy ? LEGACY_MODES : MODES;
     if (upper === 'INST?' || upper === 'INST:SEL?') return `"${state.mode}"`;
     if (/^INST(:SEL)?\s/.test(upper)) {
       const mode = arg.replace(/"/g, '');
-      if (!['CAT', 'NA', 'SA'].includes(mode)) state.errors.push('-224,"Illegal parameter value"');
+      if (!['CAT', 'NA', 'SA', 'CPM'].includes(mode)) state.errors.push('-224,"Illegal parameter value"');
+      // The switch is overlapped: a legacy unit answers *OPC? at once and gets there later.
+      else if (legacy) setTimeout(() => (state.mode = mode), 400);
       else state.mode = mode;
       return undefined;
     }
-    if (/^CALC:PAR1:DEF\s/.test(upper)) {
-      if (state.mode !== 'NA') state.errors.push('-221,"Settings conflict"');
+    if (/^CALC:PAR1?:DEF\s/.test(upper)) {
+      const numbered = /^CALC:PAR1:/.test(upper);
+      if (legacy && numbered) state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
+      else if (state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd.split(' ')[0]}<Err>"`);
       else if (!['S11', 'S21'].includes(arg.toUpperCase())) state.errors.push('-224,"Illegal parameter value"');
       else state.parameter = arg.toUpperCase();
       return undefined;
     }
-    if (upper === 'CALC:PAR1:SEL') return undefined;
+    if (upper === 'CALC:PAR1:SEL' || upper === 'CALC:PAR:SEL') {
+      if ((legacy && upper === 'CALC:PAR1:SEL') || state.mode !== 'NA') state.errors.push(`-113,"Undefined header;${cmd}<Err>"`);
+      return undefined;
+    }
     if (/^SENS:FREQ:STAR\s/.test(upper)) {
       state.startHz = number();
       return undefined;

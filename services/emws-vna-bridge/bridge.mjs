@@ -40,10 +40,11 @@ export const MAX_POINTS = 10001;
 
 /** One instrument's socket: commands out, lines back, one exchange at a time. */
 export class ScpiSocket {
-  /** @param {string} host @param {number} port */
-  constructor(host, port) {
+  /** @param {string} host @param {number} port @param {(line: string) => void} [log] every command and reply */
+  constructor(host, port, log) {
     this.host = host;
     this.port = port;
+    this.log = log;
     /** @type {import('node:net').Socket | undefined} */
     this.socket = undefined;
     this.buffer = '';
@@ -89,12 +90,14 @@ export class ScpiSocket {
     const p = this.pending;
     this.pending = undefined;
     clearTimeout(p.timer);
+    this.log?.(`< ${line.length > 100 ? `${line.slice(0, 100)}… (${line.length} chars)` : line}`);
     p.resolve(line);
   }
 
   /** A command that answers nothing. @param {string} command */
   write(command) {
     if (!this.socket) throw new Error('Not connected.');
+    this.log?.(`> ${command}`);
     this.socket.write(`${command}\n`);
   }
 
@@ -108,6 +111,7 @@ export class ScpiSocket {
         reject(new Error(`No reply to ${command} within ${timeoutMs} ms.`));
       }, timeoutMs);
       this.pending = { resolve, reject, timer };
+      this.log?.(`> ${command}`);
       this.socket?.write(`${command}\n`);
       this.deliver();
     });
@@ -133,14 +137,22 @@ const unquote = (s) => s.trim().replace(/^"(.*)"$/, '$1');
  * switched off and on again is simply found again next time.
  */
 export class FieldFox {
-  /** @param {{ id: string; name: string; host: string; port?: number }} spec */
+  /** @param {{ id: string; name: string; host: string; port?: number; log?: (line: string) => void }} spec */
   constructor(spec) {
     this.id = spec.id;
     this.name = spec.name;
     this.host = spec.host;
     this.port = spec.port ?? SCPI_PORT;
+    this.log = spec.log;
     /** Sweeps queue up behind one another: an instrument sweeps one thing at a time. */
     this.queue = Promise.resolve();
+    /**
+     * How this instrument's firmware names a trace's parameter: 'numbered' (CALC:PAR1:DEF,
+     * the current guide) or 'plain' (CALC:PAR:DEF). Learnt on the first sweep: an N9914A on
+     * A.07.75 answered the numbered form with -113 "Undefined header".
+     * @type {'numbered' | 'plain' | undefined}
+     */
+    this.parameterForm = undefined;
   }
 
   get address() {
@@ -150,7 +162,7 @@ export class FieldFox {
   /** Runs a task with the socket open, after whatever is already running. @template T @param {(s: ScpiSocket) => Promise<T>} task */
   withSocket(task, connectTimeoutMs = 3000) {
     const run = async () => {
-      const socket = new ScpiSocket(this.host, this.port);
+      const socket = new ScpiSocket(this.host, this.port, this.log);
       await socket.open(connectTimeoutMs);
       try {
         return await task(socket);
@@ -168,10 +180,53 @@ export class FieldFox {
     return this.withSocket(async (s) => {
       const idn = (await s.query('*IDN?')).trim();
       const options = unquote(await s.query('*OPT?'));
-      // INST:CAT? answers "CAT","NA","SA": each name in its own quotes.
-      const modes = (await s.query('INST:CAT?')).split(',').map(unquote).filter(Boolean);
+      // INST:CAT? answers "CAT","NA","SA": each name in its own quotes (one unit listed a mode twice).
+      const modes = [...new Set((await s.query('INST:CAT?')).split(',').map(unquote).filter(Boolean))];
       return { idn, options, modes };
     });
+  }
+
+  /**
+   * Switches to NA mode if the instrument is not there, and makes sure it got there: a mode
+   * switch is overlapped, and *OPC? is meant to wait for it, but an instrument that answers
+   * early is still in its old mode, whose command tree has no NA commands in it.
+   * @param {ScpiSocket} s
+   */
+  async enterNaMode(s) {
+    const mode = unquote(await s.query('INST?'));
+    if (mode === 'NA') return;
+    const modes = unquote(await s.query('INST:CAT?'));
+    if (!/\bNA\b/.test(modes)) {
+      throw new InstrumentError(`This FieldFox has no network-analyser mode (it has ${modes || 'none it will name'}); EMWS needs S-parameters, which NA mode gives.`);
+    }
+    await s.query('INST "NA";*OPC?', 15000);
+    for (let attempt = 0; attempt < 40; attempt++) {
+      if (unquote(await s.query('INST?')) === 'NA') return;
+      await new Promise((r) => setTimeout(r, 250));
+    }
+    throw new InstrumentError('The FieldFox was asked to switch to NA mode and did not, within ten seconds.');
+  }
+
+  /**
+   * Defines and selects the trace's parameter, in whichever form this firmware takes.
+   * @param {ScpiSocket} s @param {'S11' | 'S21'} parameter
+   */
+  async defineParameter(s, parameter) {
+    const forms = /** @type {const} */ (['numbered', 'plain']);
+    const refusals = [];
+    for (const form of this.parameterForm ? [this.parameterForm] : forms) {
+      s.write('*CLS');
+      s.write(form === 'numbered' ? `CALC:PAR1:DEF ${parameter}` : `CALC:PAR:DEF ${parameter}`);
+      s.write(form === 'numbered' ? 'CALC:PAR1:SEL' : 'CALC:PAR:SEL');
+      const reply = await s.query('SYST:ERR?');
+      if (noError(reply)) {
+        this.parameterForm = form;
+        return;
+      }
+      refusals.push(`${form === 'numbered' ? 'CALC:PAR1:DEF' : 'CALC:PAR:DEF'}: ${reply.trim()}`);
+    }
+    this.parameterForm = undefined;
+    throw new InstrumentError(`Defining ${parameter}: the FieldFox refused it - ${refusals.join('; ')}`);
   }
 
   /**
@@ -185,19 +240,9 @@ export class FieldFox {
         if (!noError(reply)) throw new InstrumentError(`${what}: the FieldFox says ${reply.trim()}`);
       };
       s.write('*CLS');
-      // A mode switch is overlapped; *OPC? makes the next command wait for it. Only switch
-      // when needed - switching resets the mode's settings, calibration included.
-      const mode = unquote(await s.query('INST?'));
-      if (mode !== 'NA') {
-        const modes = unquote(await s.query('INST:CAT?'));
-        if (!/\bNA\b/.test(modes)) {
-          throw new InstrumentError(`This FieldFox has no network-analyser mode (it has ${modes || 'none it will name'}); EMWS needs S-parameters, which NA mode gives.`);
-        }
-        await s.query('INST "NA";*OPC?', 15000);
-      }
-      s.write(`CALC:PAR1:DEF ${request.parameter}`);
-      s.write('CALC:PAR1:SEL');
-      await err(`Defining ${request.parameter}`);
+      // Only switch when needed - switching resets the mode's settings, calibration included.
+      await this.enterNaMode(s);
+      await this.defineParameter(s, request.parameter);
       s.write(`SENS:FREQ:STAR ${request.startHz}`);
       s.write(`SENS:FREQ:STOP ${request.stopHz}`);
       s.write(`SENS:SWE:POIN ${request.points}`);
@@ -383,12 +428,13 @@ function readJson(req) {
 
 /** @param {string[]} argv */
 export function parseArgs(argv) {
-  const spec = { fieldfox: /** @type {string[]} */ ([]), port: DEFAULT_HTTP_PORT, simulate: false, help: false };
+  const spec = { fieldfox: /** @type {string[]} */ ([]), port: DEFAULT_HTTP_PORT, simulate: false, log: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--fieldfox') spec.fieldfox.push(argv[++i] ?? '');
     else if (a === '--port') spec.port = Number(argv[++i]);
     else if (a === '--simulate') spec.simulate = true;
+    else if (a === '--log') spec.log = true;
     else if (a === '--help' || a === '-h') spec.help = true;
     else throw new Error(`Unknown argument: ${a}`);
   }
@@ -405,17 +451,21 @@ export function parseAddress(address) {
 async function main() {
   const spec = parseArgs(process.argv.slice(2));
   if (spec.help || (spec.fieldfox.length === 0 && !spec.simulate)) {
-    console.log('EMWS VNA bridge\n\n  node bridge.mjs --fieldfox <host[:port]> [--fieldfox ...] [--port 8075]\n  node bridge.mjs --simulate\n\nThen open EMWS; its "Measure it" buttons offer the instrument.');
+    console.log(
+      'EMWS VNA bridge\n\n  node bridge.mjs --fieldfox <host[:port]> [--fieldfox ...] [--port 8075] [--log]\n  node bridge.mjs --simulate\n\n' +
+        'Then open EMWS; its "Measure it" buttons offer the instrument. --log prints every command and reply.',
+    );
     process.exit(spec.help ? 0 : 2);
   }
+  const scpiLog = spec.log ? (line) => console.log(`  ${line}`) : undefined;
   const instruments = spec.fieldfox.map((address, n) => {
     const { host, port } = parseAddress(address);
-    return new FieldFox({ id: `fieldfox-${n + 1}`, name: spec.fieldfox.length > 1 ? `FieldFox ${n + 1}` : 'FieldFox', host, port });
+    return new FieldFox({ id: `fieldfox-${n + 1}`, name: spec.fieldfox.length > 1 ? `FieldFox ${n + 1}` : 'FieldFox', host, port, log: scpiLog });
   });
   if (spec.simulate) {
     const { startFakeFieldFox } = await import('./fake-fieldfox.mjs');
     const fake = await startFakeFieldFox({ port: 0 });
-    instruments.push(new FieldFox({ id: 'simulated', name: 'Simulated FieldFox', host: '127.0.0.1', port: fake.port }));
+    instruments.push(new FieldFox({ id: 'simulated', name: 'Simulated FieldFox', host: '127.0.0.1', port: fake.port, log: scpiLog }));
     console.log(`simulated FieldFox on 127.0.0.1:${fake.port} (75 ohm + 0.5 uH on port 1; a 145 MHz low-pass to port 2)`);
   }
   const bridge = await createBridge({ instruments, port: spec.port, log: (line) => console.log(line) });
