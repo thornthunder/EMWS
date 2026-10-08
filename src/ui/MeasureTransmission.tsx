@@ -157,8 +157,8 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
       )}
       {instrument.kind === 'bridge' &&
         (instrument as BridgeInstrument).lastNotes.map((note) => (
-          <p key={note} className="alert-inline">
-            {note}
+          <p key={note.text} className={note.level === 'warning' ? 'alert-inline' : 'muted'}>
+            {note.text}
           </p>
         ))}
       <div className="button-row">

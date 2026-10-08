@@ -39,9 +39,14 @@ export interface SweepResult {
   /** False when no spelling of "define S11" was accepted and the trace shown was swept instead. */
   parameterSet: boolean;
   parameterNote: string;
-  /** Everything the person should know about how this sweep was taken: the parameter note, a frozen trace. */
-  notes: string[];
+  /** Everything the person should know about how this sweep was taken: an unchosen parameter, a frozen trace. */
+  notes: { level: 'info' | 'warning'; text: string }[];
 }
+
+export function parseHeaders(block: string): Set<string>;
+export function shortForm(mnemonic: string): string;
+export function normaliseHeader(header: string): string;
+export function knows(vocabulary: Set<string>, header: string, options?: { prefix?: boolean }): boolean;
 
 export const PARAMETER_FORMS: { define: string; select: string }[];
 export const TRACE_QUERIES: string[];
@@ -55,6 +60,7 @@ export class FieldFox {
   readonly port: number;
   readonly address: string;
   parameterForm: number | 'none' | undefined;
+  vocabulary: Set<string> | null | undefined;
   describe(): Promise<{ idn: string; options: string; modes: string[] }>;
   sweep(request: SweepRequest): Promise<SweepResult>;
   probe(): Promise<string[]>;

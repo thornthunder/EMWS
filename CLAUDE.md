@@ -694,9 +694,19 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   hard-coded S11 wording is gone). `SYST:HELP:HEAD?` ANSWERS with a 10,121-byte definite
   block (`#510121…`) - the bridge had read only its header; `ScpiSocket.query(cmd, ms,
   { block: true })` reads IEEE 488.2 blocks whole and the probe prints every header. The
-  fake has `hold` (frozen trace), last-digit noise otherwise, and a block answer. NEXT:
-  the probe file with the header list -> write S11 selection/trigger for A.07.75 from it.
-  CAT-only units stay unsupported.
+  fake has `hold` (frozen trace), last-digit noise otherwise, and a block answer.
+  **Run 7 (`VNA_Error7.txt`): the measurement is RIGHT** (calibrated 50 Ω load, |S11| ≈
+  0.003, FieldFox screen 49.9 − j0) and the 325-header list came. A.07.75 NA mode has NO
+  CALC:PAR, NO INIT/TRIG/ABOR, NO CORR state (only EXT/IMP/MED/RVEL/WGC), no MTIM; it has
+  CALC[:SEL]:DATA:SDAT/FDAT, FREQ:DATA?, SWE:POIN/TIME, DISP:WIND:SPL, MMEM:STOR:SNP,
+  STAT:OPER:COND?, *OPC/*WAI. So the bridge LEARNS THE VOCABULARY first (`learnVocabulary`
+  -> `parseHeaders` Set; `knows()`/`has()` via `normaliseHeader` + `shortForm`, SCPI's
+  first-four-drop-vowel rule, both forms of `[optional]` nodes, suffix digits stripped) and
+  skips what the list lacks: no refusals in the log, `notes` are `{ level: 'info' |
+  'warning', text }` (info = how this firmware is, shown muted; warning = red), the
+  "no command for choosing the measurement" note is info. The fake's legacy list is the real
+  shape (`LEGACY_HEADERS`), `CURRENT_HEADERS` adds PAR/INIT/CORR/MTIM. Nothing left to
+  learn from that unit except its MMEM:STOR:SNP route; CAT-only units stay unsupported.
 
 ## Conventions
 

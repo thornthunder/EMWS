@@ -27,6 +27,55 @@ const MODES = '"CAT","NA","SA"';
 const LEGACY_IDN = 'Keysight Technologies,N9914A,MY53104315,A.07.75';
 const LEGACY_OPTIONS = '"210,010,310,235,233,211"';
 const LEGACY_MODES = '"CPM","CPM","SA","NA","CAT"';
+/** Lines from that instrument's own SYST:HELP:HEADers? (2026-10-08), the ones that matter here. */
+const LEGACY_HEADERS = [
+  ':CALCulate{1:1}[:SELected]:DATA:FDATa',
+  ':CALCulate{1:1}[:SELected]:DATA:FMEMory?/qonly/',
+  ':CALCulate{1:1}[:SELected]:DATA:SDATa',
+  ':CALCulate{1:1}[:SELected]:DATA:SMEMory',
+  ':CALCulate{1:1}[:SELected]:MARKer:AOFF/nquery/',
+  ':CALCulate{1:1}[:SELected]:TRANsform:TIME:STARt',
+  ':DISPlay:WINDow{1:1}:SPLit',
+  ':DISPlay:WINDow{1:1}:TRACe{1:4}:Y[:SCALe]:AUTO/nquery/',
+  ':FORMat:BORDer',
+  ':FORMat[:DATA]',
+  ':INSTrument:CATalog?/qonly/',
+  ':INSTrument[:SELect]',
+  ':MMEMory:STORe:SNP[:DATA]/nquery/',
+  '[:SENSe{1:1}]:AVERage:COUNt',
+  '[:SENSe{1:1}]:BWID',
+  '[:SENSe{1:1}]:CORRection:EXTension:PORT1|PORT',
+  '[:SENSe{1:1}]:CORRection:EXTension[:STATe]',
+  '[:SENSe{1:1}]:CORRection:IMPedance[:INPut][:MAGNitude]',
+  '[:SENSe{1:1}]:FREQuency:CENTer',
+  '[:SENSe{1:1}]:FREQuency:DATA?/qonly/',
+  '[:SENSe{1:1}]:FREQuency:STARt',
+  '[:SENSe{1:1}]:FREQuency:STOP',
+  '[:SENSe{1:1}]:SWEep:POINts',
+  '[:SENSe{1:1}]:SWEep:TIME',
+  ':STATus:OPERation:CONDition?/qonly/',
+  ':SYSTem:ERRor[:NEXT]?/qonly/',
+  ':SYSTem:HELP:HEADers?/qonly/',
+  ':SYSTem:VERSion?/qonly/',
+  '*CLS/nquery/',
+  '*IDN?/qonly/',
+  '*OPC',
+  '*OPT?/qonly/',
+  '*WAI/nquery/',
+];
+/** What a current firmware lists, as far as the bridge cares: the legacy set plus what it lacks. */
+const CURRENT_HEADERS = [
+  ...LEGACY_HEADERS,
+  ':CALCulate{1:1}:PARameter{1:4}:DEFine',
+  ':CALCulate{1:1}:PARameter{1:4}:SELect/nquery/',
+  ':CALCulate{1:1}:PARameter:COUNt',
+  ':INITiate:CONTinuous',
+  ':INITiate[:IMMediate]/nquery/',
+  '[:SENSe{1:1}]:CORRection[:STATe]',
+  '[:SENSe{1:1}]:CORRection:USER[:STATe]',
+  '[:SENSe{1:1}]:CORRection:COLLect:METHod:TYPE?/qonly/',
+  '[:SENSe{1:1}]:SWEep:MTIMe?/qonly/',
+];
 
 /** S11 of 75 ohms + 0.5 uH against 50 ohms. @param {number} hz */
 export function antennaGamma(hz) {
@@ -159,7 +208,15 @@ export function startFakeFieldFox(options = {}) {
       }
       if (upper === 'INIT:IMM' || upper === 'INIT') return undefined;
     }
-    if (upper === 'SENS:SWE:MTIM?' || upper === 'SENS:SWE:TIME?') return '0.15';
+    if (upper === 'SENS:SWE:MTIM?') {
+      if (legacy) {
+        state.errors.push('-113,"Undefined header;SENS:SWE:MTIM<Err>"');
+        return undefined;
+      }
+      return '0.15';
+    }
+    // As the real one: 0 means "auto", and the bridge must guess.
+    if (upper === 'SENS:SWE:TIME?') return legacy ? '0.000E+00' : '0.15';
     if (upper === 'SENS:FREQ:DATA?') return frequencies().join(',');
     if (upper === 'CALC:DATA:SDATA?') {
       if (state.mode !== 'NA') {
@@ -175,15 +232,23 @@ export function startFakeFieldFox(options = {}) {
       return out.join(',');
     }
     if (upper === 'SYST:HELP:HEAD?') {
-      // A definite-length block, as the real one answers: #, the length's digit count, the length, the bytes.
-      const headers = ['*CLS', '*IDN?', '*OPC?', '*OPT?', ':CALCulate:DATA:FDATa', ':CALCulate:DATA:SDATa', ':INSTrument:CATalog?', ':INSTrument:SELect', ':SENSe:FREQuency:DATA?', ':SENSe:FREQuency:STARt', ':SENSe:FREQuency:STOP', ':SENSe:SWEep:POINts', ':SYSTem:ERRor?', ':SYSTem:HELP:HEADers?'];
+      // A definite-length block, as the real one answers: #, the length's digit count, the
+      // length, the bytes. The legacy list is the shape of the N9914A's (A.07.75, 325
+      // headers): CALCulate holds DATA, FILTer, MARKer and TRANsform only - no PARameter -
+      // and there is no INITiate and no CORRection state.
+      const headers = legacy ? LEGACY_HEADERS : CURRENT_HEADERS;
       const body = `${headers.join('\n')}\n`;
       return `#${String(body.length).length}${body.length}${body}`;
     }
-    // Correction: the legacy unit, as found, had no user calibration - CalReady only.
-    if (upper === 'SENS:CORR?') return state.correction || legacy ? '1' : '0';
-    if (upper === 'SENS:CORR:USER?') return state.correction && !legacy ? '1' : '0';
+    // Correction state: the legacy firmware has no such queries at all.
+    if (/^SENS:CORR(:USER)?\?$|^SENS:CORR:COLL:METH:TYPE\?$/.test(upper) && legacy) {
+      state.errors.push(`-113,"Undefined header;${spelt.replace(/\?$/, '')}<Err>"`);
+      return undefined;
+    }
+    if (upper === 'SENS:CORR?') return state.correction ? '1' : '0';
+    if (upper === 'SENS:CORR:USER?') return state.correction ? '1' : '0';
     if (upper === 'SENS:CORR:COLL:METH:TYPE?') return '"QuickCal"';
+    if (upper === 'SENS:CORR:IMP?') return '50';
     state.errors.push(`-113,"Undefined header;${spelt.split(' ')[0]}<Err>"`);
     return undefined;
   };

@@ -4,7 +4,7 @@
 // by arithmetic the answers can be checked against.
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { FieldFox, createBridge, parseAddress, parseArgs, parseNumbers, splitReply, validateSweep } from '../services/emws-vna-bridge/bridge.mjs';
+import { FieldFox, createBridge, knows, normaliseHeader, parseAddress, parseArgs, parseHeaders, parseNumbers, shortForm, splitReply, validateSweep } from '../services/emws-vna-bridge/bridge.mjs';
 import { antennaGamma, lowPassS21, splitCommands, startFakeFieldFox } from '../services/emws-vna-bridge/fake-fieldfox.mjs';
 import { BridgeInstrument, modelFromIdn, probeBridge } from '../src/lib/vna/bridge';
 
@@ -186,7 +186,7 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(modelFromIdn(info.idn)).toBe('N9914A');
   });
 
-  it('sweeps anyway: waits for the mode switch, tries every spelling, then sweeps the trace shown and says so', async () => {
+  it('asks the firmware for its command list first, and then tries nothing the list rules out', async () => {
     const info = (await probeBridge(old.url))!.instruments[0]!;
     const vna = new BridgeInstrument(old.url, info);
     exchange.length = 0;
@@ -194,56 +194,82 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(points).toHaveLength(101);
     expect(points[0]!.z.re).toBeCloseTo(75, 3);
     const sent = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
-    const heard = exchange.filter((l) => l.startsWith('< ')).map((l) => l.slice(2));
-    // All four spellings were tried, one message each with SYST:ERR? on it, and refused with
-    // the real error text - the header echoed back in capitals, as the instrument does.
-    for (const form of ['CALC:PAR1:DEF', 'CALC:PAR:DEF', 'CALCulate:PARameter1:DEFine', 'CALCulate:PARameter:DEFine']) {
-      expect(sent).toContain(`${form} S11;:SYST:ERR?`);
-      expect(heard).toContain(`-113,"Undefined header;${form.toUpperCase()}<Err>"`);
-    }
     // The switch was confirmed by asking, not assumed from *OPC?: INST? was asked again after it.
     const switched = sent.indexOf('INST "NA";*OPC?;:SYST:ERR?');
     expect(switched).toBeGreaterThan(-1);
     expect(sent.slice(switched + 1)).toContain('INST?');
     expect(legacy.state.mode).toBe('NA');
-    // The sweep went ahead on the trace the instrument shows, and the page is told the choice was not the bridge's.
+    // Then the command list, once; it lists no CALC:PAR, no INIT, no CORR state, no MTIM.
+    expect(sent.filter((l) => l === 'SYST:HELP:HEAD?')).toHaveLength(1);
+    expect(fieldfox.vocabulary?.size).toBeGreaterThan(30);
+    expect(sent.some((l) => /DEF/i.test(l))).toBe(false);
+    expect(sent.some((l) => l.startsWith('INIT'))).toBe(false);
+    expect(sent.some((l) => l.startsWith('SENS:CORR'))).toBe(false);
+    expect(sent.some((l) => l.startsWith('SENS:SWE:MTIM'))).toBe(false);
     expect(fieldfox.parameterForm).toBe('none');
-    expect(vna.lastNotes.join(' ')).toMatch(/would not let the bridge choose S11/);
-    // The legacy fake sweeps (its noise digits differ between reads), so no Hold note here.
-    expect(vna.lastNotes.join(' ')).not.toMatch(/Hold/);
-    expect(exchange.some((l) => /no spelling of "define S11" is accepted/.test(l))).toBe(true);
+    // What it does do: set the sweep, wait it out (0 s = auto, so a second a sweep), read the trace twice.
     expect(sent.some((l) => l.startsWith('SENS:FREQ:STAR 140000000'))).toBe(true);
-    // No INITiate on this firmware (run 4): the trigger refusal is read, the sweep is waited out instead, nothing is triggered.
-    expect(heard).toContain('-113,"Undefined header;INIT<Err>"');
-    expect(exchange.some((l) => /no trigger control on this firmware/.test(l))).toBe(true);
-    expect(exchange.some((l) => /waiting 800 ms for 2 sweeps of 0.15 s/.test(l))).toBe(true);
-    expect(sent.some((l) => l.startsWith('INIT:IMM'))).toBe(false);
-    expect(sent.some((l) => l.startsWith('INIT:CONT 1'))).toBe(false);
-    expect(sent.some((l) => l.startsWith('CALC:DATA:SDATA?'))).toBe(true);
-    // Run 5's lesson: no user calibration is not "uncorrected" - it is CalReady, at the port.
-    expect(vna.lastCorrection).toEqual({ corrected: true, method: 'CalReady' });
-    // Next time it does not ask again, and never asks to switch mode again either.
+    expect(sent.some((l) => l.startsWith('SENS:SWE:TIME?'))).toBe(true);
+    expect(exchange.some((l) => /waiting 2500 ms for 2 sweeps of 1 s/.test(l))).toBe(true);
+    expect(sent.filter((l) => l.startsWith('CALC:DATA:SDATA?'))).toHaveLength(2);
+    // The page is told, calmly: this is how the firmware is, not a fault.
+    expect(vna.lastNotes).toEqual([{ level: 'info', text: expect.stringMatching(/no command for choosing the measurement .* S11 if S11 is what it shows/) }]);
+    expect(vna.lastCorrection).toEqual({ corrected: undefined, method: '' });
+    // Next time: no list, no switch, straight to the sweep.
     exchange.length = 0;
     await vna.sweepTransmission({ startMHz: 140, stopMHz: 150, points: 11 });
     const again = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
-    expect(again.some((l) => /DEF/i.test(l))).toBe(false);
+    expect(again).not.toContain('SYST:HELP:HEAD?');
     expect(again.some((l) => l.startsWith('INST "NA"'))).toBe(false);
-    expect(vna.lastNotes.join(' ')).toMatch(/S21/);
-  });
+    expect(vna.lastNotes[0]!.text).toMatch(/S21/);
+  }, 40_000);
 
   it('notices a trace that does not move, as a unit on Hold gives, and reads its command list as a block', async () => {
     legacy.state.hold = true;
     const info = (await probeBridge(old.url))!.instruments[0]!;
     const vna = new BridgeInstrument(old.url, info);
     await vna.sweep({ startMHz: 140, stopMHz: 150, points: 11 });
-    expect(vna.lastNotes.join(' ')).toMatch(/did not change between two reads .* probably on Hold/);
+    expect(vna.lastNotes.map((n) => n.level)).toEqual(['info', 'warning']);
+    expect(vna.lastNotes[1]!.text).toMatch(/did not change between two reads .* probably on Hold/);
     legacy.state.hold = false;
     const lines = await fieldfox.probe();
     expect(lines).toContain('the trace changed between the reads: the instrument is sweeping');
     const at = lines.findIndex((l) => l.startsWith('SYST:HELP:HEAD? => '));
     expect(lines[at]).toMatch(/^SYST:HELP:HEAD\? => \d+ headers, \d+ bytes:$/);
-    expect(lines.slice(at + 1)).toContain('    :SENSe:FREQuency:STARt');
-    expect(lines.slice(at + 1)).toContain('    :CALCulate:DATA:SDATa');
+    expect(lines.slice(at + 1)).toContain('    [:SENSe{1:1}]:FREQuency:STARt');
+    expect(lines.slice(at + 1)).toContain('    :CALCulate{1:1}[:SELected]:DATA:SDATa');
+  }, 40_000);
+
+  it('reads a command list the way the instrument writes it', () => {
+    const vocabulary = parseHeaders(
+      [':CALCulate{1:1}[:SELected]:DATA:SDATa', '[:SENSe{1:1}]:FREQuency:DATA?/qonly/', '[:SENSe{1:1}]:CORRection:EXTension:PORT1|PORT', ':INSTrument[:SELect]', '*OPC', ':SYSTem:ERRor[:NEXT]?/qonly/'].join('\n'),
+    );
+    // Optional nodes are in both forms; suffix ranges go; the capitals are the short form.
+    expect(vocabulary.has('CALC:DATA:SDAT')).toBe(true);
+    expect(vocabulary.has('CALC:SEL:DATA:SDAT')).toBe(true);
+    expect(vocabulary.has('FREQ:DATA')).toBe(true);
+    expect(vocabulary.has('SENS:FREQ:DATA')).toBe(true);
+    expect(vocabulary.has('INST')).toBe(true);
+    expect(vocabulary.has('INST:SEL')).toBe(true);
+    expect(vocabulary.has('*OPC')).toBe(true);
+    expect(vocabulary.has('SYST:ERR:NEXT')).toBe(true);
+    // What the bridge sends, in long or short form, with or without a trace number, matches.
+    expect(normaliseHeader('CALCulate:DATA:SDATa?')).toBe('CALC:DATA:SDAT');
+    expect(normaliseHeader('CALC1:DATA:SDATA?')).toBe('CALC:DATA:SDAT');
+    expect(normaliseHeader('SENS:FREQ:STAR 140000000')).toBe('SENS:FREQ:STAR');
+    expect(normaliseHeader('CALC:PAR1:DEF S11')).toBe('CALC:PAR:DEF');
+    expect(shortForm('FREQUENCY')).toBe('FREQ');
+    expect(shortForm('PARAMETER')).toBe('PAR');
+    expect(shortForm('DEFINE')).toBe('DEF');
+    expect(shortForm('STOP')).toBe('STOP');
+    expect(shortForm('AUTO')).toBe('AUTO');
+    expect(knows(vocabulary, 'CALC:DATA:SDATA?')).toBe(true);
+    expect(knows(vocabulary, 'CALC:SEL:DATA:SDATA?')).toBe(true);
+    expect(knows(vocabulary, 'CALC:PAR', { prefix: true })).toBe(false);
+    expect(knows(vocabulary, 'INIT', { prefix: true })).toBe(false);
+    expect(knows(vocabulary, 'SENS:CORR')).toBe(false);
+    expect(knows(vocabulary, 'SENS:CORR', { prefix: true })).toBe(true);
+    expect(knows(vocabulary, 'SENS:FREQ:DATA')).toBe(true);
   });
 
   it('can be asked what it knows, for the next report', async () => {
@@ -252,6 +278,7 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(lines.find((l) => l.startsWith('SYST:VERS?'))).toBe('SYST:VERS? => 1999.0');
     expect(lines.find((l) => l.startsWith('CALC:PAR1:DEF?'))).toMatch(/REFUSED: -113/);
     expect(lines.find((l) => l.startsWith('INIT:CONT?'))).toMatch(/REFUSED: -113,"Undefined header;INIT<Err>"/);
+    expect(lines.find((l) => l.startsWith('SENS:CORR:IMP?'))).toBe('SENS:CORR:IMP? => 50');
     expect(lines.find((l) => l.startsWith('SENS:SWE:POIN?'))).toMatch(/=> \d+$/);
     expect(lines.find((l) => l.startsWith('CALC:DATA:SDATA?'))).toMatch(/values\)$/);
     expect(lines.find((l) => l.startsWith('CALC:MEAS1:DEF S11'))).toMatch(/REFUSED/);

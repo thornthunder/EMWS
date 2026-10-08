@@ -71,6 +71,8 @@ as twenty seconds of silence.
 INST?                         only switch when not already in NA mode:
 INST "NA";*OPC?               a mode switch is overlapped, *OPC? waits for it...
 INST?                         ...or does not: asked again until it answers "NA" (10 s)
+SYST:HELP:HEAD?               the firmware's own command list, once (a definite-length
+                              block); everything below is skipped if the list lacks it
 CALC:PAR1:DEF S11             or S21: the guide's spelling, then if refused, in turn:
 CALC:PAR:DEF S11                no trace number
 CALCulate:PARameter1:DEFine S11 long mnemonics
@@ -144,6 +146,18 @@ trace was **identical to seven figures in every read**, sweep and probe alike, m
 apart - the instrument is on Hold, which that firmware gives the bridge no way to lift. So
 the bridge now reads twice a sweep apart and says so when nothing moved, and the probe
 does the same check. `SYST:HELP:HEAD?` **answers** on that firmware, with a 10,121-byte
-definite-length block - the instrument's own command list - which the bridge read only the
-header of; `ScpiSocket.query(…, { block: true })` now reads blocks whole, and the probe
-prints every header. That list is what the next report should carry.
+definite-length block - the instrument's own command list. **Run 7 brought it** (325
+headers, kept in `D:\Code\Sample Data\VNA_Error7.txt`), along with a correct measurement:
+a calibrated 50 Ω load at the cable end read |S11| ≈ 0.003 through the bridge, as the
+FieldFox's own screen said (49.9 − j0 Ω). What A.07.75 has in NA mode: `CALCulate` holds
+`DATA` (SDATa/FDATa/SMEMory/FMEMory), `FILTer`, `MARKer` and `TRANsform` - **no
+`PARameter`**; **no `INITiate`, `TRIGger` or `ABORt`**; `SENSe:CORRection` holds only
+`EXTension`, `IMPedance`, `MEDium`, `RVELocity`, `WGCutoff` - **no state query**;
+`SWEep:POINts`/`TIME` (no `MTIMe`); `FREQuency:DATA?`; `DISPlay:WINDow:SPLit` and
+`TRACe{1:4}:Y`; `MMEMory:STORe:SNP` (a Touchstone file, saved on the instrument);
+`STATus:OPERation:CONDition?`; `*OPC`, `*WAI`. So the bridge now **asks for the list before
+the first sweep and acts on it**: nothing it lacks is tried, the log stays clean, and the
+page gets a quiet grey note ("this firmware has no command for choosing the measurement…")
+instead of a red dump of refusals. Parsing: the capitals of each mnemonic are its short
+form, `[…]` optional nodes are entered both ways, `{…}` ranges and `/qonly/` go; the
+bridge's own commands are matched through SCPI's short-form rule (`SDATA` → `SDAT`).

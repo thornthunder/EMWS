@@ -143,11 +143,14 @@ What to look for:
   *the FieldFox says -222,"Data out of range"*. Copy it exactly, together with the lines
   the PowerShell window printed just before it (`--log` above): those show which command
   the instrument objected to.
-- Older firmware does not have every command the current manuals list. An N9914A on
-  firmware A.07.75 taught the bridge that it cannot choose S11 on such a unit at all, so
-  on one of those the bridge sweeps **whatever trace the instrument is showing** and the
-  page says so in orange. Put S11 on trace 1 on the instrument's own screen before you
-  measure (and S21 for a through measurement), and the sweep is yours.
+- Older firmware does not have every command the current manuals list. The bridge asks
+  the instrument for its own command list before the first sweep and uses only what is
+  there. An N9914A on firmware A.07.75, for example, has no command for choosing S11 over
+  the network, none for triggering a sweep, and none for asking whether it is calibrated;
+  on such a unit the bridge sweeps **whatever trace the instrument is showing**, in
+  continuous sweep, and the page says so in a quiet grey note. Put S11 on trace 1 on the
+  instrument's own screen before you measure (and S21 for a through measurement),
+  calibrate it there, and the sweep is yours.
 
 - **Set the FieldFox to continuous sweep** before measuring (Sweep → Continuous on the
   instrument). On firmware that gives the bridge no way to trigger a sweep, a FieldFox on
@@ -189,7 +192,7 @@ use normally the moment you stop. The bridge only ever listens on your own PC
 | `/health` shows `"status":"unreachable"` | The bridge could not connect on port 5025; the `error` text says more. |
 | `/health` shows modes without `NA` | The instrument has no network-analyser option. The bridge cannot measure with it as it stands – that is a result worth reporting. |
 | *the FieldFox says …* | The instrument refused a command. Copy the text exactly; it tells us which command and why. Then run step 6. |
-| An orange note that the bridge could not choose S11 | Your firmware has no command for it. Select S11 (or S21) on the instrument itself and measure again; the readings are what the screen shows. |
+| A grey note that the firmware has no command for choosing the measurement | Not a fault: your firmware has no such command. Select S11 (or S21) on the instrument itself; the readings are what its screen shows. |
 | An orange note that the trace did not change between two reads | The instrument is on Hold and the bridge cannot trigger it on your firmware. Set it to continuous sweep and measure again. |
 | The reading is wrong in a way you can describe | Say what was on the port, what the FieldFox's own screen showed, and what EMWS showed. |
 

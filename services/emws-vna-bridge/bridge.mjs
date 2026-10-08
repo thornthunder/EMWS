@@ -166,6 +166,76 @@ export function splitReply(reply) {
 const lastUnit = (reply) => splitReply(reply).error;
 
 /**
+ * An instrument's own command list (SYST:HELP:HEADers?) as a set of short-form headers,
+ * so the bridge can ask "does this firmware have CALC:PAR at all?" instead of trying
+ * spellings. One line of the list looks like `:CALCulate{1:1}[:SELected]:DATA:SDATa` or
+ * `[:SENSe{1:1}]:SWEep:TIME` or `*OPC`: the capitals of each mnemonic are its short form,
+ * `{…}` is a suffix range, `[…]` an optional node (both forms are entered), and
+ * `/qonly/` and `/nquery/` say query-only and command-only.
+ * @param {string} block
+ */
+export function parseHeaders(block) {
+  const out = new Set();
+  for (const raw of block.split(/\r?\n/)) {
+    const h = raw.trim().replace(/\/(qonly|nquery)\//g, '').replace(/\?$/, '').replace(/\{[^}]*\}/g, '');
+    if (!h) continue;
+    if (h.startsWith('*')) {
+      out.add(h.toUpperCase());
+      continue;
+    }
+    const nodes = [];
+    const re = /(\[)?:?([A-Za-z0-9|]+)(\])?/g;
+    let m;
+    while ((m = re.exec(h))) nodes.push({ short: m[2].split('|')[0].replace(/[a-z]/g, '').replace(/\d+$/, ''), optional: Boolean(m[1]) });
+    const optional = nodes.filter((n) => n.optional).length;
+    for (let mask = 0; mask < 1 << optional; mask++) {
+      const parts = [];
+      let k = 0;
+      for (const n of nodes) {
+        if (!n.optional) parts.push(n.short);
+        else if (mask & (1 << k++)) parts.push(n.short);
+      }
+      out.add(parts.join(':'));
+    }
+  }
+  return out;
+}
+
+/**
+ * SCPI's short form of a mnemonic: the first four letters, the fourth dropped if it is a
+ * vowel - FREQuency -> FREQ, PARameter -> PAR, SDATa -> SDAT, DEFine -> DEF - and a
+ * mnemonic of four letters or fewer as it is. The list's capitals say the same thing;
+ * this is for the commands the bridge sends, which may be long or short.
+ * @param {string} mnemonic upper case
+ */
+export function shortForm(mnemonic) {
+  if (mnemonic.length <= 4) return mnemonic;
+  const four = mnemonic.slice(0, 4);
+  return /[AEIOU]$/.test(four) ? four.slice(0, 3) : four;
+}
+
+/** A command header as parseHeaders' set would hold it: upper case, short forms, no suffix digits. @param {string} header */
+export function normaliseHeader(header) {
+  return header
+    .toUpperCase()
+    .replace(/\s.*$/, '')
+    .replace(/\?$/, '')
+    .replace(/^:/, '')
+    .split(':')
+    .map((node) => (node.startsWith('*') ? node : shortForm(node.replace(/\d+$/, ''))))
+    .join(':');
+}
+
+/** Whether a firmware's vocabulary has a header, exactly, or (as a prefix) a subsystem. */
+export function knows(vocabulary, header, { prefix = false } = {}) {
+  const wanted = normaliseHeader(header);
+  if (vocabulary.has(wanted)) return true;
+  if (!prefix) return false;
+  for (const h of vocabulary) if (h.startsWith(`${wanted}:`)) return true;
+  return false;
+}
+
+/**
  * One FieldFox on the network. Every method opens its own connection and closes it after,
  * so a bridge left running does not hold the instrument's socket, and a FieldFox that was
  * switched off and on again is simply found again next time.
@@ -187,6 +257,35 @@ export class FieldFox {
      * @type {number | 'none' | undefined}
      */
     this.parameterForm = undefined;
+    /**
+     * The firmware's own command list, asked once (SYST:HELP:HEADers?) and kept; undefined
+     * until asked, null when the firmware cannot say. With it the bridge knows what not to
+     * try: an N9914A on A.07.75 lists no CALC:PAR, no INIT and no CORR state at all.
+     * @type {Set<string> | null | undefined}
+     */
+    this.vocabulary = undefined;
+  }
+
+  /** The firmware's command list, fetched on first need. @param {ScpiSocket} s */
+  async learnVocabulary(s) {
+    if (this.vocabulary !== undefined) return this.vocabulary;
+    try {
+      const block = await s.query('SYST:HELP:HEAD?', 30000, { block: true });
+      const err = await s.query('SYST:ERR?');
+      if (!noError(err) || !block.includes(':')) throw new Error(err.trim());
+      this.vocabulary = parseHeaders(block);
+      this.log?.(`  (this firmware lists ${this.vocabulary.size} command forms)`);
+    } catch (e) {
+      this.log?.(`  (no command list from this firmware: ${e instanceof Error ? e.message : String(e)} - trying things instead)`);
+      s.write('*CLS');
+      this.vocabulary = null;
+    }
+    return this.vocabulary;
+  }
+
+  /** Whether the firmware has a command, when it has told us; true (worth trying) when it has not. */
+  has(header, options) {
+    return this.vocabulary ? knows(this.vocabulary, header, options) : true;
   }
 
   get address() {
@@ -234,8 +333,9 @@ export class FieldFox {
       throw new InstrumentError(`This FieldFox has no network-analyser mode (it has ${modes || 'none it will name'}); EMWS needs S-parameters, which NA mode gives.`);
     }
     await this.ask(s, 'INST "NA";*OPC?', 'Switching to NA mode', 15000);
-    // A new mode may take a different spelling, or none: find out again.
+    // A new mode may take a different spelling, or none, and lists different commands: find out again.
     this.parameterForm = undefined;
+    this.vocabulary = undefined;
     for (let attempt = 0; attempt < 40; attempt++) {
       if (unquote(await s.query('INST?')) === 'NA') return;
       await new Promise((r) => setTimeout(r, 250));
@@ -313,7 +413,7 @@ export class FieldFox {
       }
       s.write('*CLS');
       lines.push('--- sweep control, more spellings ---');
-      for (const q of ['SENS:SWE:CONT?', 'SENS:SWE:HOLD?', 'SENS:HOLD?', 'SENS:SWE:TYPE?', 'SENS:SWE:GEN?', 'SENS:SWE:DWEL?', 'SENS:SWE:STAT?', 'INIT1?', 'SENS:INIT?', 'SYST:SWE:CONT?', 'SENS:SWE:RUN?']) await one(q);
+      for (const q of ['SENS:SWE:CONT?', 'SENS:SWE:HOLD?', 'SENS:HOLD?', 'SENS:SWE:TYPE?', 'SENS:SWE:GEN?', 'SENS:SWE:DWEL?', 'SENS:SWE:STAT?', 'INIT1?', 'SENS:INIT?', 'SYST:SWE:CONT?', 'SENS:SWE:RUN?', 'DIAG:SWE:MODE?', 'STAT:OPER:COND?']) await one(q);
       lines.push('--- calibration ---');
       for (const q of ['SENS:CORR?', 'SENS:CORR:STAT?', 'SENS:CORR:USER?', 'SENS:CORR:USER:STAT?', 'SENS:CORR:COLL:METH:TYPE?', 'SENS:CORR:CALR:TYPE?', 'SENS:CORR:CSET?', 'SENS:CORR:IMP?', 'SENS:CORR:TYPE?']) await one(q);
       lines.push('--- choosing S11: every spelling a sweep would try, and a few more ---');
@@ -347,6 +447,10 @@ export class FieldFox {
    */
   async defineParameter(s, parameter) {
     const refusals = [];
+    if (!this.has('CALC:PAR', { prefix: true })) {
+      this.parameterForm = 'none';
+      return { set: false, refusals: [], absent: true };
+    }
     if (this.parameterForm === 'none') return { set: false, refusals: ['refused on an earlier sweep'] };
     const candidates = this.parameterForm !== undefined ? [this.parameterForm] : PARAMETER_FORMS.map((_, n) => n);
     for (const n of candidates) {
@@ -382,6 +486,7 @@ export class FieldFox {
       await this.set(s, '*CLS', 'Clearing the error queue');
       // Only switch when needed - switching resets the mode's settings, calibration included.
       await this.enterNaMode(s);
+      await this.learnVocabulary(s);
       const defined = await this.defineParameter(s, request.parameter);
       await this.set(s, `SENS:FREQ:STAR ${request.startHz}`, 'Start frequency');
       await this.set(s, `SENS:FREQ:STOP ${request.stopHz}`, 'Stop frequency');
@@ -393,17 +498,24 @@ export class FieldFox {
       // the bridge waits out two sweeps at the new settings and reads what it then holds.
       let wasContinuous = false;
       let triggered = false;
-      try {
-        wasContinuous = (await this.ask(s, 'INIT:CONT?', 'Trigger state')).trim() !== '0';
-        await this.set(s, 'INIT:CONT 0', 'Single sweep');
-        triggered = true;
-      } catch (e) {
-        this.log?.(`  (${e instanceof Error ? e.message : String(e)} - no trigger control on this firmware; letting it sweep on its own)`);
-        s.write('*CLS');
+      if (this.has('INIT', { prefix: true })) {
+        try {
+          wasContinuous = (await this.ask(s, 'INIT:CONT?', 'Trigger state')).trim() !== '0';
+          await this.set(s, 'INIT:CONT 0', 'Single sweep');
+          triggered = true;
+        } catch (e) {
+          this.log?.(`  (${e instanceof Error ? e.message : String(e)} - no trigger control on this firmware; letting it sweep on its own)`);
+          s.write('*CLS');
+        }
       }
       try {
+        /** @type {{ level: 'info' | 'warning'; text: string }[]} */
         const notes = [];
-        if (!defined.set) notes.push(`The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.`);
+        if (defined.absent) {
+          notes.push({ level: 'info', text: `This instrument's firmware has no command for choosing the measurement over the network, so the trace on its screen is what was read: ${request.parameter} if ${request.parameter} is what it shows.` });
+        } else if (!defined.set) {
+          notes.push({ level: 'warning', text: `The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.` });
+        }
         let pairs;
         if (triggered) {
           // A long sweep at a narrow IF bandwidth can take a while: give it two minutes.
@@ -419,7 +531,7 @@ export class FieldFox {
           await this.waitForSweeps(s, 1);
           pairs = await this.readTrace(s);
           if (first.length === pairs.length && first.every((v, i) => v === pairs[i])) {
-            notes.push('The trace did not change between two reads a sweep apart: the instrument is probably on Hold (single sweep), and this firmware gives the bridge no way to trigger one. Set it to continuous sweep on the instrument, then measure again.');
+            notes.push({ level: 'warning', text: 'The trace did not change between two reads a sweep apart: the instrument is probably on Hold (single sweep), and this firmware gives the bridge no way to trigger one. Set it to continuous sweep on the instrument, then measure again.' });
           }
         }
         const frequenciesHz = await this.readFrequencies(s, request);
@@ -441,20 +553,22 @@ export class FieldFox {
         // their readings were uncorrected when they were CalReady-corrected.
         let corrected;
         let method = '';
-        try {
-          corrected = (await this.ask(s, 'SENS:CORR?', 'Correction state')).trim() !== '0';
-          if (corrected) {
-            const user = (await this.ask(s, 'SENS:CORR:USER?', 'User correction state')).trim() !== '0';
-            method = user ? unquote(await this.ask(s, 'SENS:CORR:COLL:METH:TYPE?', 'Calibration method')) : 'CalReady';
+        if (this.has('SENS:CORR') || this.has('SENS:CORR:STAT')) {
+          try {
+            corrected = (await this.ask(s, 'SENS:CORR?', 'Correction state')).trim() !== '0';
+            if (corrected) {
+              const user = (await this.ask(s, 'SENS:CORR:USER?', 'User correction state')).trim() !== '0';
+              method = user ? unquote(await this.ask(s, 'SENS:CORR:COLL:METH:TYPE?', 'Calibration method')) : 'CalReady';
+            }
+          } catch (e) {
+            this.log?.(`  (${e instanceof Error ? e.message : String(e)} - correction state not known)`);
+            s.write('*CLS');
+            corrected = undefined;
+            method = '';
           }
-        } catch (e) {
-          this.log?.(`  (${e instanceof Error ? e.message : String(e)} - correction state not known)`);
-          s.write('*CLS');
-          corrected = undefined;
-          method = '';
         }
-        for (const note of notes) this.log?.(`  (${note})`);
-        return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: notes[0] ?? '', notes };
+        for (const note of notes) this.log?.(`  (${note.text})`);
+        return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: notes[0]?.text ?? '', notes };
       } finally {
         // Leave the instrument sweeping as it was found.
         if (triggered && wasContinuous) s.write('INIT:CONT 1');
@@ -470,6 +584,7 @@ export class FieldFox {
   async waitForSweeps(s, sweeps) {
     let seconds = 1;
     for (const q of ['SENS:SWE:MTIM?', 'SENS:SWE:TIME?']) {
+      if (!this.has(q)) continue;
       try {
         const v = Number(await this.ask(s, q, 'Sweep time'));
         if (Number.isFinite(v) && v > 0) {
@@ -492,6 +607,7 @@ export class FieldFox {
    */
   async readFrequencies(s, request) {
     try {
+      if (!this.has('SENS:FREQ:DATA')) throw new InstrumentError('SENS:FREQ:DATA? is not in this firmware');
       return parseNumbers(await this.ask(s, 'SENS:FREQ:DATA?', 'Reading the frequencies', 20000));
     } catch (e) {
       this.log?.(`  (${e instanceof Error ? e.message : String(e)} - laying the frequencies out from the request)`);
@@ -507,7 +623,8 @@ export class FieldFox {
    */
   async readTrace(s) {
     const refusals = [];
-    for (const q of TRACE_QUERIES) {
+    const listed = this.vocabulary ? TRACE_QUERIES.filter((q) => this.has(q)) : [];
+    for (const q of listed.length ? listed : TRACE_QUERIES) {
       try {
         return parseNumbers(await this.ask(s, q, 'Reading the trace', 20000));
       } catch (e) {

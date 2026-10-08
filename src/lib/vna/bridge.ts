@@ -104,7 +104,13 @@ interface SweepReply {
   parameterSet?: boolean;
   parameterNote?: string;
   /** What the person should know about how the sweep was taken: an unchosen parameter, a frozen trace. */
-  notes?: string[];
+  notes?: ({ level?: string; text?: string } | string)[];
+}
+
+export interface BridgeNote {
+  /** 'info' is how things are on this instrument; 'warning' is something to put right before trusting the reading. */
+  level: 'info' | 'warning';
+  text: string;
 }
 
 /** The instrument's model, from its *IDN? reply: "Keysight Technologies,N9912A,MY...,A.12.95" -> "N9912A". */
@@ -120,7 +126,7 @@ export class BridgeInstrument implements Instrument {
   /** What the instrument said about its correction on the last sweep; undefined before one, `corrected` undefined when it would not say. */
   lastCorrection: { corrected: boolean | undefined; method: string } | undefined;
   /** The bridge's notes on the last sweep: an unchosen parameter, a trace that did not move. Empty when all was as asked. */
-  lastNotes: string[] = [];
+  lastNotes: BridgeNote[] = [];
 
   constructor(
     readonly url: string,
@@ -189,11 +195,16 @@ export class BridgeInstrument implements Instrument {
       body.frequenciesHz.every((v) => typeof v === 'number' && Number.isFinite(v));
     if (!ok) throw new VnaError('The VNA bridge answered, but not with a sweep.');
     this.lastCorrection = { corrected: typeof body.corrected === 'boolean' ? body.corrected : undefined, method: typeof body.method === 'string' ? body.method : '' };
-    this.lastNotes = Array.isArray(body.notes)
-      ? body.notes.filter((n): n is string => typeof n === 'string' && n !== '')
-      : body.parameterSet === false
-        ? [body.parameterNote || `The instrument would not let the bridge choose ${parameter}; this is the trace it was showing.`]
-        : [];
+    const notes: BridgeNote[] = [];
+    if (Array.isArray(body.notes)) {
+      for (const n of body.notes) {
+        if (typeof n === 'string' && n !== '') notes.push({ level: 'warning', text: n });
+        else if (n && typeof n === 'object' && typeof n.text === 'string' && n.text !== '') notes.push({ level: n.level === 'info' ? 'info' : 'warning', text: n.text });
+      }
+    } else if (body.parameterSet === false) {
+      notes.push({ level: 'warning', text: body.parameterNote || `The instrument would not let the bridge choose ${parameter}; this is the trace it was showing.` });
+    }
+    this.lastNotes = notes;
     request.onProgress?.(1, 1);
     return body as SweepReply;
   }

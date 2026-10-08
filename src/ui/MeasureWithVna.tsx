@@ -185,8 +185,8 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
         </p>
       )}
       {bridgeNotes.map((note) => (
-        <p key={note} className="alert-inline">
-          {note}
+        <p key={note.text} className={note.level === 'warning' ? 'alert-inline' : 'muted'}>
+          {note.text}
         </p>
       ))}
 
