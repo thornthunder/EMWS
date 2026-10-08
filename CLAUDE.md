@@ -705,8 +705,12 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   skips what the list lacks: no refusals in the log, `notes` are `{ level: 'info' |
   'warning', text }` (info = how this firmware is, shown muted; warning = red), the
   "no command for choosing the measurement" note is info. The fake's legacy list is the real
-  shape (`LEGACY_HEADERS`), `CURRENT_HEADERS` adds PAR/INIT/CORR/MTIM. Nothing left to
-  learn from that unit except its MMEM:STOR:SNP route; CAT-only units stay unsupported.
+  shape (`LEGACY_HEADERS`), `CURRENT_HEADERS` adds PAR/INIT/CORR/MTIM. **Run 8
+  (`VNA_ReadData.txt`): VALIDATED** - three loads read as the instrument's screen shows
+  them: 50 Ω (|S11| 0.014), open (0.955), series 29 − j100 Ω (EMWS 29.63 − j102.0 at
+  145 MHz); clean log, list fetched once per process, grey note on the page (the site was
+  deployed). Bridge VERSION 1.1.0. The current-firmware path (PAR/INIT/CORR) has still met
+  only the fake. CAT-only units stay unsupported.
 
 ## Conventions
 

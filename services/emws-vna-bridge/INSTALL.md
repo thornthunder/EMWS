@@ -5,10 +5,11 @@ FieldFox over the network, the way it already measures with a NanoVNA over USB. 
 small program that runs on your PC, talks to the FieldFox, and hands the readings to the
 web page.
 
-Nobody has run this against a real FieldFox yet. It was written from Keysight's own
-programming guide and tested against a pretend instrument that answers the way the guide
-says a FieldFox does. Your test is the first real one, so the notes at the end on what to
-send back matter as much as the result.
+It has been run against one real FieldFox so far - an N9914A on firmware A.07.75, which
+read a 50 Ω load, an open and a 29 − j100 Ω network correctly - and against a pretend
+instrument that answers the way Keysight's programming guide says. Other models and
+firmware may differ, so the notes at the end on what to send back matter as much as the
+result.
 
 Everything here is public domain, like the rest of EMWS.
 

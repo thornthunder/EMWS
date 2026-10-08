@@ -81,9 +81,16 @@ export function SmithChartGuide() {
         reported as such. The bridge listens on this computer only (127.0.0.1), works from an https:// page as
         well as a local one, and if it is not running nothing changes — the line under the buttons just says where
         it was looked for, with a link to point it elsewhere. <code>--simulate</code> gives you a pretend FieldFox to
-        try the page with. Nothing in it has met a real FieldFox yet: it is written from Keysight's programming
-        guide and tested against a copy that answers as the guide says, and the first real instrument on the bench
-        will be the proof.
+        try the page with.
+      </p>
+      <p>
+        It has met one real instrument so far: a FieldFox N9914A on firmware A.07.75, which read a 50 Ω load, an
+        open and a 29 − j100 Ω network as its own screen showed them. That firmware turned out to have no command
+        for choosing the measurement over the network, none for triggering a sweep, and none for saying whether it
+        is calibrated - so the bridge asks each instrument for its own command list first and uses only what is
+        there. On such a unit you choose S11 (or S21) and calibrate on the instrument itself, keep it in continuous
+        sweep, and the page says so in a grey note. A newer firmware with those commands is driven in full, as
+        Keysight's programming guide describes, but that part has only met the pretend instrument.
       </p>
 
       <h2>Building the network</h2>

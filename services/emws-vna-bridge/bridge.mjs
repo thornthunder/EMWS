@@ -21,8 +21,10 @@
 // STOP, SENS:SWE:POIN, SENS:BWID; FORM ASC,0; INIT:CONT 0 then INIT:IMM;*OPC? ("always
 // single-sweep when programming", the guide says); SENS:FREQ:DATA? for the x axis and
 // CALC:DATA:SDATA? for the trace as real,imag pairs, corrected when correction is on.
-// Nothing here has met a real FieldFox yet; it has met the scripted one in
-// fake-fieldfox.mjs, which answers the way the guide says the instrument does.
+// Before any of that, SYST:HELP:HEAD? - the firmware's own command list - because the
+// first real instrument (an N9914A on A.07.75, which read a 50 ohm load, an open and a
+// 29 - j100 ohm network correctly) had none of CALC:PAR, INIT or a CORRection state, and
+// what a firmware lacks is not tried. See docs/vna-bridge.md for the whole story.
 //
 // Listens on 127.0.0.1 only. No dependencies. Public domain (The Unlicense). By ZR1JT.
 
@@ -30,7 +32,7 @@ import { createServer } from 'node:http';
 import { connect as netConnect } from 'node:net';
 import { fileURLToPath } from 'node:url';
 
-export const VERSION = '1.0.0';
+export const VERSION = '1.1.0';
 export const DEFAULT_HTTP_PORT = 8075;
 export const SCPI_PORT = 5025;
 /** The most points a FieldFox will take; the instrument is the final judge. */

@@ -108,11 +108,19 @@ learn a firmware's vocabulary when the guides do not match it.
 
 ## Standing
 
+**Validated on one real instrument** (2026-10-08): a FieldFox N9914A, firmware A.07.75,
+read through the bridge a calibrated 50 Ω load (|S11| ≈ 0.014), an open (|S11| ≈ 0.955)
+and a series 29 Ω − j100 Ω network (EMWS: 29.63 − j102.0 Ω at 145 MHz), each as the
+instrument's own screen showed it. Everything about how that firmware is driven below was
+learnt from it, one report at a time; the current-firmware path (choosing the parameter,
+triggering, asking about calibration) has met only the pretend instrument.
+
 Written from the published command reference and tested, end to end, against
 `fake-fieldfox.mjs`: a SCPI server that answers as the guide says an N9912A does,
 measuring 75 Ω + 0.5 µH on port 1 and a 145 MHz low-pass to port 2, with an error queue
-that a wrong command lands in. `tests/vna-bridge.test.ts` drives the real bridge against
-it; `npm run smoke -- --vna` does the same through the browser.
+that a wrong command lands in - and, in `legacy` mode, as the N9914A did, word for word.
+`tests/vna-bridge.test.ts` drives the real bridge against both; `npm run smoke -- --vna`
+does the same through the browser.
 
 **First real instrument, 2026-10-07:** an N9914A on firmware A.07.75 (options 210, 010,
 310, 235, 233, 211; modes CPM, SA, NA, CAT - one listed twice). The bridge found and
