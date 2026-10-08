@@ -47,9 +47,13 @@ GET  /health
        instruments: [{ id, name, address, status: "ok" | "unreachable",
                        idn?, options?, modes?, error? }] }
 
+GET  /settings?instrument=<id>
+  -> { instrument, startHz, stopHz, points }         what its front panel is set to now
+
 POST /sweep   { instrument, parameter: "S11" | "S21", startHz, stopHz, points, ifbwHz? }
   -> { instrument, parameter, frequenciesHz: [...], real: [...], imag: [...],
-       corrected: boolean, method: string }
+       corrected: boolean | undefined, method: string,
+       notes: [{ level: "info" | "warning", text }] }
 ```
 
 Errors come back as `{ error }` with 400 (a bad request), 404 (no such instrument) or

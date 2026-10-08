@@ -34,7 +34,7 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
   const [lastSweep, setLastSweep] = useState<{ points: number; at: string } | undefined>();
   const live = useRef<Instrument | undefined>(undefined);
 
-  useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz })), [startMHz, stopMHz]);
+  useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz, points })), [startMHz, stopMHz, points]);
   // Standards belong to the range they were swept over; a new range starts them again.
   useEffect(() => {
     setThru(undefined);
@@ -43,6 +43,21 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
   useEffect(() => () => void live.current?.close().catch(() => {}), []);
 
   const say = (e: unknown) => setError(e === undefined ? undefined : e instanceof VnaError ? e.message : e instanceof Error ? `${e.name}: ${e.message}` : String(e));
+
+  const followInstrument = async () => {
+    const vna = live.current;
+    if (!vna?.readRange) return;
+    setError(undefined);
+    setBusy('Asking the instrument…');
+    try {
+      const own = await vna.readRange();
+      setRange({ startMHz: own.startMHz, stopMHz: own.stopMHz, points: Math.min(own.points, vna.maxPoints) });
+    } catch (e) {
+      say(e);
+    } finally {
+      setBusy(undefined);
+    }
+  };
 
   const connected = (found: Instrument) => {
     live.current = found;
@@ -128,6 +143,15 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
         <NumberField label="to" value={range.stopMHz} above={0} unit="MHz" onCommit={(v) => setRange({ ...range, stopMHz: Math.max(v, range.startMHz * 1.01) })} />
         <NumberField label="Points" value={range.points} min={2} integer onCommit={(v) => setRange({ ...range, points: Math.min(v, instrument.maxPoints) })} />
       </div>
+      {instrument.readRange && (
+        <p className="muted vna-follow">
+          The sweep above is what the bridge asks the instrument for.{' '}
+          <button type="button" className="link" onClick={followInstrument} disabled={busy !== undefined}>
+            Use the instrument's own range
+          </button>{' '}
+          instead, as set on its front panel.
+        </p>
+      )}
       {needsCalibration ? (
         <div className="vna-calibration">
           <p className="muted">

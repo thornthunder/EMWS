@@ -153,6 +153,30 @@ export class BridgeInstrument implements Instrument {
     return reply.frequenciesHz.map((hz, i) => ({ fMHz: hz / 1e6, s21: { re: reply.real[i]!, im: reply.imag[i]! } }));
   }
 
+  /** What the instrument's own front panel is set to, so the page can follow it. */
+  async readRange(): Promise<{ startMHz: number; stopMHz: number; points: number }> {
+    let response: Response;
+    try {
+      response = await fetch(`${this.url}/settings?instrument=${encodeURIComponent(this.info.id)}`, { cache: 'no-store' });
+    } catch (e) {
+      throw new VnaError(`The VNA bridge at ${this.url} could not be reached${e instanceof Error && e.message ? ` (${e.message})` : ''}. Is it still running?`);
+    }
+    if (!response.ok) {
+      let detail = '';
+      try {
+        detail = ((await response.json()) as { error?: string }).error ?? '';
+      } catch {
+        // no detail
+      }
+      throw new VnaError(detail || `The VNA bridge answered ${response.status}.`);
+    }
+    const body = (await response.json()) as { startHz?: unknown; stopHz?: unknown; points?: unknown };
+    if (typeof body.startHz !== 'number' || typeof body.stopHz !== 'number' || typeof body.points !== 'number') {
+      throw new VnaError('The VNA bridge answered, but not with sweep settings.');
+    }
+    return { startMHz: body.startHz / 1e6, stopMHz: body.stopHz / 1e6, points: Math.max(2, Math.round(body.points)) };
+  }
+
   async close(): Promise<void> {
     // Nothing is held open: the bridge connects to the instrument per sweep.
   }

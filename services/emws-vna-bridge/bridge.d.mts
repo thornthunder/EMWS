@@ -63,6 +63,7 @@ export class FieldFox {
   vocabulary: Set<string> | null | undefined;
   describe(): Promise<{ idn: string; options: string; modes: string[] }>;
   sweep(request: SweepRequest): Promise<SweepResult>;
+  readSettings(): Promise<{ startHz: number; stopHz: number; points: number }>;
   probe(): Promise<string[]>;
 }
 

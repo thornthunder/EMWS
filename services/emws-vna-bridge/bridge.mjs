@@ -13,8 +13,9 @@
 //   node bridge.mjs --simulate                          a simulated FieldFox, to try the page
 //
 //   GET  /health -> { service, version, kinds: ['vna'], instruments: [...] }
+//   GET  /settings?instrument=<id> -> { startHz, stopHz, points }   what it is set to now
 //   POST /sweep  { instrument, parameter: 'S11' | 'S21', startHz, stopHz, points, ifbwHz? }
-//             -> { instrument, parameter, frequenciesHz, real, imag, corrected, method }
+//             -> { instrument, parameter, frequenciesHz, real, imag, corrected, method, notes }
 //
 // The commands are the ones in Keysight's FieldFox programming guide (NA mode): INST "NA"
 // with *OPC? because a mode switch is overlapped; CALC:PAR1:DEF / :SEL; SENS:FREQ:STAR /
@@ -578,6 +579,17 @@ export class FieldFox {
     });
   }
 
+  /** The sweep the instrument is set to right now, for a page that would rather follow it than tell it. */
+  readSettings() {
+    return this.withSocket(async (s) => {
+      const startHz = Number(await this.ask(s, 'SENS:FREQ:STAR?', 'Start frequency'));
+      const stopHz = Number(await this.ask(s, 'SENS:FREQ:STOP?', 'Stop frequency'));
+      const points = Number(await this.ask(s, 'SENS:SWE:POIN?', 'Points'));
+      if (![startHz, stopHz, points].every(Number.isFinite)) throw new InstrumentError('The instrument did not answer its sweep settings with numbers.');
+      return { startHz, stopHz, points };
+    });
+  }
+
   /**
    * On a firmware with no trigger control: how long one sweep takes, asked of the
    * instrument, or a guess if it will not say; then that many sweeps' worth of waiting.
@@ -724,6 +736,15 @@ export function createBridge(options) {
         json(res, 200, { service: 'emws-vna-bridge', version: VERSION, kinds: ['vna'], instruments: await describeAll() });
         return;
       }
+      if (req.method === 'GET' && url.pathname === '/settings') {
+        const instrument = byId.get(url.searchParams.get('instrument') ?? '');
+        if (!instrument) {
+          json(res, 404, { error: `No instrument called "${url.searchParams.get('instrument')}" here.` });
+          return;
+        }
+        json(res, 200, { instrument: instrument.id, ...(await instrument.readSettings()) });
+        return;
+      }
       if (req.method === 'POST' && url.pathname === '/sweep') {
         const body = await readJson(req);
         const problem = validateSweep(body);
@@ -741,7 +762,7 @@ export function createBridge(options) {
         json(res, 200, { instrument: instrument.id, parameter: body.parameter, ...result });
         return;
       }
-      json(res, 404, { error: 'Not here. The bridge answers GET /health and POST /sweep.' });
+      json(res, 404, { error: 'Not here. The bridge answers GET /health, GET /settings and POST /sweep.' });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       log(`error: ${message}`);

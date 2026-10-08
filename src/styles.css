@@ -1428,8 +1428,37 @@ kbd {
   stroke-dasharray: 2 3;
 }
 
-.chain-panel .form-section:first-child {
+.chain-column > .form-section:first-child {
   padding-top: 0;
+}
+.chain-column + .chain-column > .form-section:first-child {
+  padding-top: 14px;
+}
+/* On a wide screen the panel is two columns side by side, and the whole page fits without scrolling. */
+@media (min-width: 1440px) {
+  .smith {
+    grid-template-columns: minmax(640px, 820px) minmax(0, 1fr);
+  }
+  .chain-panel {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    column-gap: 24px;
+    align-items: start;
+  }
+  .chain-column + .chain-column > .form-section:first-child {
+    padding-top: 0;
+  }
+}
+.match-list + h4,
+.form-section h4 {
+  margin: 12px 0 4px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+.vna-follow {
+  margin: 4px 0 6px;
+  font-size: 12px;
 }
 .element-card {
   display: flex;

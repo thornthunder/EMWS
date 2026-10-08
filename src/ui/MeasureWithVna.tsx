@@ -45,9 +45,27 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
   const [lastSweep, setLastSweep] = useState<{ points: number; at: string } | undefined>();
   const live = useRef<Instrument | undefined>(undefined);
 
-  // When the tool's own range changes - a different model, a different band - measure
-  // that, not whatever was there when this first appeared.
-  useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz })), [startMHz, stopMHz]);
+  // When the tool's own sweep changes - a different model, a different band, more points -
+  // measure that, not whatever was there when this first appeared. Points too: a tester
+  // set 201 points in the tool, measured, and watched the tool snap back to the 101 this
+  // panel had measured, because the two did not follow each other.
+  useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz, points })), [startMHz, stopMHz, points]);
+
+  /** The instrument's own front-panel sweep, where it can be asked for (a FieldFox through the bridge). */
+  const followInstrument = async () => {
+    const vna = live.current;
+    if (!vna?.readRange) return;
+    setError(undefined);
+    setBusy('Asking the instrument…');
+    try {
+      const own = await vna.readRange();
+      setRange({ startMHz: own.startMHz, stopMHz: own.stopMHz, points: Math.min(own.points, vna.maxPoints) });
+    } catch (e) {
+      say(e);
+    } finally {
+      setBusy(undefined);
+    }
+  };
 
   // Standards taken so far belong to the range they were swept over. Change the range and
   // they cannot be combined with what comes next, so their ticks are cleared rather than
@@ -144,6 +162,15 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
         <NumberField label="to" value={range.stopMHz} above={0} unit="MHz" onCommit={(v) => setRange({ ...range, stopMHz: Math.max(v, range.startMHz * 1.01) })} />
         <NumberField label="Points" value={range.points} min={2} integer onCommit={(v) => setRange({ ...range, points: Math.min(v, instrument.maxPoints) })} />
       </div>
+      {instrument.readRange && (
+        <p className="muted vna-follow">
+          The sweep above is what the bridge asks the instrument for.{' '}
+          <button type="button" className="link" onClick={followInstrument} disabled={busy !== undefined}>
+            Use the instrument's own range
+          </button>{' '}
+          instead, as set on its front panel.
+        </p>
+      )}
 
       {needsCalibration && (
         <div className="vna-calibration">

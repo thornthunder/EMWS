@@ -4,7 +4,7 @@
 import type { ChangeEvent } from 'react';
 import { useRef, useState } from 'react';
 import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
-import { TouchstoneError, parseTouchstone } from '../../lib/touchstone';
+import { TouchstoneError, gammaFromImpedance, parseTouchstone, standingWaveRatio } from '../../lib/touchstone';
 import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
 import { lMatchSolutions } from './match';
@@ -37,6 +37,8 @@ export function stepColour(index: number): string {
  * the way, low enough that a mistyped number cannot lock the page up.
  */
 const MAX_SWEEP_POINTS = 10_000;
+/** A measured load sets the sweep to its own point count, up to this; a 10001-point FieldFox trace does not need 10001 SVG vertices. */
+const MEASURED_SWEEP_POINTS = 2001;
 
 const ADD_BUTTONS: { label: string; kind: ElementKind; connection: Connection }[] = [
   { label: 'Series L', kind: 'inductor', connection: 'series' },
@@ -55,12 +57,18 @@ export interface ChainPanelProps {
 }
 
 export function ChainPanel({ network, onChange }: ChainPanelProps) {
+  // Two columns on a wide screen (load and sweep | components and matches), one column
+  // otherwise: a tester found the single long column meant scrolling at every step.
   return (
     <div className="chain-panel">
-      <LoadSection network={network} onChange={onChange} />
-      <SystemSection network={network} onChange={onChange} />
-      <ChainSection network={network} onChange={onChange} />
-      <MatchSection network={network} onChange={onChange} />
+      <div className="chain-column">
+        <LoadSection network={network} onChange={onChange} />
+        <SystemSection network={network} onChange={onChange} />
+      </div>
+      <div className="chain-column">
+        <ChainSection network={network} onChange={onChange} />
+        <MatchSection network={network} onChange={onChange} />
+      </div>
     </div>
   );
 }
@@ -73,7 +81,12 @@ function LoadSection({ network, onChange }: ChainPanelProps) {
 
   const setLoad = (next: Load) => onChange({ ...network, load: next });
 
-  /** Taking a measured load also points the sweep at the frequencies it covers. */
+  /**
+   * Taking a measured load also points the sweep at the frequencies it covers, with as many
+   * points as were measured (up to a sensible ceiling), so the chart samples the measurement
+   * and not an interpolation of it. The VNA panel follows the sweep, so the next measurement
+   * takes the same points unless someone changes them.
+   */
   const useHandoff = (source: ImpedanceHandoff) => {
     const frequencies = source.points.map((p) => p.fMHz);
     onChange({
@@ -82,7 +95,7 @@ function LoadSection({ network, onChange }: ChainPanelProps) {
       sweep: {
         startMHz: Math.min(...frequencies),
         stopMHz: Math.max(...frequencies),
-        points: Math.min(201, Math.max(21, frequencies.length)),
+        points: Math.min(MEASURED_SWEEP_POINTS, Math.max(21, frequencies.length)),
       },
       designMHz: (Math.min(...frequencies) + Math.max(...frequencies)) / 2,
     });
@@ -163,6 +176,7 @@ function LoadSection({ network, onChange }: ChainPanelProps) {
       <MeasureWithVna
         startMHz={network.sweep.startMHz}
         stopMHz={network.sweep.stopMHz}
+        points={network.sweep.points}
         action="Measure the load"
         onMeasured={(points, source) =>
           useHandoff({ name: source, savedAt: new Date().toISOString(), points: points.map((p) => ({ fMHz: p.fMHz, r: p.z.re, x: p.z.im })) })
@@ -439,47 +453,107 @@ function LogSlider({ label, value, min, max, format, onChange }: LogSliderProps)
   );
 }
 
-function MatchSection({ network, onChange }: ChainPanelProps) {
-  const atRadio = inputImpedance(network, network.designMHz);
-  const solutions = lMatchSolutions(atRadio, network.z0, network.designMHz);
+/** Below this SWR at the radio, nothing a two-element network could add is worth adding. */
+const MATCHED_SWR = 1.05;
 
+/**
+ * Automatic matches. With no components in the chain there is one question - what brings
+ * this load to the radio's impedance - and one list. With components already built, there
+ * are two, and a tester who had built a match by hand found the single list baffling:
+ * it kept offering to add to the end of their network (tiny values, because little was
+ * left to do), and "Use this" added rather than replaced. So with a chain in place the
+ * section says what the chain leaves, offers to finish it (add after) and, separately, to
+ * start again from the load (replace), each button saying which it does.
+ */
+function MatchSection({ network, onChange }: ChainPanelProps) {
+  const { designMHz, z0 } = network;
+  const atRadio = inputImpedance(network, designMHz);
+  const atLoad = inputImpedance({ ...network, elements: [] }, designMHz);
+  const inPlace = network.elements.filter((e) => !e.bypassed).length;
+  const swrNow = standingWaveRatio(gammaFromImpedance(atRadio, z0));
+  const finishing = lMatchSolutions(atRadio, z0, designMHz);
+  const fromLoad = inPlace > 0 ? lMatchSolutions(atLoad, z0, designMHz) : [];
+
+  if (inPlace === 0) {
+    return (
+      <section className="form-section">
+        <h3>Match it for me</h3>
+        <p className="muted">
+          The load shows <strong>{formatImpedance(atRadio)}</strong> at {formatMHz(designMHz)}. Each of these brings it to {z0} Ω there:
+        </p>
+        {finishing.length === 0 ? (
+          <p className="muted">Nothing to do: that is already {z0} Ω, or its resistance is zero.</p>
+        ) : (
+          <SolutionList network={network} base={[]} solutions={finishing} action="Use this" onChange={onChange} />
+        )}
+      </section>
+    );
+  }
+
+  const matched = Number.isFinite(swrNow) && swrNow < MATCHED_SWR;
   return (
     <section className="form-section">
       <h3>Match it for me</h3>
       <p className="muted">
-        What the radio sees now: <strong>{formatImpedance(atRadio)}</strong>. These add to the end of the chain and bring
-        it to {network.z0} Ω at {formatMHz(network.designMHz)}.
+        Your {inPlace} component{inPlace === 1 ? '' : 's'} leave{inPlace === 1 ? 's' : ''} the radio seeing <strong>{formatImpedance(atRadio)}</strong>{' '}
+        ({Number.isFinite(swrNow) ? `${swrNow.toFixed(2)}:1` : 'no match at all'}) at {formatMHz(designMHz)}.
       </p>
-      {solutions.length === 0 ? (
-        <p className="muted">Nothing to do: that is already {network.z0} Ω, or its resistance is zero.</p>
+      {matched ? (
+        <p className="muted">That is a match already: nothing worth adding after it.</p>
+      ) : finishing.length === 0 ? (
+        <p className="muted">Nothing can be added after it: the resistance there is zero.</p>
       ) : (
-        <ul className="match-list">
-          {solutions.map((solution) => {
-            const applied: Network = { ...network, elements: [...network.elements, ...solution.elements] };
-            const points: SweepPoint[] = sweepNetwork(applied);
-            const band = swrBandwidth(points, 2, network.designMHz);
-            return (
-              <li key={solution.id}>
-                <div className="match-head">
-                  <strong>{solution.name}</strong>
-                  {solution.character !== 'mixed' && <span className="badge">{solution.character}</span>}
-                </div>
-                <p className="muted">
-                  {solution.elements
-                    .map((e) =>
-                      e.kind === 'inductor' ? formatSi(e.henries, 'H') : e.kind === 'capacitor' ? formatSi(e.farads, 'F') : '',
-                    )
-                    .join(' then ')}
-                  {band && ` · under 2:1 from ${formatMHz(band.lowMHz)} to ${formatMHz(band.highMHz)}`}
-                </p>
-                <button type="button" className="small primary" onClick={() => onChange(applied)}>
-                  Use this
-                </button>
-              </li>
-            );
-          })}
-        </ul>
+        <>
+          <h4>Finish it: add after your components</h4>
+          <SolutionList network={network} base={network.elements} solutions={finishing} action="Add after mine" onChange={onChange} />
+        </>
+      )}
+      {fromLoad.length > 0 && (
+        <>
+          <h4>Or start again from the load, in place of your components</h4>
+          <SolutionList network={network} base={[]} solutions={fromLoad} action="Replace mine" onChange={onChange} />
+        </>
       )}
     </section>
+  );
+}
+
+function SolutionList({
+  network,
+  base,
+  solutions,
+  action,
+  onChange,
+}: {
+  network: Network;
+  /** What the solution's elements go after: the chain as it is, or nothing. */
+  base: Element[];
+  solutions: ReturnType<typeof lMatchSolutions>;
+  action: string;
+  onChange: (network: Network) => void;
+}) {
+  return (
+    <ul className="match-list">
+      {solutions.map((solution) => {
+        const applied: Network = { ...network, elements: [...base, ...solution.elements] };
+        const points: SweepPoint[] = sweepNetwork(applied);
+        const band = swrBandwidth(points, 2, network.designMHz);
+        return (
+          <li key={solution.id}>
+            <div className="match-head">
+              <strong>{solution.name}</strong>
+              {solution.character !== 'mixed' && <span className="badge">{solution.character}</span>}
+            </div>
+            <p className="muted">
+              {solution.elements.map((e) => (e.kind === 'inductor' ? formatSi(e.henries, 'H') : e.kind === 'capacitor' ? formatSi(e.farads, 'F') : '')).join(' then ')}
+              {band && ` · under 2:1 from ${formatMHz(band.lowMHz)} to ${formatMHz(band.highMHz)}`}
+            </p>
+            <button type="button" className="small primary" onClick={() => onChange(applied)}>
+              {action}
+            </button>
+          </li>
+        );
+      })}
+    </ul>
   );
 }

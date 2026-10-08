@@ -35,5 +35,7 @@ export interface Instrument {
    * classic NanoVNA; raw on a V2, for a thru calibration (transmission.ts) to correct.
    */
   sweepTransmission(request: SweepRequest): Promise<TransmissionPoint[]>;
+  /** The sweep the instrument is set to on its own front panel, where it can be asked. */
+  readRange?(): Promise<{ startMHz: number; stopMHz: number; points: number }>;
   close(): Promise<void>;
 }

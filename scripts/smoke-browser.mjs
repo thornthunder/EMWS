@@ -158,6 +158,15 @@ async function runSmithTest({ evaluate, send, log }) {
   check(now.steps === 3 && now.nodes === 3, 'the step table and the chart nodes agree with the chain');
   check(now.summary['Under 2:1'] !== '—', `with a usable bandwidth: ${now.summary['Under 2:1']}`);
 
+  // With a network in place the matcher says what it leaves, and offers to replace rather than pile on.
+  const matchText = () => evaluate(`[...document.querySelectorAll('.form-section')].find((s) => s.querySelector('h3')?.textContent.trim() === 'Match it for me')?.textContent ?? ''`);
+  check(/Your 2 components leave the radio seeing .* a match already/.test(await matchText()), 'the matcher says the two components already match, and adds nothing');
+  check((await evaluate(`[...document.querySelectorAll('.match-list button')].map((b) => b.textContent.trim()).join('|')`)).split('|').every((t) => t === 'Replace mine'), 'and the remaining offers are to start again from the load');
+  check(await clickText('.match-list button', 'Replace mine'), 'Replace mine');
+  now = await state();
+  check(now.components === 2, `which replaces the two components rather than adding two more (${now.components} in the chain)`);
+  check(Number.parseFloat(now.summary.SWR) < 1.02, `and the radio still sees ${now.summary.SWR}`);
+
   // Fine adjustment with the wheel: click a component's Value box, roll a notch, then spin.
   const valueBox = `[...document.querySelectorAll('.element-card label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === 'Value')?.querySelector('input')`;
   const readValue = async () => Number(await evaluate(`${valueBox}?.value`));
@@ -1796,6 +1805,30 @@ async function runVnaTest({ evaluate, send, log }) {
     const source = await evaluate(`document.querySelector('.form-section p.muted strong')?.textContent ?? ''`);
     check(source.includes('Simulated FieldFox (N9912A)'), `named after the instrument and its model: ${source}`);
     check(/sweep S11 .* on Simulated FieldFox/.test(bridgeOutput), 'and the bridge logged the sweep');
+    // The tool's sweep and the VNA panel's sweep are one: 201 points in Radio and sweep measures 201.
+    const typeInSection = async (heading, label, text) => {
+      const focused = await evaluate(`(() => {
+        const section = [...document.querySelectorAll('.form-section')].find((s) => s.querySelector('h3')?.textContent.trim() === ${JSON.stringify(heading)});
+        const input = section && [...section.querySelectorAll('label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+        if (!input) return false;
+        input.focus(); input.select(); return true;
+      })()`);
+      if (!focused) return false;
+      await send('Input.insertText', { text: String(text) });
+      for (const type of ['keyDown', 'keyUp']) await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+      await sleep(300);
+      return true;
+    };
+    const vnaPoints = () => evaluate(`[...document.querySelectorAll('.vna label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === 'Points')?.querySelector('input')?.value`);
+    check(await typeInSection('Radio and sweep', 'Points', '201'), 'Radio and sweep: 201 points');
+    check((await vnaPoints()) === '201', 'the VNA panel follows: 201 points');
+    check(await clickText('.vna button', 'Measure the load'), 'Measure the load again');
+    check(await until(`(document.querySelector('.form-section p.muted strong')?.textContent ?? '').includes('201 points') || (document.querySelector('.form-section p.muted')?.textContent ?? '').includes('201 points')`, 20_000), '201 points measured');
+    check(await evaluate(`[...document.querySelectorAll('.form-section')].find((s) => s.querySelector('h3')?.textContent.trim() === 'Radio and sweep').querySelector('label.field:nth-of-type(3) input, .field-row:nth-of-type(2) label.field:last-child input')?.value`) === '201', 'and the tool keeps its 201 points');
+    // The instrument's own front-panel range can be taken instead of told.
+    check(await typeInSection('The load', 'Points', '51'), 'VNA panel: 51 points typed');
+    check(await clickText('.vna-follow button', "Use the instrument's own range"), "Use the instrument's own range");
+    check(await until(`[...document.querySelectorAll('.vna label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === 'Points')?.querySelector('input')?.value === '201'`), 'the instrument is still on the 201 points the last sweep set, and the panel takes them back');
     // Port 2 through the bridge as well: S21 of the simulated low-pass, no thru needed.
     await send('Page.navigate', { url: new URL('#/lc', baseUrl).href });
     check(await until(`document.querySelector('h1')?.textContent === 'Coils, traps and filters'`, 30_000), 'the coils, traps and filters tool again');

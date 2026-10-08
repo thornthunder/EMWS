@@ -84,6 +84,13 @@ export function SmithChartGuide() {
         try the page with.
       </p>
       <p>
+        <strong>One sweep, two places.</strong> The range and the number of points under the measuring buttons
+        are the ones under <em>Radio and sweep</em>: change either and the other follows, and a measurement sets
+        both to what was measured, so the chart samples the measurement rather than an interpolation of it. The
+        instrument is told that sweep; it is not asked for its own - except through the bridge, where <em>Use the
+        instrument's own range</em> reads the start, stop and points off its front panel into the fields.
+      </p>
+      <p>
         It has met one real instrument so far: a FieldFox N9914A on firmware A.07.75, which read a 50 Ω load, an
         open and a 29 − j100 Ω network as its own screen showed them. That firmware turned out to have no command
         for choosing the measurement over the network, none for triggering a sweep, and none for saying whether it
@@ -148,10 +155,19 @@ export function SmithChartGuide() {
 
       <h2>Letting the tool do it</h2>
       <p>
-        Under <em>Match it for me</em> the tool works out every two-component L network that brings what the
-        radio currently sees to your system impedance, at the design frequency. Each one shows real component
-        values and the band over which the result stays under 2:1. Press <em>Use this</em> and the components
-        are added to the end of the chain.
+        Under <em>Match it for me</em> the tool works out every two-component L network that brings the load to
+        your system impedance at the design frequency. Each one shows real component values and the band over
+        which the result stays under 2:1. With nothing in the chain, press <em>Use this</em> and the components
+        become your network.
+      </p>
+      <p>
+        Once you have components of your own in the chain, the section changes, because there are now two
+        different things it could do. It first says what your components leave the radio seeing. If that is
+        already a match (under 1.05:1) it says so and offers nothing to add - a two-component network that
+        improves on 1.02:1 would have values too small to build. Otherwise <em>Finish it</em> lists networks that go
+        <strong>after</strong> your components and bring what they leave to the system impedance (<em>Add after
+        mine</em>). Separately, <em>Or start again from the load</em> lists networks that <strong>replace</strong> yours
+        (<em>Replace mine</em>). <em>Clear</em> empties the chain, after which the offers are for the bare load again.
       </p>
       <p>Which to choose?</p>
       <ul>

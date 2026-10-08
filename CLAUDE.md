@@ -296,8 +296,25 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
 - Chart series colours are `--series-1..3` + `--series-more`, validated with the dataviz
   skill's palette checker for both surfaces; assign in fixed order, never cycle. Every step
   is also numbered, so colour is never the only cue.
+- **Match it for me has two modes** (2026-10-08, the FieldFox tester: "Use this ADDS to my
+  network - not good"; offers were "finishing touches" on the residual mismatch, which was
+  the design but read as nonsense). Empty chain: one list, "Use this". Chain in place:
+  says what it leaves the radio seeing; under `MATCHED_SWR` 1.05 offers nothing to add (the
+  additions would be a few nH/pF); else "Finish it" = `lMatchSolutions(atRadio)` with "Add
+  after mine", plus always "Or start again from the load" = `lMatchSolutions(atLoad)` with
+  "Replace mine" (`elements: solution.elements`). `SolutionList` renders both.
+- **One sweep, two places**: `MeasureWithVna`/`MeasureTransmission` follow the tool's
+  `points` as well as start/stop (the effect's deps), and `useHandoff` sets the sweep to the
+  measured count up to `MEASURED_SWEEP_POINTS` 2001 - a tester set 201 in Radio and sweep,
+  measured, and watched it snap to the panel's 101. `Instrument.readRange?()` (bridge only:
+  `GET /settings`) fills the panel from the instrument's front panel.
+- **Wide layout** ≥ 1440 px: `.smith` panel column 640-820 px and `.chain-panel` two
+  columns (`.chain-column`: load + sweep | components + match) - the tester's "a wider
+  rather than taller layout" ask; verified by screenshot at 1700 px.
 - `npm run smoke -- --smith` builds a match in the browser and checks the numbers, including
-  the Antenna Modeler handoff.
+  the Antenna Modeler handoff, the two-mode matcher (already matched -> "Replace mine" only,
+  replacing not adding) and the wheel; `--vna` checks 201 points in Radio and sweep measure
+  201 through the bridge and "Use the instrument's own range".
 
 ### Baluns and ununs (`src/tools/balun/`, `src/lib/ferrite.ts`)
 
