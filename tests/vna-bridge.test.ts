@@ -208,7 +208,9 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(legacy.state.mode).toBe('NA');
     // The sweep went ahead on the trace the instrument shows, and the page is told the choice was not the bridge's.
     expect(fieldfox.parameterForm).toBe('none');
-    expect(vna.lastParameterNote).toMatch(/would not let the bridge choose S11/);
+    expect(vna.lastNotes.join(' ')).toMatch(/would not let the bridge choose S11/);
+    // The legacy fake sweeps (its noise digits differ between reads), so no Hold note here.
+    expect(vna.lastNotes.join(' ')).not.toMatch(/Hold/);
     expect(exchange.some((l) => /no spelling of "define S11" is accepted/.test(l))).toBe(true);
     expect(sent.some((l) => l.startsWith('SENS:FREQ:STAR 140000000'))).toBe(true);
     // No INITiate on this firmware (run 4): the trigger refusal is read, the sweep is waited out instead, nothing is triggered.
@@ -226,7 +228,22 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     const again = exchange.filter((l) => l.startsWith('> ')).map((l) => l.slice(2));
     expect(again.some((l) => /DEF/i.test(l))).toBe(false);
     expect(again.some((l) => l.startsWith('INST "NA"'))).toBe(false);
-    expect(vna.lastParameterNote).toMatch(/S21/);
+    expect(vna.lastNotes.join(' ')).toMatch(/S21/);
+  });
+
+  it('notices a trace that does not move, as a unit on Hold gives, and reads its command list as a block', async () => {
+    legacy.state.hold = true;
+    const info = (await probeBridge(old.url))!.instruments[0]!;
+    const vna = new BridgeInstrument(old.url, info);
+    await vna.sweep({ startMHz: 140, stopMHz: 150, points: 11 });
+    expect(vna.lastNotes.join(' ')).toMatch(/did not change between two reads .* probably on Hold/);
+    legacy.state.hold = false;
+    const lines = await fieldfox.probe();
+    expect(lines).toContain('the trace changed between the reads: the instrument is sweeping');
+    const at = lines.findIndex((l) => l.startsWith('SYST:HELP:HEAD? => '));
+    expect(lines[at]).toMatch(/^SYST:HELP:HEAD\? => \d+ headers, \d+ bytes:$/);
+    expect(lines.slice(at + 1)).toContain('    :SENSe:FREQuency:STARt');
+    expect(lines.slice(at + 1)).toContain('    :CALCulate:DATA:SDATa');
   });
 
   it('can be asked what it knows, for the next report', async () => {
@@ -239,6 +256,7 @@ describe('the first real FieldFox: an N9914A on firmware A.07.75', () => {
     expect(lines.find((l) => l.startsWith('CALC:DATA:SDATA?'))).toMatch(/values\)$/);
     expect(lines.find((l) => l.startsWith('CALC:MEAS1:DEF S11'))).toMatch(/REFUSED/);
     expect(lines.some((l) => l.includes('NO ANSWER'))).toBe(false);
+    expect(lines.some((l) => l.includes('could not read the trace twice'))).toBe(false);
   });
 
   it('a query the firmware does not know is an answer, not a twenty-second silence', async () => {

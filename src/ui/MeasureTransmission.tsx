@@ -155,12 +155,12 @@ export function MeasureTransmission({ startMHz, stopMHz, points = 201, action, o
           Readings carry the instrument's own calibration: calibrate it on the instrument with its thru, at the ends of your two cables.
         </p>
       )}
-      {instrument.kind === 'bridge' && (instrument as BridgeInstrument).lastParameterNote && (
-        <p className="alert-inline">
-          The instrument's firmware would not let the bridge choose S21, so what came back is whatever trace it was showing. Put S21 on trace 1 on
-          the instrument itself, then measure again - and please send the bridge's log.
-        </p>
-      )}
+      {instrument.kind === 'bridge' &&
+        (instrument as BridgeInstrument).lastNotes.map((note) => (
+          <p key={note} className="alert-inline">
+            {note}
+          </p>
+        ))}
       <div className="button-row">
         <button type="button" className="small" onClick={measure} disabled={busy !== undefined || !calibrated} title={!calibrated ? 'Measure the thru first' : undefined}>
           {busy ?? action}

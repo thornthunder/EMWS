@@ -685,7 +685,18 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   (factory cal at the port), so now `SENS:CORR?` decides corrected, USER decides the method
   ('CalReady' when off), and the page explains CalReady vs a cal at the cable's end. The
   tester's SITE was an older build (no orange S11 note shown): deploy before the next round.
-  Still wanted: a sweep log and the probe file. CAT-only units stay unsupported.
+  **Run 6 (`VNA_Error6.txt`, log + probe):** FREQ:DATA?/SDATA? answer (also CALC:SEL:/CALC1:),
+  SWE:TIME? = 0 (auto), no MTIM, no INIT/TRIG/ABOR/SWE:MODE in any spelling, no CORR queries
+  but IMP? (50), STAT:OPER:COND? 0. The trace was IDENTICAL to 7 figures in every read ->
+  the unit is on Hold and cannot be triggered from this firmware: the no-trigger path now
+  reads twice a sweep apart and adds a note when nothing moved (`notes[]` in the reply,
+  `BridgeInstrument.lastNotes`, shown by both panels in the bridge's own words; the
+  hard-coded S11 wording is gone). `SYST:HELP:HEAD?` ANSWERS with a 10,121-byte definite
+  block (`#510121…`) - the bridge had read only its header; `ScpiSocket.query(cmd, ms,
+  { block: true })` reads IEEE 488.2 blocks whole and the probe prints every header. The
+  fake has `hold` (frozen trace), last-digit noise otherwise, and a block answer. NEXT:
+  the probe file with the header list -> write S11 selection/trigger for A.07.75 from it.
+  CAT-only units stay unsupported.
 
 ## Conventions
 

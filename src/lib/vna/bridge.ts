@@ -103,6 +103,8 @@ interface SweepReply {
   /** False when the instrument would not let the bridge choose the parameter: the trace it showed was swept. */
   parameterSet?: boolean;
   parameterNote?: string;
+  /** What the person should know about how the sweep was taken: an unchosen parameter, a frozen trace. */
+  notes?: string[];
 }
 
 /** The instrument's model, from its *IDN? reply: "Keysight Technologies,N9912A,MY...,A.12.95" -> "N9912A". */
@@ -117,8 +119,8 @@ export class BridgeInstrument implements Instrument {
   readonly maxPoints = BRIDGE_MAX_POINTS;
   /** What the instrument said about its correction on the last sweep; undefined before one, `corrected` undefined when it would not say. */
   lastCorrection: { corrected: boolean | undefined; method: string } | undefined;
-  /** Set after a sweep in which the bridge could not choose S11/S21 and swept the trace shown instead. */
-  lastParameterNote: string | undefined;
+  /** The bridge's notes on the last sweep: an unchosen parameter, a trace that did not move. Empty when all was as asked. */
+  lastNotes: string[] = [];
 
   constructor(
     readonly url: string,
@@ -187,7 +189,11 @@ export class BridgeInstrument implements Instrument {
       body.frequenciesHz.every((v) => typeof v === 'number' && Number.isFinite(v));
     if (!ok) throw new VnaError('The VNA bridge answered, but not with a sweep.');
     this.lastCorrection = { corrected: typeof body.corrected === 'boolean' ? body.corrected : undefined, method: typeof body.method === 'string' ? body.method : '' };
-    this.lastParameterNote = body.parameterSet === false ? body.parameterNote || `The instrument would not let the bridge choose ${parameter}; this is the trace it was showing.` : undefined;
+    this.lastNotes = Array.isArray(body.notes)
+      ? body.notes.filter((n): n is string => typeof n === 'string' && n !== '')
+      : body.parameterSet === false
+        ? [body.parameterNote || `The instrument would not let the bridge choose ${parameter}; this is the trace it was showing.`]
+        : [];
     request.onProgress?.(1, 1);
     return body as SweepReply;
   }

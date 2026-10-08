@@ -134,8 +134,16 @@ two sweeps at the instrument's own rate and reads - and reads the trace in five 
 before giving up. The fake's `legacy` mode replays every refusal word for word and answers
 everything else, so those paths are tested. **Run 5 measured**: 101 points, 140-150 MHz,
 on the Smith chart - the first real FieldFox sweep in EMWS. The page said the readings
-were uncorrected; they were CalReady-corrected (no user calibration), because the bridge
-had asked only `SENS:CORR:USER?`. It now asks `SENS:CORR?` first and names CalReady as
-such. Still wanted from that unit: the `--log` of a sweep (which read spellings took) and
-the `--probe` file, so S11 selection and triggering can be written for its firmware instead
-of worked around.
+were uncorrected because the bridge had asked only `SENS:CORR:USER?`; it now asks
+`SENS:CORR?` first and names CalReady as such - though on A.07.75 neither exists (run 6),
+so the state is "not known" there. **Run 6, with the log and the probe file:**
+`SENS:FREQ:DATA?` and `CALC:DATA:SDATA?` (and `CALC:SEL:…`, `CALC1:…`) all answer; `SENS:SWE:TIME?`
+is 0 (auto) and `MTIM?` does not exist; no INIT, TRIG, ABOR or SWE:MODE in any spelling;
+`SENS:CORR:IMP?` is 50 but no other CORR query exists; `STAT:OPER:COND?` is 0. And the
+trace was **identical to seven figures in every read**, sweep and probe alike, minutes
+apart - the instrument is on Hold, which that firmware gives the bridge no way to lift. So
+the bridge now reads twice a sweep apart and says so when nothing moved, and the probe
+does the same check. `SYST:HELP:HEAD?` **answers** on that firmware, with a 10,121-byte
+definite-length block - the instrument's own command list - which the bridge read only the
+header of; `ScpiSocket.query(…, { block: true })` now reads blocks whole, and the probe
+prints every header. That list is what the next report should carry.

@@ -129,7 +129,7 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
     );
   }
   const correction = instrument.kind === 'bridge' ? (instrument as BridgeInstrument).lastCorrection : undefined;
-  const parameterNote = instrument.kind === 'bridge' ? (instrument as BridgeInstrument).lastParameterNote : undefined;
+  const bridgeNotes = instrument.kind === 'bridge' ? (instrument as BridgeInstrument).lastNotes : [];
 
   return (
     <div className="vna">
@@ -184,12 +184,11 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
           the end of a cable. For that, calibrate it (QuickCal or a kit) at the cable's end and measure again.
         </p>
       )}
-      {parameterNote && (
-        <p className="alert-inline">
-          The instrument's firmware would not let the bridge choose S11, so what came back is whatever trace it was showing. Put S11 on trace 1 on
-          the instrument itself, then measure again - and please send the bridge's log.
+      {bridgeNotes.map((note) => (
+        <p key={note} className="alert-inline">
+          {note}
         </p>
-      )}
+      ))}
 
       <div className="button-row">
         <button type="button" className="small" onClick={measure} disabled={busy !== undefined || !calibrated || !coverage} title={!calibrated ? 'Measure the three standards first' : undefined}>

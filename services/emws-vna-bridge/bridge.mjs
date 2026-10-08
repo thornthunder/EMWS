@@ -48,7 +48,7 @@ export class ScpiSocket {
     /** @type {import('node:net').Socket | undefined} */
     this.socket = undefined;
     this.buffer = '';
-    /** @type {{ resolve: (line: string) => void; reject: (e: Error) => void; timer: NodeJS.Timeout } | undefined} */
+    /** @type {{ resolve: (line: string) => void; reject: (e: Error) => void; timer: NodeJS.Timeout; block: boolean } | undefined} */
     this.pending = undefined;
   }
 
@@ -83,15 +83,29 @@ export class ScpiSocket {
   }
 
   deliver() {
-    const at = this.buffer.indexOf('\n');
-    if (at < 0 || !this.pending) return;
-    const line = this.buffer.slice(0, at).replace(/\r$/, '');
-    this.buffer = this.buffer.slice(at + 1);
     const p = this.pending;
+    if (!p) return;
+    let reply;
+    if (p.block && this.buffer.startsWith('#')) {
+      // An IEEE 488.2 definite-length block: #, one digit giving the length's digit count,
+      // the length, then that many bytes - which may hold newlines - then the terminator.
+      const digits = Number(this.buffer[1]);
+      if (!(digits >= 1) || this.buffer.length < 2 + digits) return;
+      const length = Number(this.buffer.slice(2, 2 + digits));
+      const total = 2 + digits + length;
+      if (this.buffer.length < total) return;
+      reply = this.buffer.slice(2 + digits, total);
+      this.buffer = this.buffer.slice(total).replace(/^\r?\n/, '');
+    } else {
+      const at = this.buffer.indexOf('\n');
+      if (at < 0) return;
+      reply = this.buffer.slice(0, at).replace(/\r$/, '');
+      this.buffer = this.buffer.slice(at + 1);
+    }
     this.pending = undefined;
     clearTimeout(p.timer);
-    this.log?.(`< ${line.length > 100 ? `${line.slice(0, 100)}… (${line.length} chars)` : line}`);
-    p.resolve(line);
+    this.log?.(`< ${reply.length > 100 ? `${reply.slice(0, 100).replace(/\n/g, '⏎')}… (${reply.length} chars)` : reply}`);
+    p.resolve(reply);
   }
 
   /** A command that answers nothing. @param {string} command */
@@ -101,8 +115,12 @@ export class ScpiSocket {
     this.socket.write(`${command}\n`);
   }
 
-  /** A query: the command, then one line back. @param {string} command @param {number} timeoutMs */
-  query(command, timeoutMs = 5000) {
+  /**
+   * A query: the command, then one line back - or, with `block`, a definite-length block
+   * if that is what comes (SYST:HELP:HEAD? answers with one), else a line.
+   * @param {string} command @param {number} timeoutMs @param {{ block?: boolean }} [options]
+   */
+  query(command, timeoutMs = 5000, options = {}) {
     if (!this.socket) return Promise.reject(new Error('Not connected.'));
     if (this.pending) return Promise.reject(new Error('A query is already waiting.'));
     return new Promise((resolve, reject) => {
@@ -110,7 +128,7 @@ export class ScpiSocket {
         this.pending = undefined;
         reject(new Error(`No reply to ${command} within ${timeoutMs} ms.`));
       }, timeoutMs);
-      this.pending = { resolve, reject, timer };
+      this.pending = { resolve, reject, timer, block: options.block ?? false };
       this.log?.(`> ${command}`);
       this.socket?.write(`${command}\n`);
       this.deliver();
@@ -284,12 +302,36 @@ export class FieldFox {
       lines.push('--- the data (lengths only) ---');
       for (const q of TRACE_QUERIES) await one(q, 20000);
       for (const q of ['SENS:FREQ:DATA?', 'CALC:DATA:FDATA?', 'CALC:SEL:DATA:FDATA?', 'TRAC:DATA?', 'TRAC1:DATA?', 'CALC:MEAS:DATA?']) await one(q, 20000);
+      lines.push('--- is the trace moving? (two reads, 1.5 s apart) ---');
+      try {
+        const a = splitReply(await s.query('CALC:DATA:SDATA?;:SYST:ERR?', 20000)).value;
+        await new Promise((r) => setTimeout(r, 1500));
+        const b = splitReply(await s.query('CALC:DATA:SDATA?;:SYST:ERR?', 20000)).value;
+        lines.push(a === b ? 'the trace is IDENTICAL in both reads: the instrument is not sweeping (Hold?), or the trace is a memory' : 'the trace changed between the reads: the instrument is sweeping');
+      } catch (e) {
+        lines.push(`could not read the trace twice: ${e instanceof Error ? e.message : String(e)}`);
+      }
+      s.write('*CLS');
+      lines.push('--- sweep control, more spellings ---');
+      for (const q of ['SENS:SWE:CONT?', 'SENS:SWE:HOLD?', 'SENS:HOLD?', 'SENS:SWE:TYPE?', 'SENS:SWE:GEN?', 'SENS:SWE:DWEL?', 'SENS:SWE:STAT?', 'INIT1?', 'SENS:INIT?', 'SYST:SWE:CONT?', 'SENS:SWE:RUN?']) await one(q);
       lines.push('--- calibration ---');
-      for (const q of ['SENS:CORR?', 'SENS:CORR:USER?', 'SENS:CORR:COLL:METH:TYPE?', 'SENS:CORR:CALR:TYPE?', 'SENS:CORR:IMP?']) await one(q);
+      for (const q of ['SENS:CORR?', 'SENS:CORR:STAT?', 'SENS:CORR:USER?', 'SENS:CORR:USER:STAT?', 'SENS:CORR:COLL:METH:TYPE?', 'SENS:CORR:CALR:TYPE?', 'SENS:CORR:CSET?', 'SENS:CORR:IMP?', 'SENS:CORR:TYPE?']) await one(q);
       lines.push('--- choosing S11: every spelling a sweep would try, and a few more ---');
       for (const c of ['CALC:PAR1:DEF S11', 'CALC:PAR:DEF S11', 'CALC1:PAR1:DEF S11', 'CALC1:PAR:DEF S11', "CALC:PAR1:DEF 'S11'", 'CALC:PAR1:DEF "S11"', 'CALC:PAR1:SEL', 'CALC:PAR:SEL', 'CALC:MEAS1:DEF S11', 'CALC:MEAS:DEF S11', 'CALC:PAR1:DEF:S11', 'CALC:PAR1:FUNC S11', 'CALC:PAR1:MEAS S11', 'CALC:PAR1 S11', 'SENS:FUNC "S11"', 'CALC:PAR1:CAT?', 'CALC:PAR:CAT?']) await one(c);
-      lines.push('--- can it list its own commands? (some Keysight firmware can) ---');
-      await one('SYST:HELP:HEAD?', 20000);
+      lines.push('--- its own list of commands (SYST:HELP:HEAD?, a definite-length block) ---');
+      try {
+        const list = await s.query('SYST:HELP:HEAD?', 30000, { block: true });
+        const err = await s.query('SYST:ERR?');
+        if (!noError(err)) lines.push(`SYST:HELP:HEAD? => REFUSED: ${err.trim()}`);
+        else {
+          const headers = list.split(/\r?\n/).map((h) => h.trim()).filter(Boolean);
+          lines.push(`SYST:HELP:HEAD? => ${headers.length} headers, ${list.length} bytes:`);
+          for (const h of headers) lines.push(`    ${h}`);
+        }
+      } catch (e) {
+        lines.push(`SYST:HELP:HEAD? => NO ANSWER (${e instanceof Error ? e.message : String(e)})`);
+      }
+      s.write('*CLS');
       return lines;
     });
   }
@@ -360,14 +402,27 @@ export class FieldFox {
         s.write('*CLS');
       }
       try {
+        const notes = [];
+        if (!defined.set) notes.push(`The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.`);
+        let pairs;
         if (triggered) {
           // A long sweep at a narrow IF bandwidth can take a while: give it two minutes.
           await this.ask(s, 'INIT:IMM;*OPC?', 'Triggering the sweep', 120000);
+          pairs = await this.readTrace(s);
         } else {
+          // Without trigger control the trace is whatever the instrument holds, and if it
+          // is on Hold that is the same trace for ever: a tester's N9914A gave the same 202
+          // values to seven figures in every read, minutes apart. Read twice, a sweep apart,
+          // and say so when nothing moved - a sweeping instrument's noise digits never repeat.
           await this.waitForSweeps(s, 2);
+          const first = await this.readTrace(s);
+          await this.waitForSweeps(s, 1);
+          pairs = await this.readTrace(s);
+          if (first.length === pairs.length && first.every((v, i) => v === pairs[i])) {
+            notes.push('The trace did not change between two reads a sweep apart: the instrument is probably on Hold (single sweep), and this firmware gives the bridge no way to trigger one. Set it to continuous sweep on the instrument, then measure again.');
+          }
         }
         const frequenciesHz = await this.readFrequencies(s, request);
-        const pairs = await this.readTrace(s);
         if (pairs.length !== frequenciesHz.length * 2) {
           throw new InstrumentError(`The FieldFox returned ${pairs.length} values for ${frequenciesHz.length} frequencies; expected real and imaginary pairs.`);
         }
@@ -398,7 +453,8 @@ export class FieldFox {
           corrected = undefined;
           method = '';
         }
-        return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: defined.set ? '' : `The instrument would not let the bridge choose ${request.parameter} (${defined.refusals.join('; ')}); this is the trace it was showing.` };
+        for (const note of notes) this.log?.(`  (${note})`);
+        return { frequenciesHz, real, imag, corrected, method, parameterSet: defined.set, parameterNote: notes[0] ?? '', notes };
       } finally {
         // Leave the instrument sweeping as it was found.
         if (triggered && wasContinuous) s.write('INIT:CONT 1');

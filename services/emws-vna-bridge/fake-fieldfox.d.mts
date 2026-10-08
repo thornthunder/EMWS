@@ -14,6 +14,7 @@ export interface FakeFieldFoxState {
   continuous: boolean;
   correction: boolean;
   format: string;
+  hold: boolean;
   errors: string[];
   log: string[];
 }

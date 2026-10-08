@@ -149,6 +149,11 @@ What to look for:
   page says so in orange. Put S11 on trace 1 on the instrument's own screen before you
   measure (and S21 for a through measurement), and the sweep is yours.
 
+- **Set the FieldFox to continuous sweep** before measuring (Sweep → Continuous on the
+  instrument). On firmware that gives the bridge no way to trigger a sweep, a FieldFox on
+  Hold (single sweep) hands over the same trace for ever, and the page will say the trace
+  did not change between two reads. Continuous sweep, measure again.
+
 ## Step 6 – if it still will not measure: ask the instrument what it knows
 
 Run the bridge once more with `--probe` instead of `--log`:
@@ -185,12 +190,14 @@ use normally the moment you stop. The bridge only ever listens on your own PC
 | `/health` shows modes without `NA` | The instrument has no network-analyser option. The bridge cannot measure with it as it stands – that is a result worth reporting. |
 | *the FieldFox says …* | The instrument refused a command. Copy the text exactly; it tells us which command and why. Then run step 6. |
 | An orange note that the bridge could not choose S11 | Your firmware has no command for it. Select S11 (or S21) on the instrument itself and measure again; the readings are what the screen shows. |
+| An orange note that the trace did not change between two reads | The instrument is on Hold and the bridge cannot trigger it on your firmware. Set it to continuous sweep and measure again. |
 | The reading is wrong in a way you can describe | Say what was on the port, what the FieldFox's own screen showed, and what EMWS showed. |
 
 ## What to send back
 
 1. The whole text of `http://127.0.0.1:8075/health`.
-2. What was on the port, and what the FieldFox's own screen showed for it.
+2. What was on the port (a load? an antenna? nothing?), and what the FieldFox's own
+   screen showed for it - the trace format too (log magnitude, Smith, phase…).
 3. What EMWS showed – a screenshot of the Smith chart after *Measure the load* is ideal.
 4. Any error text, copied exactly, and the lines the PowerShell window printed – with
    `--log`, that is the whole conversation with the instrument, which is ideal.

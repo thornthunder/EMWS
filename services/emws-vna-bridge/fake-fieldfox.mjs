@@ -58,6 +58,8 @@ export function startFakeFieldFox(options = {}) {
     continuous: true,
     correction: options.correction ?? true,
     format: 'ASC,0',
+    /** On Hold, the trace never changes; sweeping, its last digit wanders as a real one's does. */
+    hold: false,
     /** @type {string[]} */
     errors: [],
     /** Every command received, for tests that check what the bridge sent. */
@@ -165,11 +167,18 @@ export function startFakeFieldFox(options = {}) {
         return '';
       }
       const out = [];
+      const noise = () => (state.hold ? 0 : (Math.random() - 0.5) * 2e-9);
       for (const hz of frequencies()) {
         const [re, im] = state.parameter === 'S21' ? lowPassS21(hz) : antennaGamma(hz);
-        out.push(re.toExponential(8), im.toExponential(8));
+        out.push((re + noise()).toExponential(8), (im + noise()).toExponential(8));
       }
       return out.join(',');
+    }
+    if (upper === 'SYST:HELP:HEAD?') {
+      // A definite-length block, as the real one answers: #, the length's digit count, the length, the bytes.
+      const headers = ['*CLS', '*IDN?', '*OPC?', '*OPT?', ':CALCulate:DATA:FDATa', ':CALCulate:DATA:SDATa', ':INSTrument:CATalog?', ':INSTrument:SELect', ':SENSe:FREQuency:DATA?', ':SENSe:FREQuency:STARt', ':SENSe:FREQuency:STOP', ':SENSe:SWEep:POINts', ':SYSTem:ERRor?', ':SYSTem:HELP:HEADers?'];
+      const body = `${headers.join('\n')}\n`;
+      return `#${String(body.length).length}${body.length}${body}`;
     }
     // Correction: the legacy unit, as found, had no user calibration - CalReady only.
     if (upper === 'SENS:CORR?') return state.correction || legacy ? '1' : '0';

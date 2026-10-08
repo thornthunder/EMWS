@@ -9,7 +9,7 @@ export class ScpiSocket {
   constructor(host: string, port: number);
   open(timeoutMs?: number): Promise<void>;
   write(command: string): void;
-  query(command: string, timeoutMs?: number): Promise<string>;
+  query(command: string, timeoutMs?: number, options?: { block?: boolean }): Promise<string>;
   close(): void;
 }
 
@@ -39,6 +39,8 @@ export interface SweepResult {
   /** False when no spelling of "define S11" was accepted and the trace shown was swept instead. */
   parameterSet: boolean;
   parameterNote: string;
+  /** Everything the person should know about how this sweep was taken: the parameter note, a frozen trace. */
+  notes: string[];
 }
 
 export const PARAMETER_FORMS: { define: string; select: string }[];
