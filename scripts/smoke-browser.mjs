@@ -730,7 +730,7 @@ async function runLcTest({ evaluate, send, log, screenshot }) {
 
 
 /** Drives the five RF toolbox tabs and checks the figures against the closed forms. */
-async function runToolboxTest({ evaluate, send, log }) {
+async function runToolboxTest({ evaluate, send, log, screenshot }) {
   const check = (ok, message) => {
     if (!ok) throw new Error(`Toolbox test failed: ${message}`);
     log(`ok  ${message}`);
@@ -898,6 +898,62 @@ async function runToolboxTest({ evaluate, send, log }) {
   now = await state();
   const margin = parseFloat(((now.panels[0]?.title ?? '').match(/([+-][\d.]+) dB margin/) ?? [])[1] ?? 'NaN');
   check(margin > 7 && margin < 9, `narrowing 2.7 kHz to 500 Hz buys 10 log10(5.4) of margin: ${margin} dB`);
+
+  const snap = async (suffix) => {
+    if (!screenshot) return;
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(screenshot.replace(/.png$/i, `-${suffix}.png`), Buffer.from(data, 'base64'));
+  };
+
+  // ---- intermods ----
+  check(await click('.tool-tab', 'Intermods'), 'Intermods');
+  now = await state();
+  // Two inputs to the 5th order: 4 second-order, 6 third, 8 fourth, 10 fifth products = 28.
+  check((now.panels[0]?.title ?? '').startsWith('28 products to the 5th order — 1 on a protected frequency'), `145.600 and 145.700 to the fifth order: ${now.panels[0]?.title}`);
+  const hitRows = await evaluate(`[...document.querySelectorAll('.hits-table tbody tr')].map((r) => [...r.children].map((c) => c.textContent.trim()).join(' | '))`);
+  check(hitRows.length === 1 && hitRows[0].startsWith('2A − B | 3rd | 145.5000 MHz | Receiver 1, 145.5000 MHz | dead on'), `2A − B lands dead on the 145.500 calling channel: ${hitRows[0]}`);
+  check((now.panels[0]?.summary['Third-order level'] ?? '').startsWith('-110.0 dBm'), `two tones at -30 dBm into IIP3 +10 dBm: 3 x -30 - 2 x 10 = -110 dBm: ${now.panels[0]?.summary['Third-order level']}`);
+  check(await choose('Follow products up to the', 'Seventh'), 'to the seventh order');
+  now = await state();
+  // + 12 sixth- and 14 seventh-order products.
+  check((now.panels[0]?.title ?? '').startsWith('54 products to the 7th order'), `and to the seventh there are 54: ${now.panels[0]?.title}`);
+  check(await click('.form-section button', '+ Another transmitter'), 'a third transmitter');
+  check(await typeNumber('Transmitter C', '145.775'), 'at 145.775');
+  now = await state();
+  const products = await evaluate(`document.querySelectorAll('.products-table tbody tr').length`);
+  check(products > 54 && (now.panels[0]?.title ?? '').startsWith(`${products} products`), `three transmitters make many more: ${products}`);
+  check(await evaluate(`[...document.querySelectorAll('.products-table th[scope="row"]')].some((th) => th.textContent.trim() === 'A + B − C')`), 'including the A + B − C family');
+  check(await click('.frequency-row button[aria-label="Remove Transmitter C"]'), 'and it can be removed again');
+  now = await state();
+  check((now.panels[0]?.title ?? '').startsWith('54 products'), `back to 54: ${now.panels[0]?.title}`);
+  await snap('intermods');
+
+  // ---- path and obstacles ----
+  check(await click('.tool-tab', 'Path'), 'Path & obstacles');
+  now = await state();
+  // r1 = sqrt(lambda d1 d2 / D) at 145 MHz, 3 and 7 km: sqrt(2.0675 x 3000 x 7000 / 10000) = 65.9 m.
+  check((now.panels[0]?.summary['First Fresnel zone'] ?? '').startsWith('65.9 m'), `the first zone 3 km out on a 10 km 2 m path: ${now.panels[0]?.summary['First Fresnel zone']}`);
+  check((now.panels[0]?.summary['Clearance needed'] ?? '').startsWith('39.5 m'), `60 % of it: ${now.panels[0]?.summary['Clearance needed']}`);
+  // d1 d2 / 2kR = 3e3 x 7e3 / (2 x 4/3 x 6371e3) = 1.24 m.
+  check((now.panels[0]?.summary['Earth bulge'] ?? '').startsWith('1.2 m'), `the bulge there: ${now.panels[0]?.summary['Earth bulge']}`);
+  // v = -10 sqrt2 / 65.9 = -0.215; the exact knife edge there is 4.17 dB (tests/path.test.ts holds the curve).
+  check((now.panels[0]?.summary['Diffraction loss'] ?? '').startsWith('4.2 dB'), `ten metres below the line (v = -0.21) still costs 4.2 dB: ${now.panels[0]?.summary['Diffraction loss']}`);
+  check(now.issues.some((t) => t.includes('15 % of the first Fresnel zone is clear')), 'and the page says only 15 % of the zone is clear');
+  check(now.charts === 1, 'with the knife-edge curve');
+  check(await typeNumber('Its top, relative to the line of sight', '-40'), 'forty metres below');
+  now = await state();
+  // 40 m is 61 % of the zone: v = -0.86, and the curve there is -0.4 dB - the ripple's small gain.
+  check((now.panels[0]?.summary['Diffraction loss'] ?? '').startsWith('-0.4 dB') && (now.panels[0]?.title ?? '').includes('line of sight by the 60 % rule'), `which is past the 60 % rule and costs nothing: ${now.panels[0]?.summary['Diffraction loss']}`);
+  check(await typeNumber('Its top, relative to the line of sight', '0'), 'right on the line');
+  now = await state();
+  check((now.panels[0]?.summary['Diffraction loss'] ?? '').startsWith('6.0 dB'), `grazing costs exactly 6 dB: ${now.panels[0]?.summary['Diffraction loss']}`);
+  check(await typeNumber('Its top, relative to the line of sight', '20'), 'twenty metres above');
+  now = await state();
+  // v = +0.43: 9.7 dB.
+  check((now.panels[0]?.summary['Diffraction loss'] ?? '').startsWith('9.7 dB') && (now.panels[0]?.title ?? '').includes('the path is blocked') && now.issues.some((t) => t.includes('sharp ridge')), `in the shadow it costs 9.7 dB, and the page says a real hill loses more: ${now.panels[0]?.summary['Diffraction loss']}`);
+  const pathRows = await evaluate(`document.querySelectorAll('.path-table tbody tr').length`);
+  check(pathRows === 9, 'nine points along the path');
+  await snap('path');
 }
 
 /**
@@ -2574,7 +2630,7 @@ try {
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
-    if (toolboxTest) await runToolboxTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (toolboxTest) await runToolboxTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (fdtdTest) await runFdtdTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (communityTest) await runCommunityTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (pwaTest) await runPwaTest({ evaluate, send, problems, log: (l) => editLog.push(l) });

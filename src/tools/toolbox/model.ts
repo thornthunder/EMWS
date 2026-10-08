@@ -4,7 +4,7 @@ import type { Cable, LossPoint } from './coax';
 import type { Topology } from './attenuator';
 import type { SBand } from './levels';
 
-export type ToolboxTab = 'wire' | 'coax' | 'pad' | 'levels' | 'swr' | 'link';
+export type ToolboxTab = 'wire' | 'coax' | 'pad' | 'levels' | 'swr' | 'link' | 'imd' | 'path';
 
 export interface WireInputs {
   fMHz: number;
@@ -86,6 +86,32 @@ export interface LinkInputs {
   h2M: number;
 }
 
+/** How far up the products are followed; beyond the seventh nobody has a figure anyway. */
+export type ImdOrder = 3 | 5 | 7;
+
+export interface ImdInputs {
+  /** Transmitters on the site, MHz: two to four of them. */
+  transmittersMHz: number[];
+  maxOrder: ImdOrder;
+  /** Frequencies someone is listening on, MHz: up to four. */
+  receiversMHz: number[];
+  /** How near a product must land to count as a hit: half a channel, say. */
+  toleranceKHz: number;
+  /** For the third-order level: two equal tones at this level ... */
+  toneDbm: number;
+  /** ... into a stage with this input intercept point. */
+  iip3Dbm: number;
+}
+
+export interface PathInputs {
+  fMHz: number;
+  /** From your end to the obstacle, and from the obstacle to the far end. */
+  d1Km: number;
+  d2Km: number;
+  /** The obstacle's top relative to the straight line between the antennas, metres; below it is negative. */
+  obstacleM: number;
+}
+
 export interface ToolboxState {
   tab: ToolboxTab;
   wire: WireInputs;
@@ -94,7 +120,12 @@ export interface ToolboxState {
   levels: LevelsInputs;
   swr: SwrInputs;
   link: LinkInputs;
+  imd: ImdInputs;
+  path: PathInputs;
 }
+
+export const MAX_TRANSMITTERS = 4;
+export const MAX_RECEIVERS = 4;
 
 export function defaultState(): ToolboxState {
   return {
@@ -135,13 +166,20 @@ export function defaultState(): ToolboxState {
       h1M: 10,
       h2M: 10,
     },
+    // Two 2 m repeaters 100 kHz apart put their third-order product on the FM calling
+    // channel: 2 x 145.600 - 145.700 = 145.500, exactly.
+    imd: { transmittersMHz: [145.6, 145.7], maxOrder: 5, receiversMHz: [145.5, 145.0], toleranceKHz: 12.5, toneDbm: -30, iip3Dbm: 10 },
+    // A ridge 3 km out on a 10 km 2 m path, ten metres below the line of sight: looks
+    // clear on the map and is not.
+    path: { fMHz: 145, d1Km: 3, d2Km: 7, obstacleM: -10 },
   };
 }
 
 const STORAGE_KEY = 'emws.toolbox.v1';
-const TABS: ToolboxTab[] = ['wire', 'coax', 'pad', 'levels', 'swr', 'link'];
+const TABS: ToolboxTab[] = ['wire', 'coax', 'pad', 'levels', 'swr', 'link', 'imd', 'path'];
 
 const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+const finiteList = (v: unknown, min: number, max: number): v is number[] => Array.isArray(v) && v.length >= min && v.length <= max && v.every(finite);
 
 export function loadState(): ToolboxState {
   const fallback = defaultState();
@@ -155,11 +193,16 @@ export function loadState(): ToolboxState {
     const levels = { ...fallback.levels, ...(stored.levels ?? {}) };
     const swr = { ...fallback.swr, ...(stored.swr ?? {}) };
     const link = { ...fallback.link, ...(stored.link ?? {}) };
-    const numbers = [wire.fMHz, wire.velocityFactor, wire.physicalM, coax.lengthM, coax.fMHz, coax.loadSwr, coax.powerW, pad.attenuationDb, pad.zIn, pad.zOut, levels.dBm, levels.z, levels.txW, swr.swr, swr.forwardW, swr.z0, link.fMHz, link.distanceKm, link.txPowerW, link.bandwidthHz, link.h1M, link.h2M];
+    const imd = { ...fallback.imd, ...(stored.imd ?? {}) };
+    const path = { ...fallback.path, ...(stored.path ?? {}) };
+    const numbers = [wire.fMHz, wire.velocityFactor, wire.physicalM, coax.lengthM, coax.fMHz, coax.loadSwr, coax.powerW, pad.attenuationDb, pad.zIn, pad.zOut, levels.dBm, levels.z, levels.txW, swr.swr, swr.forwardW, swr.z0, link.fMHz, link.distanceKm, link.txPowerW, link.bandwidthHz, link.h1M, link.h2M, imd.toleranceKHz, imd.toneDbm, imd.iip3Dbm, path.fMHz, path.d1Km, path.d2Km, path.obstacleM];
     if (!numbers.every(finite)) return fallback;
     if (!Array.isArray(coax.datasheet.points) || coax.datasheet.points.length !== 2) coax.datasheet.points = fallback.coax.datasheet.points;
+    if (!finiteList(imd.transmittersMHz, 2, MAX_TRANSMITTERS)) imd.transmittersMHz = fallback.imd.transmittersMHz;
+    if (!finiteList(imd.receiversMHz, 0, MAX_RECEIVERS)) imd.receiversMHz = fallback.imd.receiversMHz;
+    if (![3, 5, 7].includes(imd.maxOrder)) imd.maxOrder = fallback.imd.maxOrder;
     const tab = TABS.includes(stored.tab as ToolboxTab) ? (stored.tab as ToolboxTab) : 'wire';
-    return { tab, wire, coax, pad, levels, swr, link };
+    return { tab, wire, coax, pad, levels, swr, link, imd, path };
   } catch {
     return fallback;
   }

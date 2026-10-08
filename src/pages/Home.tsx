@@ -34,7 +34,7 @@ const TOOLS: Tool[] = [
   {
     name: 'RF toolbox',
     blurb:
-      'Wavelengths and wire lengths, coax loss with the SWR on it, Pi, T and L attenuators as you can build them, dBm to volts and S-units, SWR and return loss.',
+      'Wavelengths and wire lengths, coax loss with the SWR on it, Pi, T and L attenuators as you can build them, dBm to volts and S-units, SWR and return loss, link budgets, intermods, Fresnel zones and knife edges.',
     href: '#/toolbox',
   },
   {

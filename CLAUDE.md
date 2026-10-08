@@ -426,7 +426,7 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
 
 ### RF toolbox (`src/tools/toolbox/`)
 
-- Six tabs of pure maths, no solver; state in `emws.toolbox.v1`. Each module is held to
+- Eight tabs of pure maths, no solver; state in `emws.toolbox.v1`. Each module is held to
   closed forms in `tests/toolbox.test.ts`: `wavelength.ts` (c/f, electrical length,
   `HALF_WAVE_RULES` - free space 149.9/f, MEASURED 145.5/f for 2 mm wire via Tune, folklore
   142.65/f), `coax.ts`, `attenuator.ts`, `levels.ts`. SWR conversions live in `src/lib/rf.ts`.
@@ -458,7 +458,23 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   budget's far end is always typed: the page states no satellite's transponder figures and
   no mode's required SNR. Held to identities in `tests/link.test.ts` (path loss 0 dB at
   d = λ/4π, dish 20 dBi at πD/λ=10, −174 dBm/Hz from Boltzmann, two-stage cascade by hand).
-- Guide `src/guides/ToolboxGuide.tsx`; `npm run smoke -- --toolbox` drives all six tabs.
+- **Intermods and Path & obstacles** (2026-10-08, prompted by a tester's 1990s "RF Workshop"
+  Excel books - see the note under Conventions; nothing was taken from them). `intermod.ts`:
+  every a1f1 + a2f2 + … with Σ|ai| ≤ order (2-4 inputs, 3rd/5th/7th), each once at a
+  positive frequency (`a f1 − b f2` and its negative are one product), harmonics named,
+  hits within ± kHz of protected frequencies, and the one level closed form 3P − 2·IIP3.
+  Default is the classic: 145.600 + 145.700 put 2A − B dead on 145.500 (28 products to the
+  5th, 54 to the 7th, 284 with a third transmitter). `path.ts`: Fresnel radius
+  √(nλd1d2/(d1+d2)), earth bulge d1d2/2kR, and the knife edge from the EXACT Fresnel
+  integrals (Simpson, step shrinking with the phase; `tests/path.test.ts` holds C/S to
+  A&S table 7.7, grazing to 6.02 dB, the 0.6-zone rule to < 0.5 dB, the ITU-R P.526
+  approximation to 0.25 dB over v > −0.78, and the √2πv asymptote with no step at the
+  handover at v = 12). The page says a hill is not a knife edge. `--toolbox` smoke: 65.9 m
+  zone 3 km out on a 10 km 2 m path, 4.2 dB ten metres below the line, −0.4 at −40 m,
+  6.0 at 0, 9.7 at +20. NOTE `.hit` is an SVG class (fill transparent, pointer): rows use
+  `.imd-hit`.
+- Guide `src/guides/ToolboxGuide.tsx`; `npm run smoke -- --toolbox` drives all eight tabs
+  (`--screenshot f.png` adds `f-intermods.png` and `f-path.png`).
 
 ### Field sandbox (`src/tools/fdtd/`)
 
@@ -744,6 +760,15 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
 - No new runtime dependencies without a good reason; plots are hand-written SVG.
 - `public/web.config`: every `<add>`/`<mimeMap>` is preceded by a `<remove>` (IIS 500s on duplicates).
 - NEC angles: theta from +Z (zenith), phi from +X. Elevation = 90 - |theta|.
+- **A tester's old Excel tools are reference, never source** (2026-10-08): Peter Ward's
+  "RF Workshop" disks 1-4 (1996-2002, ~180 sheets, ~10,000 lines of VBA) in
+  `D:\Code\Sample Data\JoeSampleData` are copyrighted ("may not be copied … single
+  station use") and credit ARRL/Anritsu/QST material besides. They were read for WHAT a
+  working RF engineer kept to hand (the intermod and path tabs came from that list);
+  no formula, table, text or code from them goes into EMWS, and the files stay out of the
+  repo. They run only with macros on AND the Analysis ToolPak-VBA reference re-pointed
+  (Excel 2016 stops with "Compile error: Can't find project or library" otherwise -
+  measured here with macros disabled: 240/661/158/161 `#NAME?` cells per book).
 - **One band list**: `src/lib/bands.ts` (IARU Region 1 edges + a standing frequency each,
   160 m through 3 cm - ZR1JT's club talks 2 m / 70 cm / 23 cm / QO-100 as much as HF). Tools
   take a slice: modeler picker `bandsUpTo(1300)`, coil/filter `bandsUpTo(450)`, balun and

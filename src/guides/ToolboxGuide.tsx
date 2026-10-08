@@ -3,7 +3,8 @@ export function ToolboxGuide() {
     <>
       <p className="lede">
         The RF toolbox is the back of the envelope: how long a wire, how much a run of coax eats, what resistors make a 10 dB
-        pad, what −73 dBm is in microvolts, what an SWR of 2 reflects. Nothing in it solves anything - that is what the other
+        pad, what −73 dBm is in microvolts, what an SWR of 2 reflects, where two repeaters' intermods land, whether that ridge
+        is in the way. Nothing in it solves anything - that is what the other
         tools are for - but every figure shows its working, and where a figure is an estimate rather than arithmetic the page
         says so and points at the tool that does it properly.
       </p>
@@ -29,6 +30,14 @@ export function ToolboxGuide() {
           On <em>Microwave &amp; link budget</em>, the page opens on the club's standing example: a few watts at 2.4 GHz into a
           1.2 m dish, 35,786 km up to a geostationary satellite. Read the EIRP, what the path costs, and why the preamp belongs
           at the antenna.
+        </li>
+        <li>
+          On <em>Intermods</em>, two repeaters at 145.600 and 145.700 MHz: see their third-order product land dead on 145.500,
+          the FM calling channel. Add a third transmitter and watch the list grow.
+        </li>
+        <li>
+          On <em>Path &amp; obstacles</em>, a ridge 3 km out on a 10 km 2 m path, ten metres below the line of sight, costs
+          4 dB. Type −40 m and it costs nothing; type +20 m and the path is in shadow.
         </li>
       </ol>
 
@@ -150,12 +159,52 @@ export function ToolboxGuide() {
         mode needs is yours to set.
       </p>
 
+      <h2>Intermods</h2>
+      <p>
+        Put two or more transmitters through anything that is not perfectly linear — a corroded clamp, a rusty guy anchor, an
+        overloaded receiver front end — and you get every sum and difference of their frequencies and harmonics. The{' '}
+        <strong>order</strong> of a product is how many times the inputs go into it: 2A − B is third order, 3A − 2B is fifth.
+        The odd orders with mixed signs are the ones that land back among the transmitters, which is why two repeaters a few
+        hundred kilohertz apart can put a product on a third channel in the same band. The tab lists every product up to the
+        order you choose, and checks each against the frequencies you are protecting, counting a hit within the tolerance you
+        set (half a channel is the usual figure). The example that ships is the classic one: 145.600 and 145.700 MHz make
+        2A − B exactly on 145.500, the FM calling channel.
+      </p>
+      <p>
+        <strong>How loud a product is, no table can say</strong> — it depends entirely on where the mixing happens. The one
+        closed form is given: two equal tones at a level P into a stage with an input third-order intercept IIP3 produce a
+        third-order product at 3P − 2·IIP3, so each decibel on the tones moves the product three. That is an ideal cubic
+        nonlinearity and a guide to how fast things get worse, not a measurement of any radio. A hit on this tab is a reason to
+        go and measure, not a verdict.
+      </p>
+
+      <h2>Path and obstacles</h2>
+      <p>
+        A radio path is not a line; it is a cigar-shaped volume. The <strong>first Fresnel zone</strong> at a point d₁ from
+        one end and d₂ from the other has a radius of √(λ d₁ d₂ / (d₁ + d₂)) — widest in the middle, and wider at lower
+        frequencies — and a path with that zone clear behaves as free space. The working rule is to keep <strong>60 % of
+        it</strong> clear, and the tab shows why in numbers: the knife-edge curve at 0.6 of a zone of clearance is within a
+        fraction of a dB of free space. Between the ends the earth itself rises, by d₁d₂ / 2kR with k = 4/3 for average
+        refraction: a few metres over ten kilometres, more than the zone on a long microwave path. The <em>Along the path</em>
+        table gives the zone, the 60 % figure and the bulge at nine points, so you can walk a map profile against it.
+      </p>
+      <p>
+        An obstacle at a known distance, a known height above or below the straight line between your antennas, is treated as
+        a <strong>knife edge</strong>: the Fresnel–Kirchhoff parameter v = h √(2(d₁ + d₂) / λ d₁ d₂) and the loss from the
+        Fresnel integrals, computed exactly rather than from an approximation. An edge right on the line costs 6 dB — half the
+        field gets through — a little clearance gives a ripple of up to a dB of gain, and in the shadow the loss climbs as
+        20 log(√2 π v). The loss is on top of the free-space figure from the link tab. Two honest limits: a real hill is not a
+        knife edge (a rounded or wooded crest loses more), and two obstacles are not one. It is the right estimate for "is there
+        a problem" and for a ridge that really is sharp, and the page says so.
+      </p>
+
       <h2>What this tool does not do</h2>
       <ul>
         <li>It does not solve an antenna, a match or a filter; the Antenna Modeler, the Smith chart and Coils, traps and filters do.</li>
         <li>It does not know your cable's real loss unless you type it from the datasheet; the catalogue is a floor.</li>
         <li>It states no regulatory limits, exposure or otherwise, and no component voltage ratings.</li>
         <li>It states no satellite's transponder figures, and no mode's required SNR: both are typed in.</li>
+        <li>It does not say how loud an intermod product will be, nor model a rounded hill or a second ridge: those take a measurement or a proper terrain tool.</li>
         <li>Everything it remembers (the last figures on each tab) stays in this browser.</li>
       </ul>
     </>

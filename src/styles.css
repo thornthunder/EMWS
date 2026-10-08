@@ -2295,6 +2295,36 @@ button.danger {
   color: var(--muted);
   font-size: 0.9em;
 }
+/* Intermods: a frequency with its remove button beside it; the full product list scrolls. */
+.frequency-row {
+  flex-wrap: nowrap;
+}
+.frequency-row .field {
+  flex: 1;
+}
+.frequency-row button {
+  margin-bottom: 2px;
+}
+.products-table th[scope='row'],
+.hits-table th[scope='row'] {
+  font-family: var(--mono);
+  font-weight: 500;
+  text-align: left;
+}
+.products-table tr.imd-hit td,
+.products-table tr.imd-hit th {
+  font-weight: 600;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+}
+.toolbox .table-wrap:has(.products-table) {
+  max-height: 440px;
+  overflow-y: auto;
+}
+.products-table thead th {
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+}
 .loading-tool {
   padding: 2rem 0;
 }

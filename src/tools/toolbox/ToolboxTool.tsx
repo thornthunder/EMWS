@@ -1,9 +1,10 @@
 // RF toolbox: the small sums a station is built with, each shown with its working.
 //
-// Six tabs, no solver: wavelengths and wire, coax loss, attenuators, levels, SWR, and
-// the microwave link budget. Where a figure is an estimate rather than arithmetic - a
-// catalogue cable's loss, the field at a distance, how short a dipole really is - the
-// page says what it is and points at the tool that does it properly.
+// Eight tabs, no solver: wavelengths and wire, coax loss, attenuators, levels, SWR, the
+// microwave link budget, intermodulation products, and a path with something in the
+// way. Where a figure is an estimate rather than arithmetic - a catalogue cable's loss,
+// the field at a distance, how short a dipole really is, what a real hill does to a
+// knife-edge sum - the page says what it is and points at the tool that does it properly.
 
 import { useEffect, useState } from 'react';
 import { guideForTool } from '../../guides/registry';
@@ -29,7 +30,26 @@ import {
   passiveStage,
   radioHorizonKm,
 } from './link';
-import { type CoaxInputs, type LevelsInputs, type LinkInputs, type PadInputs, type SwrInputs, type ToolboxState, type ToolboxTab, type WireInputs, loadState, saveState } from './model';
+import { XYChart } from '../../ui/XYChart';
+import { type ImdHit, type ImdProduct, intermodHits, intermodProducts, productLabel, thirdOrderProductDbm } from './intermod';
+import {
+  type CoaxInputs,
+  type ImdInputs,
+  type ImdOrder,
+  type LevelsInputs,
+  type LinkInputs,
+  MAX_RECEIVERS,
+  MAX_TRANSMITTERS,
+  type PadInputs,
+  type PathInputs,
+  type SwrInputs,
+  type ToolboxState,
+  type ToolboxTab,
+  type WireInputs,
+  loadState,
+  saveState,
+} from './model';
+import { CLEAR_FRACTION, earthBulgeM, fresnelRadiusM, knifeEdgeLossDb, obstacle } from './path';
 import { HALF_WAVE_RULES, electricalLength, physicalLengthM, wavelengthM } from './wavelength';
 
 const TABS: { id: ToolboxTab; label: string }[] = [
@@ -39,6 +59,8 @@ const TABS: { id: ToolboxTab; label: string }[] = [
   { id: 'levels', label: 'dB, watts & S-units' },
   { id: 'swr', label: 'SWR & return loss' },
   { id: 'link', label: 'Microwave & link budget' },
+  { id: 'imd', label: 'Intermods' },
+  { id: 'path', label: 'Path & obstacles' },
 ];
 
 interface Note {
@@ -93,6 +115,8 @@ export function ToolboxTool() {
       {state.tab === 'levels' && <LevelsSection inputs={state.levels} onChange={patch('levels')} />}
       {state.tab === 'swr' && <SwrSection inputs={state.swr} onChange={patch('swr')} />}
       {state.tab === 'link' && <LinkSection inputs={state.link} onChange={patch('link')} />}
+      {state.tab === 'imd' && <ImdSection inputs={state.imd} onChange={patch('imd')} />}
+      {state.tab === 'path' && <PathSection inputs={state.path} onChange={patch('path')} />}
     </div>
   );
 }
@@ -1135,6 +1159,375 @@ function LinkSection({ inputs, onChange }: { inputs: LinkInputs; onChange: (p: P
             Over a smooth 4/3 earth an antenna {inputs.h1M} m up sees {radioHorizonKm(inputs.h1M).toFixed(0)} km, and one {inputs.h2M} m up sees{' '}
             {radioHorizonKm(inputs.h2M).toFixed(0)} km, so they can be <strong>{horizon.toFixed(0)} km</strong> apart with the path just grazing the
             ground. The 4/3 is average refraction: some days give more, some less, and real terrain is not smooth.
+          </p>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- intermods
+
+const ORDERS: { id: ImdOrder; label: string }[] = [
+  { id: 3, label: 'Third' },
+  { id: 5, label: 'Fifth' },
+  { id: 7, label: 'Seventh' },
+];
+
+const mhz = (f: number, digits = 4) => (Number.isFinite(f) ? `${f.toFixed(digits)} MHz` : '—');
+const letter = (i: number) => String.fromCharCode(65 + i);
+const ordinal = (n: number) => `${n}${n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'}`;
+const offsetText = (kHz: number, signed: boolean) =>
+  Math.abs(kHz) < 0.0005 ? 'dead on' : signed ? `${kHz > 0 ? '+' : '−'}${Math.abs(kHz).toFixed(1)} kHz` : `${Math.abs(kHz).toFixed(1)} kHz ${kHz > 0 ? 'above' : 'below'}`;
+
+/** A list of frequencies with add and remove, for the transmitters and the receivers alike. */
+function FrequencyList({
+  label,
+  values,
+  min,
+  max,
+  addLabel,
+  onChange,
+}: {
+  label: (i: number) => string;
+  values: number[];
+  min: number;
+  max: number;
+  addLabel: string;
+  onChange: (values: number[]) => void;
+}) {
+  return (
+    <>
+      {values.map((f, i) => (
+        <div key={i} className="field-row frequency-row">
+          <NumberField label={label(i)} value={f} above={0} unit="MHz" onCommit={(v) => onChange(values.map((x, k) => (k === i ? v : x)))} />
+          {values.length > min && (
+            <button type="button" className="small" aria-label={`Remove ${label(i)}`} title={`Remove ${label(i)}`} onClick={() => onChange(values.filter((_, k) => k !== i))}>
+              ✕
+            </button>
+          )}
+        </div>
+      ))}
+      {values.length < max && (
+        <button type="button" className="small" onClick={() => onChange([...values, values[values.length - 1] ?? 145])}>
+          {addLabel}
+        </button>
+      )}
+    </>
+  );
+}
+
+function ImdSection({ inputs, onChange }: { inputs: ImdInputs; onChange: (p: Partial<ImdInputs>) => void }) {
+  const products = intermodProducts(inputs.transmittersMHz, inputs.maxOrder);
+  const hits = intermodHits(products, inputs.receiversMHz, inputs.toleranceKHz);
+  const key = (p: ImdProduct) => p.coefficients.join(',');
+  const hitKeys = new Set(hits.map((h) => key(h.product)));
+  const level = thirdOrderProductDbm(inputs.toneDbm, inputs.iip3Dbm);
+  // The product nearest any protected frequency, hit or not: the closest shave.
+  let nearest: ImdHit | undefined;
+  for (const p of products) {
+    inputs.receiversMHz.forEach((rx, receiver) => {
+      const offsetKHz = (p.fMHz - rx) * 1000;
+      if (!nearest || Math.abs(offsetKHz) < Math.abs(nearest.offsetKHz)) nearest = { product: p, receiver, offsetKHz };
+    });
+  }
+  const label = (p: ImdProduct) => productLabel(p.coefficients);
+  const receivers = inputs.receiversMHz.length;
+
+  return (
+    <div className="modeler">
+      <aside className="panel">
+        <section className="form-section">
+          <h2>Transmitters on the site</h2>
+          <p className="muted">Two to four. Their mixes are named by these letters: 2A − B is twice the first less the second.</p>
+          <FrequencyList label={(i) => `Transmitter ${letter(i)}`} values={inputs.transmittersMHz} min={2} max={MAX_TRANSMITTERS} addLabel="+ Another transmitter" onChange={(transmittersMHz) => onChange({ transmittersMHz })} />
+          <label className="field">
+            <span className="field-label">Follow products up to the</span>
+            <select value={inputs.maxOrder} onChange={(e) => onChange({ maxOrder: Number(e.target.value) as ImdOrder })}>
+              {ORDERS.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.label} order
+                </option>
+              ))}
+            </select>
+          </label>
+        </section>
+        <section className="form-section">
+          <h2>Receivers to protect</h2>
+          <p className="muted">Repeater inputs, the calling channel, a beacon: anything someone listens on from the same site.</p>
+          <FrequencyList label={(i) => `Receiver ${i + 1}`} values={inputs.receiversMHz} min={0} max={MAX_RECEIVERS} addLabel="+ Another receiver" onChange={(receiversMHz) => onChange({ receiversMHz })} />
+          <NumberField label="Counts as a hit within" value={inputs.toleranceKHz} min={0} unit="kHz" hint="Half a channel is the usual figure: 6.25 kHz for 12.5 kHz channels." onCommit={(v) => onChange({ toleranceKHz: v })} />
+        </section>
+        <section className="form-section">
+          <h2>How loud</h2>
+          <p className="muted">The one closed form for a level: two equal tones into a stage with a known third-order intercept.</p>
+          <div className="field-row">
+            <NumberField label="Each tone" value={inputs.toneDbm} unit="dBm" onCommit={(v) => onChange({ toneDbm: v })} />
+            <NumberField label="Input IP3" value={inputs.iip3Dbm} unit="dBm" hint="The stage's input-referred third-order intercept point, from its datasheet or a two-tone test." onCommit={(v) => onChange({ iip3Dbm: v })} />
+          </div>
+        </section>
+      </aside>
+
+      <div className="workspace">
+        <section className="panel">
+          <h2 className="results-title">
+            {products.length} products to the {ordinal(inputs.maxOrder)} order — {receivers === 0 ? 'no receivers to check' : hits.length === 0 ? 'none on a protected frequency' : `${hits.length} on a protected frequency`}
+          </h2>
+          <dl className="summary">
+            <div>
+              <dt>Hits</dt>
+              <dd>
+                {hits.length}
+                <small>
+                  within ±{inputs.toleranceKHz} kHz of {receivers} receiver{receivers === 1 ? '' : 's'}
+                </small>
+              </dd>
+            </div>
+            <div>
+              <dt>Closest</dt>
+              <dd>
+                {nearest ? `${label(nearest.product)} = ${mhz(nearest.product.fMHz)}` : '—'}
+                <small>{nearest ? `${offsetText(nearest.offsetKHz, false)} receiver ${nearest.receiver + 1}` : 'no receivers listed'}</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Third-order level</dt>
+              <dd>
+                {dBmText(level)}
+                <small>
+                  3 × {inputs.toneDbm} − 2 × {inputs.iip3Dbm}: each dB on the tones moves it 3 dB
+                </small>
+              </dd>
+            </div>
+          </dl>
+          {hits.length > 0 && (
+            <table className="band-table hits-table">
+              <caption>Products landing on a protected frequency</caption>
+              <thead>
+                <tr>
+                  <th scope="col">Product</th>
+                  <th scope="col">Order</th>
+                  <th scope="col">Lands at</th>
+                  <th scope="col">On</th>
+                  <th scope="col">Off by</th>
+                </tr>
+              </thead>
+              <tbody>
+                {hits.map((h) => (
+                  <tr key={`${key(h.product)}-${h.receiver}`}>
+                    <th scope="row">{label(h.product)}</th>
+                    <td>{ordinal(h.product.order)}</td>
+                    <td>{mhz(h.product.fMHz)}</td>
+                    <td>
+                      Receiver {h.receiver + 1}, {mhz(inputs.receiversMHz[h.receiver] ?? NaN)}
+                    </td>
+                    <td>{offsetText(h.offsetKHz, true)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <p className="muted">
+            The odd orders with mixed signs (2A − B, 3A − 2B) land back near the transmitters, which is why a site with two
+            repeaters a few hundred kilohertz apart needs checking against every channel in the band. Whether a product is loud
+            enough to matter depends on where the mixing happens - a rusty joint, a corroded clamp, an overloaded front end - and
+            no table can tell you that. A hit here is a reason to measure, not a verdict.
+          </p>
+        </section>
+
+        <section className="panel">
+          <h2 className="results-title">Every product</h2>
+          <div className="table-wrap">
+            <table className="band-table products-table">
+              <thead>
+                <tr>
+                  <th scope="col">Order</th>
+                  <th scope="col">Product</th>
+                  <th scope="col">Frequency</th>
+                  <th scope="col">Kind</th>
+                </tr>
+              </thead>
+              <tbody>
+                {products.map((p) => (
+                  <tr key={key(p)} className={hitKeys.has(key(p)) ? 'imd-hit' : undefined}>
+                    <td>{ordinal(p.order)}</td>
+                    <th scope="row">{label(p)}</th>
+                    <td>{mhz(p.fMHz)}</td>
+                    <td>{p.kind === 'harmonic' ? 'harmonic' : hitKeys.has(key(p)) ? '✕ hit' : 'mix'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- path and obstacles
+
+/** The knife-edge curve is drawn against clearance in first-zone radii, from blocked by two to clear by two. */
+const CLEARANCE_AXIS = Array.from({ length: 81 }, (_, i) => Number((-2 + i * 0.05).toFixed(2)));
+const CLEARANCE_CURVE = CLEARANCE_AXIS.map((c) => knifeEdgeLossDb(-Math.SQRT2 * c));
+
+const metresSigned = (v: number, digits = 1) => (Number.isFinite(v) ? `${v.toFixed(digits)} m` : '—');
+
+function PathSection({ inputs, onChange }: { inputs: PathInputs; onChange: (p: Partial<PathInputs>) => void }) {
+  const [hover, setHover] = useState<number | undefined>(undefined);
+  const r = obstacle(inputs);
+  const totalKm = inputs.d1Km + inputs.d2Km;
+  const clear = r.clearanceFraction >= CLEAR_FRACTION;
+  const blocked = inputs.obstacleM > 0;
+  const selected = CLEARANCE_AXIS.reduce((best, c, i) => (Math.abs(c - r.clearanceFraction) < Math.abs(CLEARANCE_AXIS[best]! - r.clearanceFraction) ? i : best), 0);
+  const notes: Note[] = [];
+  if (blocked) {
+    notes.push({
+      severity: 'warning',
+      message: `The obstacle is ${inputs.obstacleM} m above the line of sight. The knife-edge figure is for a sharp ridge; a rounded hill, a roof or a line of trees loses more, and two obstacles are not one.`,
+    });
+  } else if (!clear && Number.isFinite(r.r1M)) {
+    notes.push({
+      severity: 'warning',
+      message: `Only ${(r.clearanceFraction * 100).toFixed(0)} % of the first Fresnel zone is clear; the usual rule wants ${CLEAR_FRACTION * 100} %, which is ${r.clearanceNeededM.toFixed(1)} m below the line here. The path is not quite line of sight, and the loss shows it.`,
+    });
+  }
+  const stations = [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9];
+  const verdict = !Number.isFinite(r.clearanceFraction)
+    ? ''
+    : blocked
+      ? 'the path is blocked'
+      : clear
+        ? `line of sight by the ${CLEAR_FRACTION * 100} % rule`
+        : `${(r.clearanceFraction * 100).toFixed(0)} % of the first zone clear`;
+
+  return (
+    <div className="modeler">
+      <aside className="panel">
+        <section className="form-section">
+          <h2>The path</h2>
+          <BandButtons fMHz={inputs.fMHz} onPick={(f) => onChange({ fMHz: f })} />
+          <NumberField label="Frequency" value={inputs.fMHz} above={0} unit="MHz" onCommit={(v) => onChange({ fMHz: v })} />
+          <div className="field-row">
+            <NumberField label="You to the obstacle" value={inputs.d1Km} above={0} unit="km" onCommit={(v) => onChange({ d1Km: v })} />
+            <NumberField label="Obstacle to the far end" value={inputs.d2Km} above={0} unit="km" onCommit={(v) => onChange({ d2Km: v })} />
+          </div>
+        </section>
+        <section className="form-section">
+          <h2>The obstacle</h2>
+          <NumberField
+            label="Its top, relative to the line of sight"
+            value={inputs.obstacleM}
+            unit="m"
+            hint="Negative when the obstacle is below the straight line between the two antennas, positive when it pokes above it."
+            onCommit={(v) => onChange({ obstacleM: v })}
+          />
+          <p className="muted">
+            From a map: take the ground height at the obstacle, add what stands on it, add the earth bulge from the card
+            opposite, and subtract the height of the straight line between your two antennas at that point (interpolate
+            between their heights above sea level). What is left is this figure.
+          </p>
+        </section>
+      </aside>
+
+      <div className="workspace">
+        <section className="panel">
+          <h2 className="results-title">
+            {Number.isFinite(r.lossDb) ? `${dB(r.lossDb, 1)} over the edge` : '—'} — {verdict}
+          </h2>
+          <p className="build-card">
+            At {inputs.d1Km} km from you and {inputs.d2Km} km from the far end, the first Fresnel zone at {inputs.fMHz} MHz reaches{' '}
+            <strong>{metresSigned(r.r1M)}</strong> to each side of the line, and the earth bulges <strong>{metresSigned(r.bulgeM)}</strong>{' '}
+            there over a 4/3 earth. An obstacle {Math.abs(inputs.obstacleM).toFixed(1)} m {inputs.obstacleM > 0 ? 'above' : 'below'} the line is a
+            knife edge at v = {Number.isFinite(r.v) ? r.v.toFixed(2) : '—'}, which costs <strong>{dB(r.lossDb, 1)}</strong> on top of the free-space
+            loss{r.lossDb < 0 ? ' — a little gain, the ripple just outside the first zone' : ''}. Grazing the edge costs 6 dB;{' '}
+            {CLEAR_FRACTION * 100} % of the zone clear, {metresSigned(r.clearanceNeededM)} here, costs nothing worth counting.
+          </p>
+          <dl className="summary">
+            <div>
+              <dt>First Fresnel zone</dt>
+              <dd>
+                {metresSigned(r.r1M)}
+                <small>
+                  2nd {metresSigned(fresnelRadiusM(inputs.fMHz, inputs.d1Km, inputs.d2Km, 2))}, 3rd {metresSigned(fresnelRadiusM(inputs.fMHz, inputs.d1Km, inputs.d2Km, 3))}
+                </small>
+              </dd>
+            </div>
+            <div>
+              <dt>Clearance needed</dt>
+              <dd>
+                {metresSigned(r.clearanceNeededM)}
+                <small>{CLEAR_FRACTION * 100} % of the first zone, below the line</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Earth bulge</dt>
+              <dd>
+                {metresSigned(r.bulgeM)}
+                <small>d₁d₂ / 2kR with k = 4/3: add it to a map height</small>
+              </dd>
+            </div>
+            <div>
+              <dt>Diffraction loss</dt>
+              <dd>
+                {dB(r.lossDb, 1)}
+                <small>v = {Number.isFinite(r.v) ? r.v.toFixed(2) : '—'}, over the free-space loss</small>
+              </dd>
+            </div>
+          </dl>
+          <Notes notes={notes} />
+          <XYChart
+            title="Knife-edge loss against clearance"
+            unit="dB"
+            xLabel="r₁"
+            xTitle="Clearance below the line of sight, in first-zone radii (negative: the edge is above the line)"
+            x={CLEARANCE_AXIS}
+            series={[{ label: 'Loss over free space', colour: 'var(--series-1)', values: CLEARANCE_CURVE }]}
+            format={(v) => `${v.toFixed(1)} dB`}
+            xFormat={(v) => `${v.toFixed(2)} r₁`}
+            guides={[0, 6.02]}
+            hover={hover}
+            onHover={setHover}
+            selected={selected}
+          />
+          <p className="muted">
+            The curve is the Fresnel–Kirchhoff knife edge: 6 dB with the edge on the line, down to nothing by about 0.6 of a zone
+            of clearance and rippling a dB either way beyond that, climbing steadily into the shadow. It is a single sharp edge
+            in physical optics — the honest estimate for a ridge, and an optimistic one for anything rounded or wooded.
+          </p>
+        </section>
+
+        <section className="panel">
+          <h2 className="results-title">Along the {totalKm.toFixed(1)} km path</h2>
+          <table className="band-table path-table">
+            <thead>
+              <tr>
+                <th scope="col">From you</th>
+                <th scope="col">First zone</th>
+                <th scope="col">{CLEAR_FRACTION * 100} % of it</th>
+                <th scope="col">Earth bulge</th>
+              </tr>
+            </thead>
+            <tbody>
+              {stations.map((s) => {
+                const d1 = s * totalKm;
+                const d2 = totalKm - d1;
+                const r1 = fresnelRadiusM(inputs.fMHz, d1, d2);
+                return (
+                  <tr key={s}>
+                    <th scope="row">{d1.toFixed(1)} km</th>
+                    <td>{metresSigned(r1)}</td>
+                    <td>{metresSigned(CLEAR_FRACTION * r1)}</td>
+                    <td>{metresSigned(earthBulgeM(d1, d2))}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+          <p className="muted">
+            Walk the path on a map with this table: at each point the ground plus the bulge must stay that far below the line
+            between your antennas. The zone is widest in the middle and the bulge peaks there too, so that is usually where a
+            path fails.
           </p>
         </section>
       </div>

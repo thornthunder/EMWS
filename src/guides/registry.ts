@@ -63,7 +63,7 @@ export const GUIDES: Guide[] = [
     id: 'rf-toolbox',
     title: 'The RF toolbox',
     summary:
-      'Wavelengths and wire lengths, coax loss with the SWR on it, Pi, T and L attenuators as you can build them, dBm to volts and S-units, and SWR in all its costumes - each with its working shown.',
+      'Wavelengths and wire lengths, coax loss with the SWR on it, Pi, T and L attenuators as you can build them, dBm to volts and S-units, SWR in all its costumes, the link budget, where intermods land, and whether a ridge is in the way - each with its working shown.',
     toolHref: '#/toolbox',
     toolName: 'RF toolbox',
     Content: ToolboxGuide,
