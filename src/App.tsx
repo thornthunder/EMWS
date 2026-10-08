@@ -86,7 +86,8 @@ export function App() {
           ))}
         </nav>
       </header>
-      <main>
+      {/* The Smith chart spreads wider than the other tools on a big screen (styles.css). */}
+      <main className={path === '/smith' ? 'main-wide' : undefined}>
         <Suspense fallback={<Loading />}>
           <Page path={path} />
         </Suspense>

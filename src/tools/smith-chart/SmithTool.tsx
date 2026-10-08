@@ -108,81 +108,81 @@ export function SmithTool() {
             </figcaption>
           </figure>
 
-          <div className="smith-readouts">
-            <dl className="summary">
-              <div>
-                <dt>At the radio</dt>
-                <dd>{formatImpedance(atRadio)}</dd>
-                <small>at {formatMHz(network.designMHz)}</small>
-              </div>
-              <div>
-                <dt>SWR</dt>
-                <dd>
-                  {selected && Number.isFinite(selected.swr) ? `${selected.swr.toFixed(2)} : 1` : '∞'}
-                </dd>
-                <small>
-                  {selected && Number.isFinite(selected.swr)
-                    ? `${mismatchLossDb(selected.z, network.z0).toFixed(2)} dB of power turned back`
-                    : 'nothing gets in'}
-                </small>
-              </div>
-              <div>
-                <dt>Under 2:1</dt>
-                <dd>{band ? `${(band.widthMHz * 1000).toFixed(0)} kHz` : '—'}</dd>
-                <small>
-                  {band ? `${formatMHz(band.lowMHz)} to ${formatMHz(band.highMHz)}` : 'not within the sweep'}
-                </small>
-              </div>
-              <div>
-                <dt>At the load</dt>
-                <dd>{formatImpedance(nodesAtDesign[0]!)}</dd>
-                <small>what the antenna shows</small>
-              </div>
-            </dl>
+          {/* Chart, cards and step table are placed by grid areas (styles.css): the table
+              goes under the cards when their column is wide enough, else under both. */}
+          <dl className="summary smith-cards">
+            <div>
+              <dt>At the radio</dt>
+              <dd>{formatImpedance(atRadio)}</dd>
+              <small>at {formatMHz(network.designMHz)}</small>
+            </div>
+            <div>
+              <dt>SWR</dt>
+              <dd>
+                {selected && Number.isFinite(selected.swr) ? `${selected.swr.toFixed(2)} : 1` : '∞'}
+              </dd>
+              <small>
+                {selected && Number.isFinite(selected.swr)
+                  ? `${mismatchLossDb(selected.z, network.z0).toFixed(2)} dB of power turned back`
+                  : 'nothing gets in'}
+              </small>
+            </div>
+            <div>
+              <dt>Under 2:1</dt>
+              <dd>{band ? `${(band.widthMHz * 1000).toFixed(0)} kHz` : '—'}</dd>
+              <small>
+                {band ? `${formatMHz(band.lowMHz)} to ${formatMHz(band.highMHz)}` : 'not within the sweep'}
+              </small>
+            </div>
+            <div>
+              <dt>At the load</dt>
+              <dd>{formatImpedance(nodesAtDesign[0]!)}</dd>
+              <small>what the antenna shows</small>
+            </div>
+          </dl>
 
-            {network.elements.length > 0 && (
-              <div className="table-wrap">
-                <table className="feed-table chain-table">
-                  <caption>Step by step at {formatMHz(network.designMHz)}</caption>
-                  <thead>
-                    <tr>
-                      <th scope="col">Step</th>
-                      <th scope="col">Component</th>
-                      <th scope="col">Value</th>
-                      <th scope="col">Looking in</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr>
+          {network.elements.length > 0 && (
+            <div className="table-wrap smith-steps">
+              <table className="feed-table chain-table">
+                <caption>Step by step at {formatMHz(network.designMHz)}</caption>
+                <thead>
+                  <tr>
+                    <th scope="col">Step</th>
+                    <th scope="col">Component</th>
+                    <th scope="col">Value</th>
+                    <th scope="col">Looking in</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td>
+                      <span className="step-swatch" style={{ background: 'var(--muted)' }} aria-hidden="true">
+                        L
+                      </span>
+                    </td>
+                    <td>The load</td>
+                    <td>—</td>
+                    <td>{formatImpedance(nodesAtDesign[0]!)}</td>
+                  </tr>
+                  {network.elements.map((element, i) => (
+                    <tr key={element.id} className={element.bypassed ? 'bypassed' : undefined}>
                       <td>
-                        <span className="step-swatch" style={{ background: 'var(--muted)' }} aria-hidden="true">
-                          L
+                        <span className="step-swatch" style={{ background: stepColour(i) }} aria-hidden="true">
+                          {i + 1}
                         </span>
                       </td>
-                      <td>The load</td>
-                      <td>—</td>
-                      <td>{formatImpedance(nodesAtDesign[0]!)}</td>
+                      <td>
+                        {elementTitle(element)}
+                        {element.bypassed && ' (out of circuit)'}
+                      </td>
+                      <td>{elementValue(element)}</td>
+                      <td>{formatImpedance(nodesAtDesign[i + 1]!)}</td>
                     </tr>
-                    {network.elements.map((element, i) => (
-                      <tr key={element.id} className={element.bypassed ? 'bypassed' : undefined}>
-                        <td>
-                          <span className="step-swatch" style={{ background: stepColour(i) }} aria-hidden="true">
-                            {i + 1}
-                          </span>
-                        </td>
-                        <td>
-                          {elementTitle(element)}
-                          {element.bypassed && ' (out of circuit)'}
-                        </td>
-                        <td>{elementValue(element)}</td>
-                        <td>{formatImpedance(nodesAtDesign[i + 1]!)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
 
         {sweep.length > 1 && (

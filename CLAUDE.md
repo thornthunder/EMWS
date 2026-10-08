@@ -308,9 +308,18 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   measured count up to `MEASURED_SWEEP_POINTS` 2001 - a tester set 201 in Radio and sweep,
   measured, and watched it snap to the panel's 101. `Instrument.readRange?()` (bridge only:
   `GET /settings`) fills the panel from the instrument's front panel.
-- **Wide layout** ≥ 1440 px: `.smith` panel column 640-820 px and `.chain-panel` two
-  columns (`.chain-column`: load + sweep | components + match) - the tester's "a wider
-  rather than taller layout" ask; verified by screenshot at 1700 px.
+- **Wide layout** (the tester's "a wider rather than taller layout" ask; the first try,
+  a 820 px panel inside the 1500 px page cap, crushed the readouts to an 80 px strip):
+  `main.main-wide` (App.tsx, Smith route only) lifts the page cap to 2000 px; ≥ 1440 px the
+  panel is 620-680 px with `.chain-panel` in two grid areas (load + sweep + match |
+  components - the components column is the one that grows); ≥ 1900 px 930-1000 px and
+  three. `.smith-layout` is grid AREAS too (chart 380-480 px | cards ≥ 250 px, step table
+  under the cards) and the workspace is a CONTAINER: ≤ 880 px the table goes under chart
+  and cards, ≤ 640 px the cards go under the chart. Those container rules sit LAST in the
+  section - a later width rule on `.smith-layout` silently overrode them once. Screenshots
+  at 1100/1366/1440/1536/1700/1920 via `--smith --width N --screenshot f.png`
+  (`f-matched.png` = chain in place, + page height in the log). The capture is taken AFTER
+  the wheel steps: a beyond-the-viewport capture just before them lost the quick spin.
 - `npm run smoke -- --smith` builds a match in the browser and checks the numbers, including
   the Antenna Modeler handoff, the two-mode matcher (already matched -> "Replace mine" only,
   replacing not adding) and the wheel; `--vna` checks 201 points in Radio and sweep measure

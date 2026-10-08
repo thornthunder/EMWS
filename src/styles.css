@@ -1334,18 +1334,31 @@ kbd {
   font-weight: 600;
 }
 
+/*
+ * The chart grows to 480 px and the readouts take the rest, never less than 250 px. The
+ * step table sits under the cards while that column can hold it (a container query at the
+ * end of this section moves it under chart and cards together when it cannot).
+ */
 .smith-layout {
   display: grid;
-  grid-template-columns: minmax(300px, 460px) minmax(0, 1fr);
+  grid-template-columns: minmax(380px, 480px) minmax(250px, 1fr);
+  grid-template-areas:
+    'chart cards'
+    'chart steps';
   gap: 16px;
   align-items: start;
 }
-@media (max-width: 860px) {
-  .smith-layout {
-    grid-template-columns: minmax(0, 1fr);
-  }
+.smith-layout > * {
+  min-width: 0;
+}
+.smith-cards {
+  grid-area: cards;
+}
+.smith-steps {
+  grid-area: steps;
 }
 .smith-figure {
+  grid-area: chart;
   margin: 0;
 }
 .smith-chart {
@@ -1354,13 +1367,6 @@ kbd {
   height: auto;
   touch-action: none;
 }
-.smith-readouts {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  min-width: 0;
-}
-
 .smith-face {
   fill: var(--bg);
   stroke: none;
@@ -1428,25 +1434,78 @@ kbd {
   stroke-dasharray: 2 3;
 }
 
-.chain-column > .form-section:first-child {
+.chain-column-load > .form-section:first-child {
   padding-top: 0;
 }
-.chain-column + .chain-column > .form-section:first-child {
-  padding-top: 14px;
+/*
+ * The Smith page spreads out on a wide screen, where the other tools stay at the page's
+ * usual width: the panel goes to two columns from 1440 px (load and matches | components,
+ * because the components column is the one that grows) and three from 1900 px, so no
+ * column is taller than a laptop's window, and the page (main-wide, set by App.tsx) may
+ * grow to 2000 px to make room. The chart area then follows the room it is actually left
+ * (container queries, not the window): the step table drops under chart and cards when
+ * its column is too narrow for it, and the cards go under the chart when even they do not
+ * fit beside it. Those rules come LAST so no width rule above can override them.
+ */
+main.main-wide {
+  max-width: 2000px;
 }
-/* On a wide screen the panel is two columns side by side, and the whole page fits without scrolling. */
 @media (min-width: 1440px) {
   .smith {
-    grid-template-columns: minmax(640px, 820px) minmax(0, 1fr);
+    grid-template-columns: minmax(620px, 680px) minmax(0, 1fr);
   }
   .chain-panel {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-areas:
+      'load chain'
+      'match chain';
     column-gap: 24px;
     align-items: start;
   }
-  .chain-column + .chain-column > .form-section:first-child {
+  .chain-column-load {
+    grid-area: load;
+  }
+  .chain-column-chain {
+    grid-area: chain;
+  }
+  .chain-column-match {
+    grid-area: match;
+  }
+  .chain-column-chain > .form-section:first-child {
     padding-top: 0;
+  }
+}
+@media (min-width: 1900px) {
+  .smith {
+    grid-template-columns: minmax(930px, 1000px) minmax(0, 1fr);
+  }
+  .chain-panel {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-areas: 'load chain match';
+  }
+  .chain-column-match > .form-section:first-child {
+    padding-top: 0;
+  }
+}
+.smith .workspace {
+  container-type: inline-size;
+  container-name: smith-workspace;
+}
+@container smith-workspace (max-width: 880px) {
+  .smith-layout {
+    grid-template-areas:
+      'chart cards'
+      'steps steps';
+  }
+}
+@container smith-workspace (max-width: 640px) {
+  .smith-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas:
+      'chart'
+      'cards'
+      'steps';
   }
 }
 .match-list + h4,

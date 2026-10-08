@@ -112,7 +112,7 @@ function parseImpedance(text) {
 }
 
 /** Builds a matching network in the Smith chart tool and checks what it reports. */
-async function runSmithTest({ evaluate, send, log }) {
+async function runSmithTest({ evaluate, send, log, screenshot }) {
   const probe = `JSON.stringify({
     summary: Object.fromEntries([...document.querySelectorAll('.summary > div')].map((d) =>
       [(d.querySelector('dt')?.textContent ?? '').trim(), (d.querySelector('dd')?.textContent ?? '').trim()])),
@@ -209,6 +209,14 @@ async function runSmithTest({ evaluate, send, log }) {
   const wheelHint = await evaluate(`${valueBox}.closest('label').getAttribute('title') ?? ''`);
   check(/mouse wheel/.test(wheelHint), 'the box says so when the pointer rests on it');
   await evaluate(`document.activeElement?.blur()`);
+  if (screenshot) {
+    // The page at its tallest: a chain in place and the matcher's two-mode section open.
+    // With --width this is how the layout at a given screen is checked by eye. Taken after
+    // the wheel steps: a beyond-the-viewport capture just before them lost the quick spin.
+    const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+    writeFileSync(screenshot.replace(/.png$/i, '-matched.png'), Buffer.from(data, 'base64'));
+    log(`    page height with a chain in place: ${await evaluate('document.documentElement.scrollHeight')} px`);
+  }
 
   // The two tools talk to each other: model an antenna, then match it here.
   await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
@@ -2562,7 +2570,7 @@ try {
     const pageDeadline = Date.now() + 20_000;
     while (Date.now() < pageDeadline && !(await evaluate(ready))) await sleep(150);
     await sleep(300); // let the first paint settle
-    if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l) });
+    if (smithTest) await runSmithTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (balunTest) await runBalunTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (vnaTest) await runVnaTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });

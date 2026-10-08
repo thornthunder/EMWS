@@ -57,16 +57,21 @@ export interface ChainPanelProps {
 }
 
 export function ChainPanel({ network, onChange }: ChainPanelProps) {
-  // Two columns on a wide screen (load and sweep | components and matches), one column
-  // otherwise: a tester found the single long column meant scrolling at every step.
+  // Three groups, laid out by width (styles.css): one column on a laptop, two on a wide
+  // screen (load and sweep | components over matches), three on a very wide one, so that
+  // no column is taller than the window - a tester found the single long column meant
+  // scrolling at every step, and a first two-column try at a fixed page width crushed the
+  // chart instead.
   return (
     <div className="chain-panel">
-      <div className="chain-column">
+      <div className="chain-column chain-column-load">
         <LoadSection network={network} onChange={onChange} />
         <SystemSection network={network} onChange={onChange} />
       </div>
-      <div className="chain-column">
+      <div className="chain-column chain-column-chain">
         <ChainSection network={network} onChange={onChange} />
+      </div>
+      <div className="chain-column chain-column-match">
         <MatchSection network={network} onChange={onChange} />
       </div>
     </div>
