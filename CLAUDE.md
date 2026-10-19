@@ -35,6 +35,9 @@ ESET Internet Security's browser-data protection, which refuses every process bu
 browser access to the profile's data files whatever the ACLs say (takeown/icacls change
 nothing); 183 folders, 4.3 GB. To delete leftovers: ESET → Browser Privacy & Security →
 Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Recurse -Force`.
+The step log prints at the END of a run; `SMOKE_TRACE=1` prints each step as it happens,
+which is how to see where a run hangs. If one is killed, kill its Edge too (processes whose
+command line holds `emws-smoke`), or the next run finds the profile in use.
 
 ## Hard rules
 
@@ -320,6 +323,18 @@ Secure all browsers OFF for a minute, `Remove-Item "$env:TEMP\emws-smoke-*" -Rec
   at 1100/1366/1440/1536/1700/1920 via `--smith --width N --screenshot f.png`
   (`f-matched.png` = chain in place, + page height in the log). The capture is taken AFTER
   the wheel steps: a beyond-the-viewport capture just before them lost the quick spin.
+- **A slider must never move because of its own value** (2026-10-19, the FieldFox tester's
+  screen recording, measured frame by frame with OpenCV: Chrome at 75 % zoom = ~2560 × 1283
+  CSS px, load 9 − j400 Ω at 145 MHz, series L + shunt 71.58 pF). Dragging the L changed
+  the number of match offers (2 ↔ 4), the page height crossed the window, the PAGE scrollbar
+  came and went a dozen times in 12 s, everything centred shifted 5 px, and the slider moved
+  under a pointer that had not (thumb 649 ↔ 673 px with the pointer at 657-661) - a loop.
+  Fix: `html { scrollbar-gutter: stable }` (site-wide), `.smith .tab-body` likewise, and
+  `.smith .side-panel { position: static; max-height: none }` at ≥ 1440 px restored - it had
+  been lost in the wide-layout rewrite, so the panel ALSO scrolled inside itself there. The
+  `--smith` smoke loads that exact network in that window and in 1600 × 900, drags the thumb
+  ±30 px a pixel at a time with real mouse events, and fails if the slider's x changes or the
+  value ever moves against the pointer (before the fix: x 658.8 → 671.3).
 - `npm run smoke -- --smith` builds a match in the browser and checks the numbers, including
   the Antenna Modeler handoff, the two-mode matcher (already matched -> "Replace mine" only,
   replacing not adding) and the wheel; `--vna` checks 201 points in Radio and sweep measure

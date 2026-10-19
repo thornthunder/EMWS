@@ -91,6 +91,16 @@
   box-sizing: border-box;
 }
 
+/*
+ * The page always keeps the room its scrollbar needs. Without it, a page whose height
+ * crosses the window's while something is being dragged gains or loses the scrollbar,
+ * everything centred shifts sideways - and a slider shifts under a pointer that has not
+ * moved. A tester's recording showed exactly that loop on the Smith chart (2026-10-19).
+ */
+html {
+  scrollbar-gutter: stable;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -1450,9 +1460,18 @@ kbd {
 main.main-wide {
   max-width: 2000px;
 }
+/* Narrower, the panel scrolls on its own: keep its scrollbar's room too, for the same reason as html's. */
+.smith .tab-body {
+  scrollbar-gutter: stable;
+}
 @media (min-width: 1440px) {
   .smith {
     grid-template-columns: minmax(620px, 680px) minmax(0, 1fr);
+  }
+  /* In columns the panel is short enough to be part of the page, not a box that scrolls inside it. */
+  .smith .side-panel {
+    position: static;
+    max-height: none;
   }
   .chain-panel {
     display: grid;

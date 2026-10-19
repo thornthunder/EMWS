@@ -218,6 +218,77 @@ async function runSmithTest({ evaluate, send, log, screenshot }) {
     log(`    page height with a chain in place: ${await evaluate('document.documentElement.scrollHeight')} px`);
   }
 
+  // ---- A slider must not move under the pointer because of its own value (2026-10-19) ----
+  // A tester's screen recording (Chrome at 75 % zoom on a 1920 x 1080 screen, so about
+  // 2560 x 1283 CSS px): dragging the series inductor on a 9 - j400 ohm load, the "Finish it"
+  // offers went between 2 and 4 with the value, the page's height crossed the window's, the
+  // scrollbar came and went a dozen times, the whole page shifted 5 px each time - and the
+  // slider with it, under a pointer that had not moved. The value jumped, which changed the
+  // offers again: a loop. His exact network, his window, a one-pixel-at-a-time drag.
+  const joe = {
+    load: { kind: 'impedance', ohmsR: 9, ohmsX: -400, atMHz: 145, follows: 'reactive' },
+    elements: [
+      { id: 'joe-l', kind: 'inductor', connection: 'series', henries: 308.899e-9 },
+      { id: 'joe-c', kind: 'capacitor', connection: 'shunt', farads: 71.5774e-12 },
+    ],
+    z0: 50,
+    sweep: { startMHz: 140, stopMHz: 150, points: 101 },
+    designMHz: 145,
+  };
+  const windows = [
+    { name: "Joe's window", width: 2560, height: 1283, crosses: true },
+    { name: 'a 1600 x 900 laptop', width: 1600, height: 900, crosses: false },
+  ];
+  for (const win of windows) {
+    await send('Emulation.setDeviceMetricsOverride', { width: win.width, height: win.height, deviceScaleFactor: 1, mobile: false });
+    await evaluate(`(localStorage.setItem('emws.smith-chart.v1', ${JSON.stringify(JSON.stringify(joe))}), location.reload())`);
+    const joeDeadline = Date.now() + 15_000;
+    while (Date.now() < joeDeadline && !(await evaluate(`document.querySelectorAll('.element-card').length === 2`))) await sleep(200);
+    await evaluate('window.scrollTo(0, 0)');
+    await sleep(300);
+    const sliderProbe = `(() => {
+      const input = document.querySelector('.element-card .slider input[type="range"]');
+      const r = input.getBoundingClientRect();
+      return JSON.stringify({
+        left: Math.round(r.left * 10) / 10, top: Math.round(r.top * 10) / 10, width: Math.round(r.width * 10) / 10,
+        value: Number(input.value),
+        scrollbar: window.innerWidth - document.documentElement.clientWidth,
+        offers: document.querySelectorAll('.match-list li').length,
+      });
+    })()`;
+    const readSlider = async () => JSON.parse(await evaluate(sliderProbe));
+    const start = await readSlider();
+    check(start.width > 100, `Joe's network in ${win.name} (${win.width} x ${win.height}): the inductor slider is ${start.width} px wide at x = ${start.left}`);
+    // Grab the thumb where it is, then walk right 60 px and back, one pixel per step.
+    const thumbX = start.left + (start.value / 1000) * start.width;
+    const y = start.top + 8;
+    const mouse = (type, x) => send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 });
+    await mouse('mousePressed', thumbX);
+    const seen = [];
+    const walk = [...Array.from({ length: 60 }, (_, i) => thumbX - 30 + i), ...Array.from({ length: 60 }, (_, i) => thumbX + 30 - i)];
+    for (const x of walk) {
+      await mouse('mouseMoved', x);
+      await sleep(40);
+      seen.push({ x, ...(await readSlider()) });
+    }
+    await mouse('mouseReleased', walk[walk.length - 1]);
+    const lefts = new Set(seen.map((s) => s.left));
+    const scrollbars = new Set(seen.map((s) => s.scrollbar));
+    const offerCounts = new Set(seen.map((s) => s.offers));
+    log(`    during the drag: offers ${[...offerCounts].join('/')}, scrollbar ${[...scrollbars].join('/')} px, slider at x = ${[...lefts].join(', ')}`);
+    if (win.crosses) check(offerCounts.size > 1, `the drag crosses values where the number of offers changes (${[...offerCounts].join(' and ')}), as Joe's did`);
+    check(lefts.size === 1, `and the slider never moves under the pointer: x = ${[...lefts].join(', ')}`);
+    // Moving the pointer one way must never move the value the other way.
+    let backwards = 0;
+    for (let i = 1; i < seen.length; i++) {
+      const dx = seen[i].x - seen[i - 1].x;
+      const dv = seen[i].value - seen[i - 1].value;
+      if (dx * dv < 0) backwards++;
+    }
+    check(backwards === 0, `the value follows the pointer, never against it (${backwards} steps went backwards)`);
+  }
+  await send('Emulation.setDeviceMetricsOverride', { width: viewportWidth, height: 1100, deviceScaleFactor: 1, mobile: viewportWidth < 600 });
+
   // The two tools talk to each other: model an antenna, then match it here.
   await send('Page.navigate', { url: new URL('#/antenna', baseUrl).href });
   const deadline = Date.now() + 30_000;
@@ -2359,7 +2430,15 @@ async function launch(profileDir, waitMs) {
 }
 
 let exitCode = 1;
+/** Every step's line, printed at the end - or as it happens with SMOKE_TRACE=1, to see where a run hangs. */
 const editLog = [];
+if (process.env.SMOKE_TRACE) {
+  const push = editLog.push.bind(editLog);
+  editLog.push = (...lines) => {
+    for (const l of lines) console.error(`[trace ${new Date().toISOString().slice(11, 19)}] ${l}`);
+    return push(...lines);
+  };
+}
 /** The DevTools connection, once up; shutdown needs it after the try block. */
 let ws;
 let send;
