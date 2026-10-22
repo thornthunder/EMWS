@@ -260,6 +260,17 @@ export function AntennaModelerGuide() {
         catches a bad mesh as cheaply: make it one.
       </p>
       <p>
+        <strong>Two things the check cannot tell apart from a bad mesh</strong>, and the <em>Dual-band Moxon, 10 and 6
+        m (DK7ZB)</em> example shows both. A <strong>sharp match</strong> turns a tiny shift into a big number: on 6 m
+        that antenna's match is so narrow that moving 50 kHz changes the reactance by 6 Ω, so doubling the segments
+        reads "not settled" while the gain moves 0.02 dB. Look at <em>what</em> moved — reactance with the gain held
+        still means the match centre shifted, here by about 50 kHz, and that is how precisely the model places it. And{' '}
+        <strong>fat tubes set a floor</strong>: NEC-2's thin-wire model wants each segment at least about eight times
+        the wire's radius, and the design checks warn below that. The Moxon's 16 mm tubes are at nine; doubled, they are
+        at four and a half, past where the model holds, so piling on segments there stops buying accuracy. On such a
+        model, take the figures as the example's notes give them: good to that 50 kHz.
+      </p>
+      <p>
         EMWS warns you before a long run and puts the estimate on the Run button, and it stops auto-run from
         firing while a model is that heavy. If a solve is running you can always press Cancel; it stops there
         and then.

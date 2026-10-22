@@ -4,6 +4,7 @@
 import dipoleFreeSpace from '../../../examples/dipole-20m-free-space.nec?raw';
 import dipoleOverGround from '../../../examples/dipole-20m-over-ground.nec?raw';
 import dipoleSweep from '../../../examples/dipole-20m-swr-sweep.nec?raw';
+import moxonDualband from '../../../examples/moxon-dualband-10-6m.nec?raw';
 import ocfDipole from '../../../examples/ocf-dipole-windom.nec?raw';
 import trapDipole from '../../../examples/trap-dipole-40-80m.nec?raw';
 import vertical from '../../../examples/vertical-40m-perfect-ground.nec?raw';
@@ -27,6 +28,7 @@ export interface Example {
 
 export const EXAMPLES: Example[] = [
   { id: 'yagi-3el-2m', label: '3-element Yagi, 2 m', deck: yagi },
+  { id: 'moxon-dualband-10-6m', label: 'Dual-band Moxon, 10 and 6 m (DK7ZB)', deck: moxonDualband },
   { id: 'dipole-20m-free-space', label: 'Dipole, 20 m, free space', deck: dipoleFreeSpace },
   { id: 'dipole-20m-over-ground', label: 'Dipole, 20 m, 10 m over real ground', deck: dipoleOverGround },
   { id: 'dipole-20m-swr-sweep', label: 'Dipole, 20 m, SWR sweep', deck: dipoleSweep },

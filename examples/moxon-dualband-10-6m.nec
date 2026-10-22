@@ -1,0 +1,40 @@
+CM Dual-band Moxon for 10 m and 6 m, one 50 ohm feed, aluminium tubes, in free space. Design by DK7ZB:
+CM https://www.qsl.net/dk7zb/Moxon/Dualband-Moxon_10+6m.htm - the dimensions below are from his table; this model is EMWS's.
+CM On 10 m it is a Moxon rectangle: reflector (x = 0) and driven element (x = 1.42 m) with their tails folded towards each
+CM other, 16 cm apart. On 6 m two straight tubes inside it do the work: a reflector at 0.50 m and a radiator at 1.258 m,
+CM 16 cm behind the 10 m driven element and not connected to it - it is fed by that closeness ("open sleeve").
+CM Tubes: 16 mm centre sections (radius 8 mm), 12 mm sides and tails, 10 mm for the 6 m elements; boom along +X, forward.
+CM What nec2c makes of it, with aluminium (the LD 5 card):
+CM   28.3 MHz, DK7ZB's 10 m design frequency: 55.0 + j1.5 ohms, SWR 1.10, 6.12 dBi (4.0 dBd), front to back 33 dB.
+CM   50.15 MHz, his 6 m design frequency: 49.0 + j3.3 ohms, SWR 1.07, 6.56 dBi (4.4 dBd), front to back 10.7 dB.
+CM   His figures are 4.0 dBd with 30 dB, and 4.38 dBd with 11 dB. Pick 6 m in the band list to sweep it.
+CM   The best match lands at 28.20 MHz (under 1.5:1 from 28.00 to 28.85) and 50.12 MHz (under 1.5:1 from 49.96 to 50.28):
+CM   6 m is a narrow, high-Q match by nature. Above about 50.4 MHz it is past 2:1.
+CM   Efficiency 99.6 % on 10 m, 98.1 % on 6 m, where the open-sleeve coupling runs large currents in both elements.
+CM DK7ZB's own SWR measurement of a built one is best at 28.5 MHz (1.04) and 50.15 MHz (1.09). The model's 6 m agrees; on 10 m
+CM it sits about 1 % low. NEC-2 has no correction for stepped tube diameters, and a real one has a boom, clamps and tube
+CM overlaps the model leaves out; the page says the middle tubes slide in the centre tubes for tuning, which is how to close it.
+CM Every segment is at least 8.9 tube radii long, past the 8 that NEC-2's thin-wire model wants. Doubling the segments moves
+CM the best match 75 kHz lower on 10 m and 50 kHz lower on 6 m and the gain by under 0.1 dB, so "Is the model converged?"
+CM reads settled on 10 m and not on 6 m: there the match is so sharp that 50 kHz is 6 ohms of reactance. Treat the 6 m
+CM match centre as good to about 50 kHz.
+CM NEC model by ZR1JT for EMWS, from DK7ZB's published dimensions. CC0 1.0 - public domain.
+CE
+GW 1 21 0 -0.75 0 0 0.75 0 0.008
+GW 2 16 0 0.75 0 0 1.925 0 0.006
+GW 3 16 0 -0.75 0 0 -1.925 0 0.006
+GW 4 10 0 1.925 0 0.725 1.925 0 0.006
+GW 5 10 0 -1.925 0 0.725 -1.925 0 0.006
+GW 6 21 1.42 -0.75 0 1.42 0.75 0 0.008
+GW 7 16 1.42 0.75 0 1.42 1.925 0 0.006
+GW 8 16 1.42 -0.75 0 1.42 -1.925 0 0.006
+GW 9 7 1.42 1.925 0 0.885 1.925 0 0.006
+GW 10 7 1.42 -1.925 0 0.885 -1.925 0 0.006
+GW 11 41 0.5 -1.482 0 0.5 1.482 0 0.005
+GW 12 39 1.258 -1.419 0 1.258 1.419 0 0.005
+GE 0
+LD 5 0 0 0 3.5e7
+FR 0 1 0 0 28.3 0
+EX 0 6 11 0 1.0 0.0
+RP 0 37 72 1000 0 0 5 5
+EN

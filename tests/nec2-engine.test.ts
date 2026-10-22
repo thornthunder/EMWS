@@ -102,6 +102,52 @@ describe('nec2c WebAssembly engine', () => {
     expect(forward.totalDb - backward.totalDb).toBeGreaterThan(8); // front-to-back ratio
   });
 
+  // DK7ZB's dual-band Moxon, from his published table. MEASURED 2026-10-22 with this engine,
+  // and every figure here is one the example's comments state: at his design frequencies
+  // (28.3 and 50.15 MHz, from his pattern plots) the model gives his gains to 0.1 dB - 3.97
+  // dBd for his 4.0, 4.41 for his 4.38 - with front-to-back 33 dB (he says 30) and 10.7 dB
+  // (he says 11). The two-band point of the design: ONE 50-ohm feed, matched on both.
+  it("models DK7ZB's dual-band Moxon: one feed, matched on 10 m and 6 m", async () => {
+    const deck = await loadExample('moxon-dualband-10-6m.nec');
+    const at = async (fMHz: number) => {
+      const { raw, report } = await simulate(deck.replace(/^FR .*$/m, `FR 0 1 0 0 ${fMHz} 0`));
+      expect(raw.exitCode).toBe(0);
+      expect(report.errors).toEqual([]);
+      const f = report.frequencies[0]!;
+      const points = f.patterns[0]!.points;
+      const horizon = (phi: number) => points.find((p) => p.thetaDeg === 90 && p.phiDeg === phi)!.totalDb;
+      return { z: f.feeds[0]!.impedance, peak: maxGain(f.patterns[0]), fb: horizon(0) - horizon(180), efficiency: f.power!.efficiencyPct };
+    };
+
+    const ten = await at(28.3);
+    expect(ten.z.re).toBeCloseTo(55.01, 1);
+    expect(ten.z.im).toBeCloseTo(1.51, 1);
+    expect(swr(ten.z, 50)).toBeLessThan(1.11);
+    expect(ten.peak.totalDb).toBeCloseTo(6.12, 1);
+    expect(ten.peak.phiDeg).toBe(0); // fires along the boom, towards the driven element
+    expect(ten.fb).toBeGreaterThan(32);
+    expect(ten.efficiency).toBeCloseTo(99.6, 1);
+
+    const six = await at(50.15);
+    expect(six.z.re).toBeCloseTo(48.99, 1);
+    expect(six.z.im).toBeCloseTo(3.26, 1);
+    expect(swr(six.z, 50)).toBeLessThan(1.08);
+    expect(six.peak.totalDb).toBeCloseTo(6.56, 1);
+    expect(six.peak.phiDeg).toBe(0);
+    expect(six.fb).toBeGreaterThan(10.5);
+    expect(six.fb).toBeLessThan(11);
+    expect(six.efficiency).toBeCloseTo(98.1, 1);
+
+    // The bandwidths the comments give: under 1.5 across 28.00-28.85, past 2:1 above 50.4 MHz.
+    const sweep = async (fr: string) =>
+      (await simulate(deck.replace(/^FR .*$/m, fr).replace(/^RP .*$/m, 'XQ'))).report.frequencies.map((f) => swr(f.feeds[0]!.impedance, 50));
+    const tenBand = await sweep('FR 0 18 0 0 28.0 0.05'); // 28.00 ... 28.85
+    expect(Math.max(...tenBand)).toBeLessThan(1.5);
+    const [sixAt504, sixAt5045] = await sweep('FR 0 2 0 0 50.4 0.05');
+    expect(sixAt504!).toBeLessThan(2);
+    expect(sixAt5045!).toBeGreaterThan(2);
+  });
+
   it('runs a frequency sweep and finds resonance inside the 20 m band', async () => {
     const { raw, report } = await simulate(await loadExample('dipole-20m-swr-sweep.nec'));
     expect(raw.exitCode).toBe(0);

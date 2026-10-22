@@ -168,6 +168,20 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
 - The trap dipole example (`examples/trap-dipole-40-80m.nec`) was tuned by running the engine:
   87 + j2 Ω and 90.8 % at 7.1 MHz, 47 − j2 Ω and 98.2 % at 3.65 MHz; the tests hold it to those
   within a few ohms and percent, and `npm run smoke -- --lc` sees the same 90.8 % in the browser.
+- **DK7ZB's dual-band Moxon** (`examples/moxon-dualband-10-6m.nec`, 2026-10-22, ZR1JT asked):
+  10 m Moxon rectangle + two straight 6 m tubes inside it (the 6 m radiator 16 cm behind the
+  10 m driven element, open-sleeve), one 50 Ω feed, 16/12/10 mm aluminium (LD 5 3.5e7), free
+  space, opens at 28.3 MHz. Dimensions verbatim from his table ("lengths to the centre of the
+  tubes": corners at y = ±(0.75 + 1.175) m); his design frequencies 28.3 / 50.15 MHz are from
+  his pattern plots. MEASURED: 55.0 + j1.5 Ω, 6.12 dBi = 3.97 dBd (his 4.0), F/B 33 (his 30);
+  49.0 + j3.3 Ω, 6.56 dBi = 4.41 dBd (his 4.38), F/B 10.7 (his 11). Best match 28.20 / 50.12;
+  his MEASURED built one is best at 28.5 / 50.15 - 10 m sits ~1 % low in NEC-2 (no stepped-
+  diameter correction; boom, clamps, overlaps not modelled) - said in the deck, cause not
+  claimed. Segments ≥ 8.9 radii on the 16 mm tube; doubling moves the match 75 kHz (10 m) /
+  50 kHz (6 m), so "Is the model converged?" reads NOT settled on 6 m (sharp match: 50 kHz =
+  6 Ω of reactance, gain 0.02 dB) - the guide now explains that case and the radius floor.
+  `nec2-engine.test.ts` holds every figure the comments state; `deck.test.ts` now also asserts
+  EVERY example opens with no design-check issues.
 - The coil tool hands a coil or trap over through `emws.handoff.load` (`src/lib/handoff.ts`);
   the panel's Loads section offers it for the selected wire and reads it once per mount.
 - **Feed line to the radio** (2026-10-05, `feedline.ts`): a run of coax from the toolbox's
@@ -784,6 +798,11 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
   repo. They run only with macros on AND the Analysis ToolPak-VBA reference re-pointed
   (Excel 2016 stops with "Compile error: Can't find project or library" otherwise -
   measured here with macros disabled: 240/661/158/161 `#NAME?` cells per book).
+- **Someone else's published antenna design as an example** (first case: DK7ZB's Moxon,
+  2026-10-22): its dimensions are facts, so the NEC model is written here from them and is
+  CC0 like every example; the deck credits the designer by callsign and links the page, and
+  no text, drawing or plot from the page goes into the repo (they were read in the scratchpad).
+  The designer's own figures are quoted beside what nec2c gives, and differences are stated.
 - **One band list**: `src/lib/bands.ts` (IARU Region 1 edges + a standing frequency each,
   160 m through 3 cm - ZR1JT's club talks 2 m / 70 cm / 23 cm / QO-100 as much as HF). Tools
   take a slice: modeler picker `bandsUpTo(1300)`, coil/filter `bandsUpTo(450)`, balun and

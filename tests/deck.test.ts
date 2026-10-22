@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { floatField, formatCard, formatNumber, intField, lexDeck } from '../src/engine/nec2/cards';
 import { deckToModel, modelToDeck, planRuns } from '../src/tools/antenna-modeler/deck';
 import type { AntennaModel } from '../src/tools/antenna-modeler/model';
+import { validateModel } from '../src/tools/antenna-modeler/validate';
 import { loadExample, simulate } from './helpers/engine';
 
 const EXAMPLES = [
   'dipole-20m-free-space.nec',
   'dipole-20m-over-ground.nec',
   'dipole-20m-swr-sweep.nec',
+  'moxon-dualband-10-6m.nec',
   'ocf-dipole-windom.nec',
   'trap-dipole-40-80m.nec',
   'vertical-40m-perfect-ground.nec',
@@ -61,6 +63,16 @@ describe('deck <-> model', () => {
     for (const name of EXAMPLES) {
       const result = deckToModel(await loadExample(name));
       expect(result.ok, `${name}: ${result.ok ? '' : result.reason}`).toBe(true);
+    }
+  });
+
+  // An example is what a newcomer copies: it must not open with a warning on it. The
+  // dual-band Moxon's 16 mm tubes are the closest call - segments of 8.9 radii, just past
+  // the 8 the thin-wire check asks for.
+  it('opens every example with nothing for the design checks to say', async () => {
+    for (const name of EXAMPLES) {
+      const issues = validateModel(imported(await loadExample(name)));
+      expect(issues.map((i) => `${i.severity}: ${i.message}`), name).toEqual([]);
     }
   });
 

@@ -14,6 +14,7 @@ const EXAMPLES = [
   'dipole-20m-free-space.nec',
   'dipole-20m-over-ground.nec',
   'dipole-20m-swr-sweep.nec',
+  'moxon-dualband-10-6m.nec',
   'ocf-dipole-windom.nec',
   'vertical-40m-perfect-ground.nec',
   'yagi-3el-2m.nec',
