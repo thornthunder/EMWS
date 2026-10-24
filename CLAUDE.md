@@ -788,6 +788,23 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
 - TypeScript strict + `noUncheckedIndexedAccess`. British spelling in prose ("licence", "colour").
 - No new runtime dependencies without a good reason; plots are hand-written SVG.
 - `public/web.config`: every `<add>`/`<mimeMap>` is preceded by a `<remove>` (IIS 500s on duplicates).
+- **One stylesheet, so scope a rule to the tool it is for** (2026-10-24, ZR1JT saw the balun
+  panel crushed). Three class-name collisions had shipped unseen, every functional smoke
+  passing: `.chain-panel` (Smith's wide-screen columns hit the balun design panel, which used
+  the same name, from 1440 px up - 2026-10-08 on), `.guide` (the SWR chart's dashed lines at
+  55 % opacity faded EVERY Field Guide article, `article.prose.guide` - since 2026-09-21; the
+  lines are `.sweep-guide` now), `.pad-wire`/`.pad-label` (the toolbox attenuator drawing
+  restyled the balun winding pad's labels - since 10-04; now under `.pad-figure`). Write a new
+  rule under the tool's own class (`.smith …`, `.toolbox …`, `.pad-figure …`).
+  `tests/css-collisions.test.ts` fails when a class used in two parts of the app is styled
+  unscoped, unless it is in its `SHARED` list of deliberate building blocks (panel, field,
+  summary, segmented …) - add to that list only on purpose. It reported exactly those three
+  against the old code. `npm run smoke -- --layout` visits all 25 pages/tabs at 1024-2560 px
+  and fails on anything sticking out of its box, text spilling out of a button, sideways
+  page scroll, or a page heading drawn below full opacity; `--screenshot f.png` saves
+  `f-<page>-<width>.png` for each. It also found the trap tab's card caption running out of
+  its card (since 09-26: `.summary dd` is nowrap and the caption inherited it - `.summary
+  small` now wraps everywhere). Run `--layout` after any stylesheet change.
 - NEC angles: theta from +Z (zenith), phi from +X. Elevation = 90 - |theta|.
 - **A tester's old Excel tools are reference, never source** (2026-10-08): Peter Ward's
   "RF Workshop" disks 1-4 (1996-2002, ~180 sheets, ~10,000 lines of VBA) in

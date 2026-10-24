@@ -61,6 +61,8 @@ const lcTest = args.includes('--lc');
 const toolboxTest = args.includes('--toolbox');
 /** Play a scene in the field sandbox, draw into it with the mouse, undo, and check the checks. */
 const fdtdTest = args.includes('--fdtd');
+/** Visit every page and tab at six window widths and fail on anything sticking out, spilling or scrolling sideways. */
+const layoutTest = args.includes('--layout');
 /**
  * Two people sharing a measured core through a site's community store. The base URL must
  * be served by PHP with EMWS_DB_DSN set - e.g. php -S 127.0.0.1:8090 -t dist - because a
@@ -80,7 +82,7 @@ const pwaTest = args.includes('--pwa');
 /** Also point the page straight at a service on this machine, e.g. http://127.0.0.1:8073. */
 const ownSolver = flag('--solver-url')?.replace(/\/+$/, '');
 /** Check another page instead of the modeler, e.g. --page "#/guides/antenna-modeler". */
-const pagePath = flag('--page') ?? (smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : toolboxTest ? '#/toolbox' : fdtdTest ? '#/fdtd' : communityTest ? '#/balun' : pwaTest ? '#/' : undefined);
+const pagePath = flag('--page') ?? (layoutTest ? '#/' : smithTest ? '#/smith' : balunTest ? '#/balun' : vnaTest ? '#/smith' : lcTest ? '#/lc' : toolboxTest ? '#/toolbox' : fdtdTest ? '#/fdtd' : communityTest ? '#/balun' : pwaTest ? '#/' : undefined);
 const baseUrl =
   args.find((a, i) => !a.startsWith('--') && !valueFlags.includes(args[i - 1])) ?? 'http://localhost:4173/';
 const url = new URL(pagePath ?? '#/antenna', baseUrl).href;
@@ -1025,6 +1027,127 @@ async function runToolboxTest({ evaluate, send, log, screenshot }) {
   const pathRows = await evaluate(`document.querySelectorAll('.path-table tbody tr').length`);
   check(pathRows === 9, 'nine points along the path');
   await snap('path');
+}
+
+/**
+ * Every page and every tab, at every common window width, looked at for a layout that has
+ * come apart: a control or heading sticking out of the box it sits in, text spilling out of
+ * its own button, or the page scrolling sideways. Earned (2026-10-24): rules written for the
+ * Smith chart's wide layout matched a class name the balun tool also used, and squeezed the
+ * balun panel into three crushed columns on every screen from 1440 px - for two weeks, with
+ * every functional smoke passing, because none of them looked at another page's layout.
+ * With --screenshot out.png it also saves out-<page>-<width>.png for each.
+ */
+async function runLayoutTest({ evaluate, send, log, screenshot }) {
+  const pages = [
+    { name: 'home', path: '#/', ready: `[...document.querySelectorAll('h1')].some((h) => h.textContent.startsWith('A public-domain'))` },
+    { name: 'antenna', path: '#/antenna', ready: `document.querySelector('.example-picker') !== null && document.querySelectorAll('.summary > div').length > 2` },
+    { name: 'smith', path: '#/smith', ready: `document.querySelector('.smith .chain-panel') !== null` },
+    { name: 'balun', path: '#/balun', ready: `[...document.querySelectorAll('h1')].some((h) => h.textContent === 'Baluns and ununs')` },
+    { name: 'lc', path: '#/lc', ready: `document.querySelector('.lc-tab') !== null`, tabs: '.lc-tab' },
+    { name: 'toolbox', path: '#/toolbox', ready: `document.querySelector('.tool-tab') !== null`, tabs: '.tool-tab' },
+    { name: 'fdtd', path: '#/fdtd', ready: `[...document.querySelectorAll('h1')].some((h) => h.textContent === 'Field sandbox')` },
+    { name: 'guides', path: '#/guides', ready: `[...document.querySelectorAll('h1')].some((h) => h.textContent === 'Field Guides')` },
+    ...['antenna-modeler', 'smith-chart', 'baluns', 'coils-traps-filters', 'rf-toolbox', 'field-sandbox'].map((id) => ({
+      name: `guide-${id}`,
+      path: `#/guides/${id}`,
+      ready: `location.hash === '#/guides/${id}' && document.querySelector('.lede') !== null`,
+    })),
+    { name: 'about', path: '#/about', ready: `[...document.querySelectorAll('h1')].some((h) => h.textContent === 'About EMWS')` },
+  ];
+  const widths = [1024, 1280, 1440, 1600, 1920, 2560];
+  const until = async (expr, ms = 20_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  // What counts as come apart. A negative margin is a deliberate overhang (the panels' tab
+  // bodies use one), so an element may stick out by as much as its own margins say; anything
+  // inside a box that scrolls or clips sideways is that box's business, not an overflow.
+  const inspect = `(() => {
+    const out = [];
+    const root = document.documentElement;
+    if (root.scrollWidth > root.clientWidth + 1) out.push('the page scrolls sideways (' + root.scrollWidth + ' px of content in ' + root.clientWidth + ')');
+    // A page's heading is never meant to be dimmed. Every Field Guide was, for a month: the
+    // articles carry the class "guide", and so did the SWR chart's dashed lines, at 55 %.
+    for (const h of document.querySelectorAll('main h1')) {
+      let opacity = 1;
+      for (let a = h; a; a = a.parentElement) opacity *= parseFloat(getComputedStyle(a).opacity);
+      if (opacity < 0.99) out.push('the heading "' + h.textContent.trim().slice(0, 40) + '" is drawn at ' + Math.round(opacity * 100) + ' % opacity');
+    }
+    const describe = (el) => {
+      const cls = [...el.classList].slice(0, 2).map((c) => '.' + c).join('');
+      const text = (el.getAttribute('aria-label') || el.textContent || '').trim().replace(/\\s+/g, ' ').slice(0, 40);
+      return el.tagName.toLowerCase() + cls + (text ? ' "' + text + '"' : '');
+    };
+    const blockParent = (el) => {
+      let p = el.parentElement;
+      while (p && (getComputedStyle(p).display.startsWith('inline') || getComputedStyle(p).display === 'contents')) p = p.parentElement;
+      return p;
+    };
+    const seen = new Set();
+    for (const el of document.querySelectorAll('main button, main label, main input, main select, main h1, main h2, main h3, main h4, main p, main dl, main .summary > div, main table, main figure, main svg, main section, main aside, main .segmented, main .field-row')) {
+      const cs = getComputedStyle(el);
+      if (cs.position === 'absolute' || cs.position === 'fixed' || cs.visibility === 'hidden' || el.closest('.visually-hidden, [hidden], details:not([open]) > :not(summary)')) continue;
+      const r = el.getBoundingClientRect();
+      if (r.width < 1 || r.height < 1) continue;
+      const p = blockParent(el);
+      if (!p || p === document.body) continue;
+      if (getComputedStyle(p).overflowX !== 'visible') continue;
+      const pr = p.getBoundingClientRect();
+      const ps = getComputedStyle(p);
+      const inner = { left: pr.left + parseFloat(ps.borderLeftWidth), right: pr.right - parseFloat(ps.borderRightWidth) };
+      const slack = 2 + Math.max(0, -parseFloat(cs.marginLeft), -parseFloat(cs.marginRight));
+      const over = Math.max(r.right - inner.right, inner.left - r.left);
+      if (over > slack) {
+        const key = describe(el) + ' in ' + describe(p);
+        if (!seen.has(key)) { seen.add(key); out.push(describe(el) + ' sticks out of ' + describe(p) + ' by ' + Math.round(over) + ' px'); }
+      }
+      if (/^(BUTTON|LABEL|H[1-4])$/.test(el.tagName) && cs.overflowX === 'visible' && el.scrollWidth > el.clientWidth + 2 && el.clientWidth > 0) {
+        const key = 'spill ' + describe(el);
+        if (!seen.has(key)) { seen.add(key); out.push(describe(el) + ': its content is ' + el.scrollWidth + ' px wide in a ' + el.clientWidth + ' px box'); }
+      }
+    }
+    return JSON.stringify(out);
+  })()`;
+  const problems = [];
+  const look = async (label) => {
+    for (const width of widths) {
+      await send('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });
+      await sleep(350);
+      const found = JSON.parse(await evaluate(inspect));
+      for (const f of found) problems.push(`${label} at ${width} px: ${f}`);
+      if (screenshot) {
+        const { data } = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
+        writeFileSync(screenshot.replace(/.png$/i, `-${label}-${width}.png`), Buffer.from(data, 'base64'));
+      }
+    }
+  };
+  const base = await evaluate('location.href.split("#")[0]');
+  for (const page of pages) {
+    await send('Page.navigate', { url: `${base}${page.path}` });
+    if (!(await until(page.ready))) throw new Error(`Layout test failed: ${page.path} never came up`);
+    await sleep(500);
+    if (!page.tabs) {
+      await look(page.name);
+      continue;
+    }
+    const count = await evaluate(`document.querySelectorAll('${page.tabs}').length`);
+    for (let i = 0; i < count; i++) {
+      await evaluate(`document.querySelectorAll('${page.tabs}')[${i}].click()`);
+      await sleep(400);
+      const tab = await evaluate(`document.querySelectorAll('${page.tabs}')[${i}].textContent.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/-$/, '')`);
+      await look(`${page.name}-${tab}`);
+    }
+  }
+  await send('Emulation.setDeviceMetricsOverride', { width: viewportWidth, height: 1100, deviceScaleFactor: 1, mobile: viewportWidth < 600 });
+  log(`    looked at ${pages.length} pages and their tabs at ${widths.join(', ')} px`);
+  for (const p of problems) log(`    ${p}`);
+  if (problems.length) throw new Error(`Layout test failed: ${problems.length} place(s) where the layout has come apart (listed above)`);
+  log('ok  nothing sticks out, spills or scrolls sideways on any page, at any of those widths');
 }
 
 /**
@@ -2711,6 +2834,7 @@ try {
     if (lcTest) await runLcTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (toolboxTest) await runToolboxTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (fdtdTest) await runFdtdTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
+    if (layoutTest) await runLayoutTest({ evaluate, send, log: (l) => editLog.push(l), screenshot });
     if (communityTest) await runCommunityTest({ evaluate, send, log: (l) => editLog.push(l) });
     if (pwaTest) await runPwaTest({ evaluate, send, problems, log: (l) => editLog.push(l) });
     if (process.env.SMOKE_PROBE) console.log('probe:', await evaluate(process.env.SMOKE_PROBE));

@@ -81,7 +81,7 @@ export function SweepChart({ points, selected, onSelect, z0, measured, measuredL
           </g>
         ))}
         {GUIDES.filter((g) => g < top).map((g) => (
-          <line key={g} x1={PAD.left} x2={WIDTH - PAD.right} y1={y(g)} y2={y(g)} className="guide" />
+          <line key={g} x1={PAD.left} x2={WIDTH - PAD.right} y1={y(g)} y2={y(g)} className="sweep-guide" />
         ))}
         {ticks.map((f) => (
           <text key={f} x={x(f)} y={HEIGHT - 12} className="tick" textAnchor="middle">
