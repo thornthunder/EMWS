@@ -23,9 +23,12 @@ import {
   wireResistanceOhms,
 } from '../src/tools/lc/coil';
 import { bandwidthMHz, capacitorFor, inductorFor, resonanceMHz, resonantImpedanceOhms, trapAt, trapImpedance } from '../src/tools/lc/trap';
-import { E24, logFrequencies, nearestStandard, prototype, respond, synthesise, withStandardCapacitors } from '../src/tools/lc/filter';
+import { type LadderElement, E24, bandEdgesMHz, logFrequencies, nearestStandard, prototype, respond, synthesise, withStandardCapacitors } from '../src/tools/lc/filter';
 
 const bare = (turns: number, formerMm: number, wireMm: number, spacing = 1): CoilSpec => ({ turns, formerMm, wireMm, wallMm: 0, spacing });
+
+/** The one value of a coil or capacitor; a band-pass resonator has two, read directly. */
+const val = (e: LadderElement): number => ('value' in e ? e.value : NaN);
 
 describe('air-cored coils', () => {
   it('tends to the ideal long solenoid, mu0 N^2 A / l, short of it by the end correction', () => {
@@ -136,8 +139,8 @@ describe('ladder filters', () => {
     const ladder = synthesise({ kind: 'lowpass', family: 'butterworth', order: 3, cutoffMHz: 10, z0: 50, rippleDb: 0, first: 'shunt' });
     const wc = 2 * Math.PI * 10e6;
     expect(ladder.elements.map((e) => `${e.position} ${e.kind}`)).toEqual(['shunt capacitor', 'series inductor', 'shunt capacitor']);
-    expect(ladder.elements[0]!.value).toBeCloseTo(1 / (50 * wc), 15); // 318.3 pF
-    expect(ladder.elements[1]!.value).toBeCloseTo((2 * 50) / wc, 12); // 1.5915 uH
+    expect(val(ladder.elements[0]!)).toBeCloseTo(1 / (50 * wc), 15); // 318.3 pF
+    expect(val(ladder.elements[1]!)).toBeCloseTo((2 * 50) / wc, 12); // 1.5915 uH
     expect(ladder.loadOhms).toBe(50);
   });
 
@@ -201,6 +204,77 @@ describe('ladder filters', () => {
     expect(cAbs(lossy.zIn)).toBeGreaterThan(0);
   });
 
+  it('a band-pass is the low-pass prototype at (f/f0 - f0/f) / delta, its arms resonant at the centre', () => {
+    // 20 m: centre 14.175 MHz, 2 MHz wide, fifth-order Butterworth, shunt first.
+    const spec = { kind: 'bandpass' as const, family: 'butterworth' as const, order: 5, cutoffMHz: 14.175, bandwidthMHz: 2, z0: 50, rippleDb: 0, first: 'shunt' as const };
+    const ladder = synthesise(spec);
+    expect(ladder.elements.map((e) => `${e.position} ${e.kind}`)).toEqual(['shunt resonator', 'series resonator', 'shunt resonator', 'series resonator', 'shunt resonator']);
+    const w0 = 2 * Math.PI * 14.175e6;
+    for (const e of ladder.elements) {
+      if (e.kind !== 'resonator') throw new Error('not a resonator');
+      expect(1 / (2 * Math.PI * Math.sqrt(e.henries * e.farads)) / 1e6).toBeCloseTo(14.175, 9);
+      // The textbook transformation, element by element.
+      const delta = 2 / 14.175;
+      if (e.position === 'series') {
+        expect(e.henries).toBeCloseTo((e.g * 50) / (w0 * delta), 15);
+        expect(e.farads).toBeCloseTo(delta / (w0 * e.g * 50), 20);
+      } else {
+        expect(e.farads).toBeCloseTo(e.g / (w0 * delta * 50), 18);
+        expect(e.henries).toBeCloseTo((delta * 50) / (w0 * e.g), 16);
+      }
+    }
+    // Lossless: nothing at the centre, 3.01 dB at both edges, which sit at f0 (sqrt(1 + (bw/2f0)^2) -/+ bw/2f0).
+    const { lowMHz, highMHz } = bandEdgesMHz(14.175, 2);
+    expect(highMHz - lowMHz).toBeCloseTo(2, 12);
+    expect(lowMHz * highMHz).toBeCloseTo(14.175 * 14.175, 9);
+    expect(respond(ladder, spec, 14.175, q).lossDb).toBeLessThan(1e-9);
+    expect(respond(ladder, spec, lowMHz, q).lossDb).toBeCloseTo(10 * Math.log10(2), 6);
+    expect(respond(ladder, spec, highMHz, q).lossDb).toBeCloseTo(10 * Math.log10(2), 6);
+    // The whole curve is the low-pass's, read at the mapped frequency - and so geometrically symmetric.
+    const lp = { ...spec, kind: 'lowpass' as const, cutoffMHz: 1 };
+    const low = synthesise(lp);
+    for (const ratio of [1.02, 1.1, 1.3, 2, 4]) {
+      const f = 14.175 * ratio;
+      const mapped = (f / 14.175 - 14.175 / f) / (2 / 14.175);
+      expect(respond(ladder, spec, f, q).lossDb).toBeCloseTo(respond(low, lp, mapped, q).lossDb, 6);
+      expect(respond(ladder, spec, 14.175 / ratio, q).lossDb).toBeCloseTo(respond(ladder, spec, f, q).lossDb, 6);
+    }
+  });
+
+  it('a Chebyshev band-pass keeps its ripple between the edges, and lossy parts cost at the centre', () => {
+    const spec = { kind: 'bandpass' as const, family: 'chebyshev' as const, order: 3, cutoffMHz: 7.1, bandwidthMHz: 0.4, z0: 50, rippleDb: 0.5, first: 'series' as const };
+    const ladder = synthesise(spec);
+    const { lowMHz, highMHz } = bandEdgesMHz(7.1, 0.4);
+    const inBand = logFrequencies(lowMHz, highMHz, 300).map((f) => respond(ladder, spec, f, q).lossDb);
+    expect(Math.max(...inBand)).toBeLessThanOrEqual(0.5 + 1e-6);
+    expect(respond(ladder, spec, lowMHz, q).lossDb).toBeCloseTo(0.5, 5);
+    expect(respond(ladder, spec, highMHz, q).lossDb).toBeCloseTo(0.5, 5);
+    // Real coils: a 5.6 % band-pass with Q 100 coils is well over a dB down at the centre.
+    const lossy = respond(ladder, spec, 7.1, { inductor: 100, capacitor: 1000 });
+    expect(lossy.lossDb).toBeGreaterThan(1);
+    expect(lossy.lossDb).toBeLessThan(5);
+    // E24 rounding rounds the resonators' capacitors too.
+    const rounded = withStandardCapacitors(ladder);
+    for (const e of rounded.elements) if (e.kind === 'resonator') expect(e.farads).toBeCloseTo(nearestStandard(e.farads), 20);
+  });
+
+  it("costs the coils' loss times centre over bandwidth at the centre of a band-pass - Cohn's estimate", () => {
+    // Cohn's classic: midband loss = 4.343 sum(g) / (Q x fractional bandwidth) dB. It is an
+    // estimate - the capacitors and second-order terms are left out - so the exact chain is
+    // held within 15 % of it, and to halving when the band doubles.
+    const coils = { inductor: 100, capacitor: 0 };
+    const at = (bandwidthMHz: number) => {
+      const spec = { kind: 'bandpass' as const, family: 'butterworth' as const, order: 5, cutoffMHz: 14.175, bandwidthMHz, z0: 50, rippleDb: 0, first: 'shunt' as const };
+      return respond(synthesise(spec), spec, 14.175, coils).lossDb;
+    };
+    const { g } = prototype('butterworth', 5, 0);
+    const cohn = (4.343 * g.reduce((a, b) => a + b, 0)) / (100 * (2 / 14.175));
+    expect(at(2)).toBeGreaterThan(0.9 * cohn);
+    expect(at(2)).toBeLessThan(1.15 * cohn);
+    expect(at(4) / at(2)).toBeGreaterThan(0.45);
+    expect(at(4) / at(2)).toBeLessThan(0.6);
+  });
+
   it('rounds capacitors to E24 by ratio', () => {
     expect(nearestStandard(318e-12)).toBeCloseTo(330e-12, 15);
     expect(nearestStandard(1.04e-9, E24)).toBeCloseTo(1e-9, 15);
@@ -208,7 +282,7 @@ describe('ladder filters', () => {
     expect(nearestStandard(9.6e-9, E24)).toBeCloseTo(1e-8, 15);
     const ladder = synthesise({ kind: 'lowpass', family: 'butterworth', order: 3, cutoffMHz: 10, z0: 50, rippleDb: 0, first: 'shunt' });
     const rounded = withStandardCapacitors(ladder);
-    expect(rounded.elements[0]!.value).toBeCloseTo(330e-12, 15);
-    expect(rounded.elements[1]!.value).toBe(ladder.elements[1]!.value);
+    expect(val(rounded.elements[0]!)).toBeCloseTo(330e-12, 15);
+    expect(val(rounded.elements[1]!)).toBe(val(ladder.elements[1]!));
   });
 });

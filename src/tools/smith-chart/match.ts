@@ -113,3 +113,127 @@ export function lMatchSolutions(zLoad: Complex, z0: number, fMHz: number): Match
 function valueOf(element: Element): number {
   return element.kind === 'inductor' ? element.henries : element.kind === 'capacitor' ? element.farads : 0;
 }
+
+// ---------------------------------------------------------------- Pi and T, with a Q you choose
+
+/**
+ * An L network's Q is fixed by the two resistances it joins: sqrt(Rhigh / Rlow - 1), and
+ * that sets its bandwidth whether you like it or not. A Pi or a T is two L networks back to
+ * back through a "virtual" resistance in the middle - below both ends for a Pi, above both
+ * for a T - and the choice of that resistance is the choice of Q: a higher Q means a
+ * narrower match and (for the low-pass shapes) more harmonic rejection. So a Pi or T can
+ * only ever be SHARPER than the L network between the same two impedances, never broader;
+ * the lowest Q either shape can have is the L network's own, which is what `leastQ` gives.
+ *
+ * Built exactly as described: each half is one of the L-network sections above, so every
+ * solution is exact at the design frequency by construction, and the middle parts of the
+ * two halves merge into one (two series reactances add; two shunt susceptances add).
+ */
+export interface LeastQ {
+  /** The L network's Q between the load's PARALLEL resistance and z0: the floor for a Pi. */
+  pi: number;
+  /** Between the load's SERIES resistance and z0: the floor for a T. */
+  tee: number;
+}
+
+export function leastQ(zLoad: Complex, z0: number): LeastQ {
+  const r = zLoad.re;
+  const x = zLoad.im;
+  if (!(r > 0) || !(z0 > 0)) return { pi: Infinity, tee: Infinity };
+  const rParallel = (r * r + x * x) / r;
+  const q = (high: number, low: number) => Math.sqrt(Math.max(0, high / low - 1));
+  return { pi: q(Math.max(rParallel, z0), Math.min(rParallel, z0)), tee: q(Math.max(r, z0), Math.min(r, z0)) };
+}
+
+/** Series reactance at the load, then a shunt one: brings r + jx (r <= target) to a real `target`. Both roots. */
+function seriesThenShunt(z: Complex, target: number): { xs: number; xp: number }[] {
+  const r = z.re;
+  const x = z.im;
+  if (!(r > 0) || r > target * (1 + 1e-12)) return [];
+  const root = Math.sqrt(Math.max(0, r * (target - r)));
+  const out: { xs: number; xp: number }[] = [];
+  for (const sign of [1, -1]) {
+    const xs = -x + sign * root;
+    const total = x + xs;
+    if (Math.abs(total) < 1e-12) continue;
+    out.push({ xs, xp: -(r * target) / total });
+  }
+  return out;
+}
+
+/** Shunt reactance at the load, then a series one: the same in admittance. Needs g <= 1 / target. */
+function shuntThenSeries(z: Complex, target: number): { xp: number; xs: number }[] {
+  const denom = z.re * z.re + z.im * z.im;
+  if (!(z.re > 0) || denom === 0) return [];
+  const g = z.re / denom;
+  const b = -z.im / denom;
+  if (g > (1 / target) * (1 + 1e-12)) return [];
+  const root = Math.sqrt(Math.max(0, g * (1 / target - g)));
+  const out: { xp: number; xs: number }[] = [];
+  for (const sign of [1, -1]) {
+    const bp = -b + sign * root;
+    if (Math.abs(bp) < 1e-15) continue;
+    out.push({ xp: -1 / bp, xs: ((b + bp) * target) / g });
+  }
+  return out;
+}
+
+export type ThreeShape = 'pi' | 'tee';
+
+/**
+ * Every Pi and T that matches `zLoad` to `z0` at `fMHz` with loaded Q `q`. Empty when q is
+ * below the shape's floor (see leastQ), because then there is no virtual resistance to
+ * build it round. Low-pass shapes first, then high-pass, then the mixed ones.
+ */
+export function piTeeSolutions(zLoad: Complex, z0: number, fMHz: number, q: number): MatchSolution[] {
+  const r = zLoad.re;
+  const x = zLoad.im;
+  if (!(r > 0) || !Number.isFinite(x) || !(z0 > 0) || !(fMHz > 0) || !(q > 0)) return [];
+  const rParallel = (r * r + x * x) / r;
+  const solutions: MatchSolution[] = [];
+
+  const finish = (shape: ThreeShape, parts: (ReactivePart | undefined)[]) => {
+    if (parts.some((p) => p === undefined)) return;
+    const elements = parts as ReactivePart[];
+    const letter = (e: ReactivePart) => (e.kind === 'inductor' ? 'L' : 'C');
+    const name = `${shape === 'pi' ? 'Pi' : 'T'}: ${elements.map((e) => `${e.connection} ${letter(e)}`).join(', ')}`;
+    const kinds = elements.map(letter).join('');
+    const character: MatchSolution['character'] =
+      (shape === 'pi' && kinds === 'CLC') || (shape === 'tee' && kinds === 'LCL') ? 'low-pass'
+      : (shape === 'pi' && kinds === 'LCL') || (shape === 'tee' && kinds === 'CLC') ? 'high-pass'
+      : 'mixed';
+    const duplicate = solutions.some(
+      (s) => s.name === name && s.elements.every((e, k) => Math.abs(valueOf(e) - valueOf(elements[k]!)) < 1e-12 * Math.max(1e-30, valueOf(e))),
+    );
+    if (!duplicate) solutions.push({ id: `${shape}-${solutions.length}`, name, character, elements });
+  };
+
+  // Pi: the virtual resistance sits below both ends; the load side is shunt-then-series
+  // (it needs the load's conductance below 1/Rv), the radio side series-then-shunt.
+  const rvPi = Math.max(rParallel, z0) / (1 + q * q);
+  if (rvPi <= Math.min(rParallel, z0) * (1 + 1e-9)) {
+    for (const a of shuntThenSeries(zLoad, rvPi)) {
+      for (const b of seriesThenShunt({ re: rvPi, im: 0 }, z0)) {
+        const series = a.xs + b.xs;
+        if (Math.abs(series) < 1e-9) continue;
+        finish('pi', [componentFor(a.xp, 'shunt', fMHz), componentFor(series, 'series', fMHz), componentFor(b.xp, 'shunt', fMHz)]);
+      }
+    }
+  }
+
+  // T: the virtual resistance sits above both ends; series-then-shunt at the load, then
+  // shunt-then-series to the radio, the two shunt parts merging as susceptances.
+  const rvTee = Math.min(r, z0) * (1 + q * q);
+  if (rvTee >= Math.max(r, z0) * (1 - 1e-9)) {
+    for (const a of seriesThenShunt(zLoad, rvTee)) {
+      for (const b of shuntThenSeries({ re: rvTee, im: 0 }, z0)) {
+        const susceptance = -1 / a.xp - 1 / b.xp;
+        if (Math.abs(susceptance) < 1e-15) continue;
+        finish('tee', [componentFor(a.xs, 'series', fMHz), componentFor(-1 / susceptance, 'shunt', fMHz), componentFor(b.xs, 'series', fMHz)]);
+      }
+    }
+  }
+
+  const rank = { 'low-pass': 0, 'high-pass': 1, mixed: 2 };
+  return solutions.sort((p, s) => rank[p.character] - rank[s.character]);
+}

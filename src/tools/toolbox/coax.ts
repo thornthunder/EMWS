@@ -40,6 +40,8 @@ export interface Geometry {
   innerMm: number;
   /** Diameter over the dielectric = inner diameter of the shield, mm. */
   dielectricMm: number;
+  /** Overall diameter over the jacket, mm, when known: what a coil of the cable is wound with. */
+  outerMm?: number;
   dielectric: string;
 }
 
@@ -67,13 +69,13 @@ export const velocityFactorOf = (epsilon: number): number => 1 / Math.sqrt(epsil
 /** A cable's permittivity as its velocity factor implies: the figure its loss and Z0 are worked from. */
 export const epsilonOf = (cable: Cable): number => 1 / (cable.velocityFactor * cable.velocityFactor);
 
-const type = (group: string, id: string, name: string, z0: number, innerMm: number, dielectricMm: number, dielectric: string, velocityFactor?: number, note?: string): Cable => ({
+const type = (group: string, id: string, name: string, z0: number, innerMm: number, dielectricMm: number, outerMm: number, dielectric: string, velocityFactor?: number, note?: string): Cable => ({
   id,
   name,
   group,
   z0,
   velocityFactor: velocityFactor ?? velocityFactorOf(dielectricById(dielectric).epsilon),
-  loss: { kind: 'geometry', geometry: { innerMm, dielectricMm, dielectric } },
+  loss: { kind: 'geometry', geometry: { innerMm, dielectricMm, outerMm, dielectric } },
   ...(note ? { note } : {}),
 });
 
@@ -81,24 +83,24 @@ const LMR_NOTE = "Named as its maker names it. The dimensions and velocity facto
 
 /**
  * The common types, by their nominal dimensions. Overall diameters in the names are for
- * recognising the cable in the hand. The RG types are MIL-C-17 designations; the LMR
+ * recognising the cable in the hand, and are recorded as outerMm for winding a coil of it. The RG types are MIL-C-17 designations; the LMR
  * series is listed by its maker's names because that is what people ask for; Mini 8 is a
  * class rather than a type and says so.
  */
 export const CATALOGUE: Cable[] = [
-  type('RG, 50 Ω', 'rg174', 'RG-174 (2.8 mm, 50 Ω)', 50, 0.48, 1.52, 'pe'),
-  type('RG, 50 Ω', 'rg316', 'RG-316 (2.5 mm, 50 Ω, PTFE)', 50, 0.51, 1.52, 'ptfe'),
-  type('RG, 50 Ω', 'rg58', 'RG-58 (5 mm, 50 Ω)', 50, 0.9, 2.95, 'pe'),
-  type('RG, 50 Ω', 'rg142', 'RG-142 (5 mm, 50 Ω, PTFE)', 50, 0.94, 2.95, 'ptfe'),
-  type('RG, 50 Ω', 'mini8', 'Mini 8 / RG-8X class (6.5 mm, 50 Ω, foam)', 50, 1.6, 4.7, 'foam', undefined, 'Not a MIL type: makers differ. Representative dimensions.'),
-  type('RG, 50 Ω', 'rg213', 'RG-213 (10.3 mm, 50 Ω)', 50, 2.26, 7.24, 'pe'),
-  type('LMR, 50 Ω', 'lmr195', 'LMR-195 (5 mm, 50 Ω, foam)', 50, 0.94, 2.79, 'foam', 0.83, LMR_NOTE),
-  type('LMR, 50 Ω', 'lmr240', 'LMR-240 (6.1 mm, 50 Ω, foam)', 50, 1.42, 3.81, 'foam', 0.84, LMR_NOTE),
-  type('LMR, 50 Ω', 'lmr400', 'LMR-400 (10.3 mm, 50 Ω, foam)', 50, 2.74, 7.24, 'foam', 0.85, LMR_NOTE),
-  type('LMR, 50 Ω', 'lmr600', 'LMR-600 (15 mm, 50 Ω, foam)', 50, 4.47, 11.56, 'foam', 0.87, LMR_NOTE),
-  type('RG, 75 Ω', 'rg59', 'RG-59 (6.1 mm, 75 Ω)', 75, 0.58, 3.7, 'pe'),
-  type('RG, 75 Ω', 'rg6', 'RG-6 (6.9 mm, 75 Ω, foam)', 75, 1.02, 4.57, 'foam'),
-  type('RG, 75 Ω', 'rg11', 'RG-11 (10.3 mm, 75 Ω)', 75, 1.2, 7.24, 'pe'),
+  type('RG, 50 Ω', 'rg174', 'RG-174 (2.8 mm, 50 Ω)', 50, 0.48, 1.52, 2.8, 'pe'),
+  type('RG, 50 Ω', 'rg316', 'RG-316 (2.5 mm, 50 Ω, PTFE)', 50, 0.51, 1.52, 2.5, 'ptfe'),
+  type('RG, 50 Ω', 'rg58', 'RG-58 (5 mm, 50 Ω)', 50, 0.9, 2.95, 5, 'pe'),
+  type('RG, 50 Ω', 'rg142', 'RG-142 (5 mm, 50 Ω, PTFE)', 50, 0.94, 2.95, 5, 'ptfe'),
+  type('RG, 50 Ω', 'mini8', 'Mini 8 / RG-8X class (6.5 mm, 50 Ω, foam)', 50, 1.6, 4.7, 6.5, 'foam', undefined, 'Not a MIL type: makers differ. Representative dimensions.'),
+  type('RG, 50 Ω', 'rg213', 'RG-213 (10.3 mm, 50 Ω)', 50, 2.26, 7.24, 10.3, 'pe'),
+  type('LMR, 50 Ω', 'lmr195', 'LMR-195 (5 mm, 50 Ω, foam)', 50, 0.94, 2.79, 5, 'foam', 0.83, LMR_NOTE),
+  type('LMR, 50 Ω', 'lmr240', 'LMR-240 (6.1 mm, 50 Ω, foam)', 50, 1.42, 3.81, 6.1, 'foam', 0.84, LMR_NOTE),
+  type('LMR, 50 Ω', 'lmr400', 'LMR-400 (10.3 mm, 50 Ω, foam)', 50, 2.74, 7.24, 10.3, 'foam', 0.85, LMR_NOTE),
+  type('LMR, 50 Ω', 'lmr600', 'LMR-600 (15 mm, 50 Ω, foam)', 50, 4.47, 11.56, 15, 'foam', 0.87, LMR_NOTE),
+  type('RG, 75 Ω', 'rg59', 'RG-59 (6.1 mm, 75 Ω)', 75, 0.58, 3.7, 6.1, 'pe'),
+  type('RG, 75 Ω', 'rg6', 'RG-6 (6.9 mm, 75 Ω, foam)', 75, 1.02, 4.57, 6.9, 'foam'),
+  type('RG, 75 Ω', 'rg11', 'RG-11 (10.3 mm, 75 Ω)', 75, 1.2, 7.24, 10.3, 'pe'),
 ];
 
 /** The catalogue's groups, in order of first appearance, for an optgroup picker. */

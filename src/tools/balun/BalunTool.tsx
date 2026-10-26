@@ -176,7 +176,9 @@ export function BalunTool() {
     ? `${analysis ? analysis.ratio.toFixed(analysis.ratio % 1 === 0 ? 0 : 1) : '?'}:1 · ${tappedTurns(design).primary} : ${summary.totalTurns} turns`
     : design.topology === 'guanella-1-1'
       ? `1:1 current balun · ${summary.totalTurns} turns`
-      : `1:4 Guanella · ${summary.totalTurns} turns on ${design.positions === 2 ? 'each of two cores' : 'one core'}`;
+      : design.topology === 'ruthroff-1-4'
+        ? `1:4 Ruthroff ${design.loadGrounded ? 'unun' : 'balun'} · ${summary.totalTurns} turns`
+        : `1:4 Guanella · ${summary.totalTurns} turns on ${design.positions === 2 ? 'each of two cores' : 'one core'}`;
 
   const savedSummary = `${title} on ${core.name}-${material.name.replace('#', '')}`;
   const saveDesign = (name: string) => setSaved((list) => [...list, { id: newSavedBalunId(), name, savedAt: new Date().toISOString(), summary: savedSummary, design }]);
@@ -319,7 +321,7 @@ export function BalunTool() {
               )}
               {!tapped && (
                 <LineChart
-                  title="Common-mode (choking) impedance"
+                  title={design.topology === 'ruthroff-1-4' ? 'The core, across the radio' : 'Common-mode (choking) impedance'}
                   unit="Ω"
                   fMHz={fMHz}
                   series={
@@ -374,7 +376,7 @@ function Readout({ at, rival, rivalName, design, tapped }: { at: Point; rival: P
     );
   }
   rows.push(
-    tapped
+    tapped || design.topology === 'ruthroff-1-4'
       ? ['Across the radio', (p) => ohms(cAbs(p.zCore)), (p) => `${(cAbs(p.zCore) / design.z0).toFixed(1)} × the radio's impedance`]
       : ['Chokes with', (p) => ohms(cAbs(p.zCore)), (p) => `${ohms(p.zCore.re)} of it resistive`],
   );

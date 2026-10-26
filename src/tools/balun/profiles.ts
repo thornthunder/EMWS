@@ -36,6 +36,15 @@ export interface CoreProfile {
   curve: PermeabilityPoint[];
   /** Where the winding resonated, if it did: above a third of this the curve is not the core. */
   trustworthyUpToMHz?: number;
+  /** The second winding the step-by-step guess took to confirm this one, when it did: kept so the two can be looked at again. */
+  confirmed?: { turns: number; sweep: SweepPoint[]; agreedWithin: number; coreCrossingMHz?: number };
+  /**
+   * Where two windings of different counts both went capacitive: the core's own crossing (a
+   * large manganese-zinc core does that), not the winding resonating. The curve is the core's
+   * up to it, so it stands in for the usual "a third of the resonance" limit - and it has to be
+   * its own field, because the limit is worked out afresh from the sweep on every load.
+   */
+  coreCrossingMHz?: number;
   sourceFile?: string;
   notes?: string;
 }
@@ -67,7 +76,7 @@ export function makeProfile(
     id: newProfileId(),
     measuredAt: input.measuredAt ?? new Date().toISOString(),
     curve: permeabilityCurve(points, setup),
-    trustworthyUpToMHz: trustworthyUpToMHz(points),
+    trustworthyUpToMHz: input.coreCrossingMHz ?? trustworthyUpToMHz(points),
   };
 }
 

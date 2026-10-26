@@ -182,6 +182,32 @@ export function SmithChartGuide() {
           If the load already has the right resistance, one component is enough: the tool offers that instead.
         </li>
       </ul>
+      <h3>A Pi or a T, with the Q you choose</h3>
+      <p>
+        An L network has no choices left once the two impedances are fixed: its Q, and so its bandwidth, is
+        √(R<sub>high</sub>/R<sub>low</sub> − 1), take it or leave it. Under the L offers the tool also lists{' '}
+        <strong>Pi</strong> and <strong>T</strong> networks — three parts — for a <em>Loaded Q</em> you type. A Pi or
+        T is two L networks back to back through a resistance in the middle, and choosing that resistance is choosing
+        the Q, so these can only ever be <em>sharper</em> than the L network between the same two impedances, never
+        broader; the page states the floor for each shape and says so if you ask for less. Why want a sharper match?
+        The low-pass shapes (shunt C, series L, shunt C for a Pi; series L, shunt C, series L for a T) reject harmonics
+        harder the higher their Q, which is why a valve amplifier's output is a Pi. Each offer shows its parts and its
+        band under 2:1, so the trade is in front of you.
+      </p>
+      <h3>Adjust what I have</h3>
+      <p>
+        The matcher designs a network for one frequency. Once a chain is built — by the matcher or by hand — the
+        question is usually what values make it best over the <em>whole</em> band, and sliding each part in turn never
+        quite finds that. <em>Adjust what I have</em> keeps your parts and their order, and moves their values — over
+        the same range as the sliders — towards either <strong>the flattest SWR across the sweep</strong> (the worst
+        point of the sweep brought as low as it will go) or <strong>the best match at the design frequency</strong>.
+        Untick a part to hold it still. It searches a few thousand arrangements in a blink, because there is no field
+        solve behind the Smith chart, only arithmetic, and it reports before-and-after figures for both the worst point
+        and the design frequency: flattening a band costs a little at the centre, and you can see how much. It only
+        ever improves on what you have; if nothing beats your values it says so and changes nothing, and <em>Put the
+        values back</em> undoes the last adjustment. If a part runs to the end of its range the page tells you, because
+        that nearly always means a different kind of part is wanted there, not a value the slider does not reach.
+      </p>
 
       <h2>Reading the result</h2>
       <table className="key-table">

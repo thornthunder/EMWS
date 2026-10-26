@@ -18,7 +18,7 @@ import { STUB_KINDS, bandpassResponse, cavityLine, db, designBandpass, linearFre
 
 const FLOOR_DB = -80;
 
-function cableOf(id: string): Cable {
+export function cableOf(id: string): Cable {
   return id === 'datasheet' ? savedDatasheetCable() : (cableById(id) ?? CATALOGUE[0]!);
 }
 

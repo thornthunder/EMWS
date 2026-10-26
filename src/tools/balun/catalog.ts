@@ -26,7 +26,15 @@ export interface CoreSize {
   name: string;
   odMm: number;
   idMm: number;
+  /** Height of a ring; length of a sleeve. The magnetics are the same: a tube is a thick ring. */
   heightMm: number;
+  /** A ring unless said otherwise. A round-cable suppression core is a sleeve: the same maths, a different word. */
+  shape?: 'ring' | 'sleeve';
+}
+
+/** "61 × 35.6 × 20 mm", or "39.1 × 16.75 × 22.2 mm sleeve". */
+export function describeSize(size: Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm' | 'shape'>): string {
+  return `${size.odMm} × ${size.idMm} × ${size.heightMm} mm${size.shape === 'sleeve' ? ' sleeve' : ''}`;
 }
 
 const INCH = 25.4;

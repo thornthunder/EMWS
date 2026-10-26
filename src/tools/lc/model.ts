@@ -47,6 +47,22 @@ export interface TrapDesign {
   farads: number;
   /** The coil's Q at the trap frequency. */
   q: number;
+  /** A coil across a capacitor, or a coil of coax whose own capacitance is the capacitor. */
+  build: 'lumped' | 'coax';
+  coax: CoaxTrapDesign;
+}
+
+/** The coax trap's own fields; the target frequency and the build are the trap's. */
+export interface CoaxTrapDesign {
+  /** A catalogue cable id, or 'datasheet' for the RF toolbox's datasheet cable. */
+  cableId: string;
+  /** The pipe it is wound on, mm. */
+  formerMm: number;
+  turns: number;
+  /** Typed over the catalogue's nominal when the cable in the hand differs; a datasheet cable has none. */
+  jacketMm?: number;
+  /** The braid's Q at the trap frequency. */
+  q: number;
 }
 
 export interface FilterDesign extends FilterSpec {
@@ -96,8 +112,9 @@ export function defaultState(): LcState {
   return {
     tab: 'coil',
     coil: { turns: 12, formerMm: 25, wireMm: 1.0, wallMm: 0, spacing: 1, atMHz: 7.1 },
-    trap: { fMHz: 7.1, given: 'coil', henries, farads: capacitorFor(7.1, henries), q: 200 },
-    filter: { kind: 'lowpass', family: 'butterworth', order: 5, cutoffMHz: 32, z0: 50, rippleDb: 0.1, first: 'shunt', qInductor: 100, qCapacitor: 1000, standardCapacitors: false },
+    trap: { fMHz: 7.1, given: 'coil', henries, farads: capacitorFor(7.1, henries), q: 200, build: 'lumped', coax: { cableId: 'rg58', formerMm: 50, turns: 9, q: 200 } },
+    // bandwidthMHz is the band-pass's; 2 MHz about 14.175 is the whole of 20 m with room to spare.
+    filter: { kind: 'lowpass', family: 'butterworth', order: 5, cutoffMHz: 32, bandwidthMHz: 2, z0: 50, rippleDb: 0.1, first: 'shunt', qInductor: 100, qCapacitor: 1000, standardCapacitors: false },
     // The second-harmonic trap for 2 m: passes 145 MHz, notches 290.
     stub: {
       mode: 'notch',
@@ -134,10 +151,11 @@ export function loadState(): LcState {
     if (!raw) return fallback;
     const stored = JSON.parse(raw) as Partial<LcState>;
     const coil = { ...fallback.coil, ...(stored.coil ?? {}) };
-    const trap = { ...fallback.trap, ...(stored.trap ?? {}) };
+    const trap: TrapDesign = { ...fallback.trap, ...(stored.trap ?? {}), coax: { ...fallback.trap.coax, ...(stored.trap?.coax ?? {}) } };
+    trap.build = trap.build === 'coax' ? 'coax' : 'lumped';
     const filter = { ...fallback.filter, ...(stored.filter ?? {}) };
     const stub = { ...fallback.stub, ...(stored.stub ?? {}) };
-    if (![coil.turns, coil.formerMm, coil.wireMm, coil.atMHz, trap.fMHz, trap.henries, trap.farads, filter.cutoffMHz, filter.order, stub.fMHz, stub.centreMHz, stub.bandwidthMHz, stub.cavityQ].every(finite)) return fallback;
+    if (![coil.turns, coil.formerMm, coil.wireMm, coil.atMHz, trap.fMHz, trap.henries, trap.farads, trap.coax.formerMm, trap.coax.turns, filter.cutoffMHz, filter.order, stub.fMHz, stub.centreMHz, stub.bandwidthMHz, stub.cavityQ].every(finite)) return fallback;
     const tab: LcTab = stored.tab === 'trap' || stored.tab === 'filter' || stored.tab === 'stub' ? stored.tab : 'coil';
     return { tab, coil, trap, filter, stub };
   } catch {

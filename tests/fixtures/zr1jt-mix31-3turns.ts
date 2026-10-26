@@ -1,0 +1,48 @@
+// ZR1JT's Fair-Rite 2631828302 - a #31 toroid, 61 x 35.6 x 12.7 mm - measured 2026-10-05 on their
+// NanoVNA V2_2 with THREE turns, 1-60 MHz, SOL-calibrated: 40 of the 1000 points, chosen evenly on a
+// log axis (the nearest measured point to each). The winding went capacitive near 9 MHz, so the
+// curve is the core's up to about 3 MHz - which is the part the identification test uses.
+// Public domain (CC0), like every piece of data in EMWS. The full exports are not in the repo.
+
+export const MIX31_3_TURNS: { fMHz: number; r: number; x: number }[] = [
+  { fMHz: 1.0, r: 61.275, x: 163.92 },
+  { fMHz: 1.1181, r: 76.277, x: 176.48 },
+  { fMHz: 1.2362, r: 91.386, x: 187.36 },
+  { fMHz: 1.3544, r: 106.56, x: 196.49 },
+  { fMHz: 1.5315, r: 128.51, x: 207.54 },
+  { fMHz: 1.7087, r: 149.76, x: 215.81 },
+  { fMHz: 1.8859, r: 170.16, x: 222.25 },
+  { fMHz: 2.0631, r: 189.19, x: 227.03 },
+  { fMHz: 2.2993, r: 213.17, x: 231.17 },
+  { fMHz: 2.5946, r: 241.72, x: 234.18 },
+  { fMHz: 2.8308, r: 262.86, x: 233.93 },
+  { fMHz: 3.1852, r: 292.77, x: 233.84 },
+  { fMHz: 3.5395, r: 320.18, x: 230.23 },
+  { fMHz: 3.8939, r: 347.36, x: 226.26 },
+  { fMHz: 4.3664, r: 380.33, x: 218.52 },
+  { fMHz: 4.8388, r: 412.01, x: 207.79 },
+  { fMHz: 5.3704, r: 445.51, x: 192.92 },
+  { fMHz: 5.961, r: 481.96, x: 173.15 },
+  { fMHz: 6.6106, r: 520.19, x: 145.26 },
+  { fMHz: 7.3784, r: 561.11, x: 107.09 },
+  { fMHz: 8.1461, r: 598.86, x: 56.688 },
+  { fMHz: 9.0911, r: 631.54, x: -14.139 },
+  { fMHz: 10.095, r: 644.6, x: -105.31 },
+  { fMHz: 11.158, r: 627.96, x: -198.28 },
+  { fMHz: 12.398, r: 576.17, x: -290.57 },
+  { fMHz: 13.816, r: 491.83, x: -362.41 },
+  { fMHz: 15.351, r: 396.81, x: -396.24 },
+  { fMHz: 17.005, r: 309.95, x: -399.17 },
+  { fMHz: 18.895, r: 235.85, x: -381.37 },
+  { fMHz: 21.021, r: 175.77, x: -353.33 },
+  { fMHz: 23.324, r: 132.48, x: -320.61 },
+  { fMHz: 25.923, r: 98.827, x: -288.61 },
+  { fMHz: 28.758, r: 75.491, x: -257.89 },
+  { fMHz: 31.947, r: 56.943, x: -229.75 },
+  { fMHz: 35.49, r: 43.739, x: -203.63 },
+  { fMHz: 39.447, r: 33.913, x: -180.6 },
+  { fMHz: 43.818, r: 26.248, x: -160.44 },
+  { fMHz: 48.661, r: 20.815, x: -142.42 },
+  { fMHz: 54.035, r: 16.195, x: -126.41 },
+  { fMHz: 60.0, r: 12.702, x: -111.49 },
+];

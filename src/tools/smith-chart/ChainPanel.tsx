@@ -7,7 +7,8 @@ import { type ImpedanceHandoff, loadImpedanceHandoff } from '../../lib/handoff';
 import { TouchstoneError, gammaFromImpedance, parseTouchstone, standingWaveRatio } from '../../lib/touchstone';
 import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
-import { lMatchSolutions } from './match';
+import { type MatchSolution, lMatchSolutions, leastQ, piTeeSolutions } from './match';
+import { type AdjustGoal, type AdjustResult, adjustNetwork, adjustableElements } from './optimise';
 import {
   type Connection,
   type Element,
@@ -21,7 +22,7 @@ import {
   updateElement,
 } from './model';
 import { type SweepPoint, inputImpedance, sweepNetwork, swrBandwidth } from './network';
-import { elementTitle, formatImpedance, formatMHz, formatSi, editUnit, fromReactance, reactanceOf } from './units';
+import { elementTitle, elementValue, formatImpedance, formatMHz, formatSi, editUnit, fromReactance, reactanceOf } from './units';
 
 /** Fixed order, never cycled: component 4 onwards shares the neutral colour. */
 export const STEP_COLOURS = ['var(--series-1)', 'var(--series-2)', 'var(--series-3)'];
@@ -73,6 +74,7 @@ export function ChainPanel({ network, onChange }: ChainPanelProps) {
       </div>
       <div className="chain-column chain-column-match">
         <MatchSection network={network} onChange={onChange} />
+        <AdjustSection network={network} onChange={onChange} />
       </div>
     </div>
   );
@@ -478,6 +480,7 @@ function MatchSection({ network, onChange }: ChainPanelProps) {
   const swrNow = standingWaveRatio(gammaFromImpedance(atRadio, z0));
   const finishing = lMatchSolutions(atRadio, z0, designMHz);
   const fromLoad = inPlace > 0 ? lMatchSolutions(atLoad, z0, designMHz) : [];
+  const [q, setQ] = useState(3);
 
   if (inPlace === 0) {
     return (
@@ -489,7 +492,10 @@ function MatchSection({ network, onChange }: ChainPanelProps) {
         {finishing.length === 0 ? (
           <p className="muted">Nothing to do: that is already {z0} Ω, or its resistance is zero.</p>
         ) : (
-          <SolutionList network={network} base={[]} solutions={finishing} action="Use this" onChange={onChange} />
+          <>
+            <SolutionList network={network} base={[]} solutions={finishing} action="Use this" onChange={onChange} />
+            <PiTee network={network} zLoad={atLoad} q={q} onQ={setQ} base={[]} action="Use this" onChange={onChange} />
+          </>
         )}
       </section>
     );
@@ -517,6 +523,177 @@ function MatchSection({ network, onChange }: ChainPanelProps) {
         <>
           <h4>Or start again from the load, in place of your components</h4>
           <SolutionList network={network} base={[]} solutions={fromLoad} action="Replace mine" onChange={onChange} />
+          <PiTee network={network} zLoad={atLoad} q={q} onQ={setQ} base={[]} action="Replace mine" onChange={onChange} />
+        </>
+      )}
+    </section>
+  );
+}
+
+/**
+ * Three parts instead of two, with the Q chosen. The L network's Q is whatever the two
+ * impedances dictate; a Pi or T lets you ask for more - a narrower match, and in the
+ * low-pass shapes more harmonic rejection - never less, and the floor is stated.
+ */
+function PiTee({
+  network,
+  zLoad,
+  q,
+  onQ,
+  base,
+  action,
+  onChange,
+}: {
+  network: Network;
+  zLoad: { re: number; im: number };
+  q: number;
+  onQ: (q: number) => void;
+  base: Element[];
+  action: string;
+  onChange: (network: Network) => void;
+}) {
+  const floors = leastQ(zLoad, network.z0);
+  const floor = Math.min(floors.pi, floors.tee);
+  const solutions = piTeeSolutions(zLoad, network.z0, network.designMHz, q);
+  if (!Number.isFinite(floor)) return null;
+  return (
+    <div className="pi-tee">
+      <h4>Or a Pi or T, with the Q you choose</h4>
+      <div className="field-row">
+        <NumberField label="Loaded Q" value={q} above={0} hint="Higher is a narrower match; the low-pass shapes also reject harmonics harder." onCommit={onQ} />
+        <p className="muted pi-tee-floor">
+          The L network's own Q here is {floors.pi.toFixed(2)} for a Pi and {floors.tee.toFixed(2)} for a T; these can only be sharper than that.
+        </p>
+      </div>
+      {solutions.length === 0 ? (
+        <p className="muted">
+          A Pi or T between these needs a Q above {floor.toFixed(2)} - raise it. (At that Q and below, the L network above is the flattest match there is.)
+        </p>
+      ) : (
+        <SolutionList network={network} base={base} solutions={solutions} action={action} onChange={onChange} />
+      )}
+    </div>
+  );
+}
+
+/**
+ * Adjusts the values of the parts already in the chain - the matcher's answer, or a chain
+ * built by hand - for the flattest SWR across the sweep or the best match at the design
+ * frequency. One step back is kept, so an answer you like less can be undone.
+ */
+function AdjustSection({ network, onChange }: ChainPanelProps) {
+  const adjustable = adjustableElements(network);
+  const [goal, setGoal] = useState<AdjustGoal>('sweep');
+  const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
+  const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState<{ previous: Network; report: AdjustResult } | undefined>(undefined);
+  const chosen = adjustable.filter((e) => !excluded.has(e.id));
+  // A report belongs to the chain it was made for: once the parts change, it is history.
+  const sameChain = done !== undefined && done.report.network.elements.map((e) => e.id).join() === network.elements.map((e) => e.id).join();
+  const report = sameChain ? done : undefined;
+
+  const run = async () => {
+    setBusy(true);
+    try {
+      const result = await adjustNetwork(network, goal, chosen.map((e) => e.id));
+      setDone({ previous: network, report: result });
+      if (result.improved) onChange(result.network);
+    } finally {
+      setBusy(false);
+    }
+  };
+  const putBack = () => {
+    if (!report) return;
+    onChange(report.previous);
+    setDone(undefined);
+  };
+  const swrText = (s: number) => (Number.isFinite(s) ? s.toFixed(2) : '∞');
+  const nameOf = (id: string) => {
+    const index = network.elements.findIndex((e) => e.id === id);
+    return index >= 0 ? `the ${elementTitle(network.elements[index]!).toLowerCase()} (${index + 1})` : 'a part';
+  };
+  const headline = goal === 'sweep' ? 'Worst SWR across the sweep' : 'SWR at the design frequency';
+  const pick = (o: AdjustResult['before']) => (goal === 'sweep' ? o.worstSwr : o.designSwr);
+  const other = (o: AdjustResult['before']) => (goal === 'sweep' ? o.designSwr : o.worstSwr);
+
+  return (
+    <section className="form-section adjust-section">
+      <h3>Adjust what I have</h3>
+      {adjustable.length === 0 ? (
+        <p className="muted">Add a part with a value to adjust - an inductor, capacitor, stub or line - and this will set the values for you.</p>
+      ) : (
+        <>
+          <p className="muted">Keeps your parts and their order, and moves their values - over the same range as the sliders - towards:</p>
+          <div className="segmented" role="radiogroup" aria-label="What to adjust for">
+            <button type="button" role="radio" aria-checked={goal === 'sweep'} onClick={() => setGoal('sweep')}>
+              The flattest SWR across the sweep
+            </button>
+            <button type="button" role="radio" aria-checked={goal === 'design'} onClick={() => setGoal('design')}>
+              The best match at the design frequency
+            </button>
+          </div>
+          <ul className="adjust-list">
+            {adjustable.map((e) => {
+              const index = network.elements.indexOf(e);
+              return (
+                <li key={e.id}>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={!excluded.has(e.id)}
+                      onChange={(ev) => {
+                        const next = new Set(excluded);
+                        if (ev.target.checked) next.delete(e.id);
+                        else next.add(e.id);
+                        setExcluded(next);
+                      }}
+                    />{' '}
+                    <span className="step-swatch" style={{ background: stepColour(index) }} aria-hidden="true">
+                      {index + 1}
+                    </span>{' '}
+                    {elementTitle(e)} · {elementValue(e)}
+                  </label>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="button-row">
+            <button type="button" className="small primary" disabled={busy || chosen.length === 0} onClick={() => void run()}>
+              {busy ? 'Adjusting…' : 'Adjust the values'}
+            </button>
+            {report && (
+              <button type="button" className="small" onClick={putBack}>
+                Put the values back
+              </button>
+            )}
+          </div>
+          {report && (
+            <div className="adjust-report" role="status">
+              {report.report.improved ? (
+                <p>
+                  {headline}{' '}
+                  <strong>
+                    {swrText(pick(report.report.before))} → {swrText(pick(report.report.after))}
+                  </strong>{' '}
+                  ({goal === 'sweep' ? 'at the design frequency' : 'worst across the sweep'} {swrText(other(report.report.before))} →{' '}
+                  {swrText(other(report.report.after))}), in {report.report.evaluations} trials.
+                </p>
+              ) : (
+                <p>
+                  Nothing beat the values you have: {headline.toLowerCase()} stays <strong>{swrText(pick(report.report.before))}</strong> (
+                  {report.report.evaluations} trials).
+                </p>
+              )}
+              {report.report.atEdge.length > 0 && (
+                <p className="alert-inline">
+                  {report.report.atEdge.map(nameOf).join(' and ')} ran to the end of {report.report.atEdge.length === 1 ? 'its' : 'their'} range (the
+                  slider's). That usually means a different kind of part is wanted there, or the chain a different shape - not a value the slider
+                  does not reach.
+                </p>
+              )}
+              {report.report.truncated && <p className="muted">Stopped at the trial limit before the search settled; press again to carry on from here.</p>}
+            </div>
+          )}
         </>
       )}
     </section>
@@ -533,7 +710,7 @@ function SolutionList({
   network: Network;
   /** What the solution's elements go after: the chain as it is, or nothing. */
   base: Element[];
-  solutions: ReturnType<typeof lMatchSolutions>;
+  solutions: MatchSolution[];
   action: string;
   onChange: (network: Network) => void;
 }) {

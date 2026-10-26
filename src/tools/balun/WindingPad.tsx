@@ -141,7 +141,9 @@ export function WindingPad({ design, materialName, onDropCore, onDropProfile, on
     ? { start: 'common', end: 'antenna' }
     : design.topology === 'guanella-1-1'
       ? { start: 'radio', end: 'antenna' }
-      : { start: 'radio (in parallel)', end: 'load (in series)' };
+      : design.topology === 'ruthroff-1-4'
+        ? { start: 'radio', end: 'load (input + line)' }
+        : { start: 'radio (in parallel)', end: 'load (in series)' };
 
   return (
     <div className={`pad${over ? ' pad-over' : ''}`} onDragOver={accept} onDragLeave={() => setOver(false)} onDrop={drop}>

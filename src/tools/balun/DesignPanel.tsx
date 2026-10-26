@@ -9,7 +9,8 @@ import { TouchstoneError, parseTouchstone } from '../../lib/touchstone';
 import { ContextMenu, type MenuEntry } from '../../ui/ContextMenu';
 import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
-import { COAX, CORES, type CoreSize, type Material, WIRES } from './catalog';
+import { GuessSection } from './GuessSection';
+import { COAX, CORES, type CoreSize, type Material, WIRES, describeSize } from './catalog';
 import {
   type CoreProfile,
   ProfileFileError,
@@ -20,6 +21,7 @@ import {
   rederive,
   suggestedFileName,
 } from './profiles';
+import { copyOfReference, referenceCores } from './reference-cores';
 import type { Analysis } from './circuit';
 import {
   type Design,
@@ -30,7 +32,7 @@ import {
   coreOf,
   crossover,
   efhwDesign,
-  guanella4Design,
+  guanella4Design, ruthroff4Design,
   removeStep,
   setStepTurns,
   summarise,
@@ -82,6 +84,7 @@ const TOPOLOGIES: { id: Topology; label: string; blurb: string; start: () => Des
   { id: 'autotransformer', label: 'Tapped', blurb: 'One tapped winding: the 49:1 and 9:1 ununs.', start: efhwDesign },
   { id: 'guanella-1-1', label: '1:1 current', blurb: 'A line wound on a core: the common-mode choke.', start: chokeDesign },
   { id: 'guanella-1-4', label: '1:4 Guanella', blurb: 'Two lines, in parallel one side and in series the other.', start: guanella4Design },
+  { id: 'ruthroff-1-4', label: '1:4 Ruthroff', blurb: "One line, its output added to its input: Ruthroff's unun, or balun.", start: ruthroff4Design },
 ];
 
 const DUTIES = [
@@ -172,6 +175,7 @@ export function DesignPanel(props: DesignPanelProps) {
       <LoadSection {...props} set={set} />
       <StraysSection design={design} analysis={props.analysis} set={set} />
       <MeasureSection {...props} />
+      <GuessSection design={design} profiles={props.profiles} onAddProfiles={props.onAddProfiles} onUpdateProfile={props.onUpdateProfile} />
       <LibrarySection {...props} inspectId={inspectId} onInspected={() => setInspectId(undefined)} />
       <SavedSection {...props} />
       <CommunityPanel shelves={shelves} shareRequest={shareRequest} onShareHandled={() => setShareRequest(undefined)} onReady={setCommunityReady} />
@@ -236,7 +240,7 @@ function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, o
     e.dataTransfer.setData(CORE_DRAG_TYPE, JSON.stringify(payload));
     e.dataTransfer.effectAllowed = 'copy';
   };
-  const setDims = (size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm'>>) => onChange(withCustomDimensions(design, size));
+  const setDims = (size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm' | 'shape'>>) => onChange(withCustomDimensions(design, size));
   const catalogue = materials.filter((m) => !m.id.startsWith('core:'));
 
   /** The menu on a measured core's chip: everything the library can do, where the chip is. */
@@ -388,7 +392,14 @@ function CoreSection({ design, materials, profiles, onPickCore, onPickProfile, o
         <div className="field-row">
           <NumberField label="Outside" value={core.odMm} above={0} unit="mm" onCommit={(v) => setDims({ odMm: v })} />
           <NumberField label="Inside" value={core.idMm} above={0} unit="mm" onCommit={(v) => setDims({ idMm: v })} />
-          <NumberField label="Height" value={core.heightMm} above={0} unit="mm" onCommit={(v) => setDims({ heightMm: v })} />
+          <NumberField label={core.shape === 'sleeve' ? 'Length' : 'Height'} value={core.heightMm} above={0} unit="mm" onCommit={(v) => setDims({ heightMm: v })} />
+          <label className="field">
+            <span className="field-label">Shape</span>
+            <select value={core.shape ?? 'ring'} onChange={(e) => setDims({ shape: e.target.value === 'sleeve' ? 'sleeve' : 'ring' })} title="A tube - a round-cable suppression core - is a thick ring to the maths; this only changes the word and the label">
+              <option value="ring">Ring</option>
+              <option value="sleeve">Sleeve (tube)</option>
+            </select>
+          </label>
         </div>
       </details>
 
@@ -548,7 +559,7 @@ function LoadSection({ design, set, antenna, onAntenna }: DesignPanelProps & { s
           </button>
         </div>
       )}
-      {design.topology === 'guanella-1-4' && (
+      {(design.topology === 'guanella-1-4' || design.topology === 'ruthroff-1-4') && (
         <label className="check">
           <input type="checkbox" checked={design.loadGrounded} onChange={(e) => set({ loadGrounded: e.target.checked })} /> One side of the load is earthed
         </label>
@@ -834,6 +845,35 @@ function LibrarySection({ profiles, design, onAddProfiles, onUpdateProfile, onRe
             </li>
           ))}
         </ul>
+        <details className="reference-cores">
+          <summary>Measured cores shipped with EMWS ({referenceCores().length})</summary>
+          <p className="muted">
+            Real cores measured by ZR1JT with a NanoVNA and given to EMWS - public domain, like all its data. <em>What is this core?</em> compares every
+            measurement against them as well as against the built-in pictures, and any of them can be added to your cores and designed on. Measure
+            yours and hand them in the same way, and the guess gets better for everyone.
+          </p>
+          <ul className="library">
+            {referenceCores().map((p) => (
+              <li key={p.id} className="library-item">
+                <p className="muted reference-facts">
+                  <strong>{p.name}</strong> · {describeSize(p.size)} · {p.mix} ({p.family}) · {p.setup.turns} turns, {p.sweep.length} points
+                  {p.coreCrossingMHz !== undefined
+                    ? ` · the core's own crossing at ${p.coreCrossingMHz.toFixed(2)} MHz`
+                    : p.trustworthyUpToMHz !== undefined
+                      ? ` · trust it up to ${p.trustworthyUpToMHz.toFixed(1)} MHz`
+                      : ' · the whole sweep is usable'}
+                  <br />
+                  {p.notes}
+                </p>
+                <div className="button-row">
+                  <button type="button" className="small" onClick={() => onAddProfiles([copyOfReference(p)])}>
+                    Add to my cores
+                  </button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </details>
       </details>
     </section>
   );
@@ -863,7 +903,7 @@ function ProfileCard({ profile, chosen, onUse, onUpdate, onExport, onRemove }: P
         </span>
       </label>
       <p className="muted profile-facts">
-        {profile.size.name} · {profile.size.odMm} × {profile.size.idMm} × {profile.size.heightMm} mm
+        {profile.size.name} · {describeSize(profile.size)}
         {profile.setup.stack > 1 ? ` ×${profile.setup.stack}` : ''} · {profile.mix} ({profile.family})
         <br />
         measured {new Date(profile.measuredAt).toLocaleDateString()} with {profile.setup.turns} turns

@@ -59,6 +59,14 @@ export function BalunGuide() {
               50 Ω becomes 200 Ω. Named for Gustav Guanella, who described it in 1944.
             </td>
           </tr>
+          <tr>
+            <th scope="row">1:4 Ruthroff</th>
+            <td>
+              One such line, wired so that the load gets the input voltage <em>plus</em> what comes out of the line:
+              a quarter of the Guanella's winding, with a top-frequency limit of its own — see{' '}
+              <em>Ruthroff or Guanella?</em> below. Clarence Ruthroff described it, as unun and as balun, in 1959.
+            </td>
+          </tr>
         </tbody>
       </table>
 
@@ -141,8 +149,9 @@ export function BalunGuide() {
           <tr>
             <th scope="row">Across the radio</th>
             <td>
-              For a tapped winding: the impedance of the input turns, which sits straight across your radio. The
-              old advice is to make it at least four or five times the radio's impedance. When it is only twice,
+              For a tapped winding, the impedance of the input turns; for a Ruthroff, of the whole winding. Either
+              sits straight across your radio. The old advice is to make it at least four or five times the radio's
+              impedance. When it is only twice,
               a lot of current flows through a lossy core — see below.
             </td>
           </tr>
@@ -201,7 +210,7 @@ export function BalunGuide() {
         </li>
         <li>
           <strong>Line impedance</strong> of a wire pair: a NanoVNA and a known length will give it to you. For a
-          1:4 Guanella from 50 Ω it should be 100 Ω, and it matters.
+          1:4 Guanella or Ruthroff from 50 Ω it should be 100 Ω, and it matters.
         </li>
       </ul>
       <p>
@@ -295,6 +304,64 @@ export function BalunGuide() {
         itself. A winding has only hit its own resonance when the reactance goes <em>negative</em>.
       </p>
 
+      <h3>What is it? Let EMWS guess</h3>
+      <p>
+        Salvaged cores come with no label. Below <em>Measure the core in your hand</em> is <em>What is this core? Let EMWS
+        guess</em>, which runs the whole thing step by step from one button. <strong>Guess what this core is</strong>:
+        connect the VNA (or the bridge); if it is a NanoVNA-V2, put the short, the open and the load on in turn as the page
+        asks; then wind what it asks for — three turns to start — connect the winding to port 1 and press <em>Measure</em>.
+        EMWS judges each reading on the spot: too little impedance at the bottom of the sweep and it asks for more turns
+        (it goes as the turns squared); a winding that resonates low in the sweep and it asks for fewer; a good reading and
+        it asks for <strong>one more winding with a different count</strong> to confirm it — the two must agree on the core
+        once the turns are allowed for, which is how a miscounted turn or a poor contact shows itself (ZR1JT's three
+        windings of one core agreed within about 4 %; 10 % is allowed). Then comes the estimate, and <em>Save this core</em>
+        keeps it under <em>Your cores</em> with the name, size and mix you confirm, or <em>Measure another core</em> goes
+        straight back to winding with the instrument still connected and calibrated. A <code>.s1p</code> of a winding, or a
+        core already in your library, can be guessed from the same starting point.
+      </p>
+      <p>
+        What the guess compares is the <strong>shape</strong> of the curve, in two parts: the loss angle — between
+        resistance and reactance — against frequency, and how far μ′ has fallen from its own value at the bottom of the
+        range. Both are ratios, so neither depends on the turns or the dimensions, nor on how far EMWS's built-in picture of
+        a mix sits from the real material; that is also why the estimate comes before you are asked for the core's size.
+        The second part was added after ZR1JT's #77: over a sliver of 0.50–0.58 MHz its loss angle looked nickel-zinc,
+        while its μ′ halving by 1.49 MHz is the #77 picture to the digit. Less than an octave of usable sweep now gives no
+        verdict at all, only what would help. The comparison itself stops where μ′ has halved: a single relaxation
+        describes the knee, not the tail beyond it, where real ferrite falls off far more slowly and a big manganese-zinc
+        core plunges through zero. And when nothing fits closely but the nearest pictures are all one family, it says
+        that — often the useful part of the answer. <em>Call it that</em>, on a saved core, writes the guess onto its card, which
+        also sets the family the winding-capacitance estimate uses.
+      </p>
+      <p>
+        <strong>A large manganese-zinc core can go capacitive on its own.</strong> The rule elsewhere in this tool — a bare
+        core never goes capacitive, so a reading that does is the winding resonating — is not true of a big MnZn ring,
+        which conducts and resonates on its own dimensions in the low megahertz; ZR1JT's #77 in an FT240 size did so at
+        1.7 MHz. Two windings tell the cases apart: a winding resonance moves with the count (one more turn on three moves
+        it by about half), the core's own crossing stays put. When both windings go capacitive at the same frequency the
+        step-by-step guess says so, trusts the curve up to there, and counts it as the manganese-zinc clue it is. None of
+        the built-in pictures includes the effect.
+      </p>
+      <p>
+        <strong>Measured cores come with EMWS.</strong> ZR1JT measured their own cores — a Fair-Rite #31 twice, weeks
+        apart, a #43 cable sleeve and a #77 — and gave the sweeps to EMWS, public domain like all its data. They sit under{' '}
+        <em>Your core library → Measured cores shipped with EMWS</em>; any can be added to your cores and designed on, and the
+        guess compares every measurement against them as well as against the pictures. A real #77 against a real #77 is how
+        a second #77 was recognised when no picture fitted it, and the two #31 readings recognise each other. Measure yours
+        and hand them in the same way, and the guess gets better for everyone. A tube — a round-cable suppression core — is a
+        thick ring to the maths: give its outer diameter, hole and length and call it a <em>sleeve</em>.
+      </p>
+      <p>
+        That choice was made on a measurement, not a hunch. ZR1JT's Fair-Rite #31 was first measured with its height typed
+        as 12.7 mm when the core is 20 mm, so its μ′ read 1.6 times the built-in picture's level — and ranked on level it
+        came out as #43 or #77, while ranked on the loss angle it said #31. The level depends on the size and turns you
+        type; the shape does not, which is the point. The verdict words are EMWS's own thresholds from
+        those figures: <em>fits</em> under about 11° of loss angle on average, <em>roughly</em> under 23°, and a
+        runner-up within 6° is named too. The six pictures are estimates (an initial permeability and a family, with
+        Snoek's law for the rest), so #31, #77 and #73, whose pictures differ by about a quarter in where they relax,
+        cannot be told apart with confidence, and a core that is none of the six is still matched to the nearest. Read
+        the clues the page lists under the verdict, and trust your own measurement over any name.
+      </p>
+
       <h2>Your designs</h2>
       <p>
         <em>Your designs</em>, at the bottom of the panel, keeps finished designs under a name: the core, the wire, every
@@ -352,6 +419,31 @@ export function BalunGuide() {
       <p>
         <em>Send what the radio sees to the Smith chart</em> passes the input impedance on, so you can add the
         coax, or see what a tuner would have to do.
+      </p>
+
+      <h2>Ruthroff or Guanella?</h2>
+      <p>
+        Both 1:4 transformers are transmission line on ferrite; the difference is what is added to what. A{' '}
+        <strong>Guanella</strong> puts two lines in parallel at the radio and in series at the load. Both carry the
+        same delay, so their voltages add in phase however long they are, and with the right line (100 Ω from 50)
+        it stays matched to the top of the band. A <strong>Ruthroff</strong> uses one line and adds its{' '}
+        <em>output</em> to its <em>input</em> — as a unun by tying the far end of the cold conductor back to the
+        input, as a balun by turning the line into a phase inverter and putting the load between the input and
+        its far end. The currents are the same either way, so the tool treats them as one design and{' '}
+        <em>One side of the load is earthed</em> chooses the word. The output has travelled the line and the
+        input has not, so the two drift out of phase as the line grows electrically long: with 100 Ω line into
+        200 Ω the radio sees 25 + j25 Ω where the line is a quarter wave (a fifth of the power turned back, about
+        1 dB — turned back, not lost inside) and nothing at all at a half wave, where the two cancel. Keep the
+        line short: the rise of the SWR curve at the top of the sweep is the line's length, not the core, and when
+        the top band matters that is the Guanella's case. The Ruthroff's is a quarter of the winding.
+      </p>
+      <p>
+        At the bottom they differ too. A Guanella's core only chokes, seeing whatever common-mode voltage the wiring
+        leaves it. A Ruthroff's core has the input voltage across both conductors from end to end, so it is
+        magnetised like a tapped winding's and appears straight across the radio — the <em>Across the radio</em>{' '}
+        readout, and the same "several times the radio's impedance" rule as for a 49:1. What is not modelled is the{' '}
+        <em>balance</em> of a Ruthroff balun's output, which is equal and opposite only while the line is short:
+        the tool gives what the radio sees and what the core suffers, not what the feed line radiates.
       </p>
 
       <h2>The 1:4 Guanella trap</h2>

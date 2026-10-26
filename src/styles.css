@@ -1634,6 +1634,24 @@ button.icon:hover:not(:disabled) {
 .match-list p {
   margin: 4px 0 8px;
 }
+/* The Pi / T designer under the L lists, and the Adjust section below Match it for me. */
+.smith .pi-tee-floor {
+  flex: 1 1 180px;
+  margin: 0 0 4px;
+  font-size: 12px;
+}
+.smith .adjust-list {
+  margin: 8px 0;
+  padding: 0;
+  list-style: none;
+}
+.smith .adjust-list .check {
+  font-size: 13px;
+}
+.smith .adjust-report p {
+  margin: 8px 0 0;
+  font-size: 13px;
+}
 .alert-inline {
   margin: 0;
   color: var(--danger);

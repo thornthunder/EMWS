@@ -15,7 +15,13 @@ export type Topology =
   /** A transmission line wound on a core: the 1:1 current balun, or common-mode choke. */
   | 'guanella-1-1'
   /** Two such lines, inputs in parallel and outputs in series: the 1:4 current balun. */
-  | 'guanella-1-4';
+  | 'guanella-1-4'
+  /**
+   * One line whose output is added to its input: the 1:4 Ruthroff. `loadGrounded` says which
+   * of Ruthroff's two wirings - unun (the cold conductor's far end tied back to the input) or
+   * balun (the line as a phase inverter) - and the analysis is the same for both.
+   */
+  | 'ruthroff-1-4';
 
 export type Step =
   | { id: string; kind: 'wind'; turns: number }
@@ -171,7 +177,7 @@ export function withCatalogueCore(design: Design, coreId: string, materialId: st
   return { ...design, coreId, materialId, customCore: undefined, profileId: undefined, stack };
 }
 
-export function withCustomDimensions(design: Design, size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm'>>): Design {
+export function withCustomDimensions(design: Design, size: Partial<Pick<CoreSize, 'odMm' | 'idMm' | 'heightMm' | 'shape'>>): Design {
   const current = coreOf(design);
   return {
     ...design,
@@ -251,7 +257,7 @@ export function checkDesign(design: Design): Issue[] {
       }
     }
   } else {
-    if (design.conductor.kind === 'wire') error('A current balun is wound with a transmission line: a pair of wires, or coax.');
+    if (design.conductor.kind === 'wire') error(`A ${design.topology === 'ruthroff-1-4' ? 'Ruthroff' : 'current balun'} is wound with a transmission line: a pair of wires, or coax.`);
     if (summary.taps.length > 0) warn('Taps mean nothing on a transmission-line winding and are ignored.');
     if (design.topology === 'guanella-1-4' && design.positions === 1 && design.loadGrounded) {
       error(
@@ -308,4 +314,9 @@ export function guanella4Design(): Design {
     load: { ohmsR: 200, ohmsX: 0 },
     loadGrounded: false,
   };
+}
+
+/** Ruthroff's 1:4, as the unun everyone builds: one pair of wires, one core, the load earthed. */
+export function ruthroff4Design(): Design {
+  return { ...guanella4Design(), topology: 'ruthroff-1-4', positions: 1, loadGrounded: true };
 }

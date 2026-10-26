@@ -16,8 +16,9 @@ import { MeasureWithVna } from '../../ui/MeasureWithVna';
 import { NumberField } from '../../ui/NumberField';
 import { formatSi } from '../smith-chart/units';
 import { copperOhmsPerM, inductanceH, meanDiameterMm, qualityEstimate, reactanceOhms, selfResonanceBoundMHz, turnsFor, windingLengthMm, wireLengthM, wireResistanceOhms } from './coil';
-import { type Ladder, type LadderElement, MAX_ORDER, MIN_ORDER, logFrequencies, nearestStandard, respond, sweepResponse, synthesise, withStandardCapacitors } from './filter';
+import { type Ladder, type LadderElement, MAX_ORDER, MIN_ORDER, bandEdgesMHz, logFrequencies, nearestStandard, respond, sweepResponse, synthesise, withStandardCapacitors } from './filter';
 import { BANDS, type CoilDesign, type FilterDesign, type LcState, type LcTab, SPACINGS, type StubDesign, type TrapDesign, WIRE_CHOICES, loadState, saveState, trapParts } from './model';
+import { BuildPicker, CoaxTrapSection } from './CoaxTrapSection';
 import { StubSection } from './StubSection';
 import { type TransmissionPoint, s21Db } from '../../lib/vna/transmission';
 import { MeasureTransmission } from '../../ui/MeasureTransmission';
@@ -81,7 +82,7 @@ export function LcTool() {
       </div>
 
       {state.tab === 'coil' && <CoilSection coil={state.coil} onChange={setCoil} />}
-      {state.tab === 'trap' && <TrapSection trap={state.trap} coil={state.coil} onChange={setTrap} onCoil={setCoil} goTo={setTab} />}
+      {state.tab === 'trap' && (state.trap.build === 'coax' ? <CoaxTrapSection trap={state.trap} onChange={setTrap} /> : <TrapSection trap={state.trap} coil={state.coil} onChange={setTrap} onCoil={setCoil} goTo={setTab} />)}
       {state.tab === 'filter' && <FilterSection filter={state.filter} coil={state.coil} onChange={setFilter} goTo={setTab} />}
       {state.tab === 'stub' && <StubSection stub={state.stub} onChange={setStub} />}
     </div>
@@ -405,6 +406,7 @@ function TrapSection({ trap, coil, onChange, onCoil, goTo }: { trap: TrapDesign;
       <aside className="panel">
         <section className="form-section">
           <h2>The trap</h2>
+          <BuildPicker build={trap.build} onChange={(build) => onChange({ build })} />
           <div className="band-buttons">
             {BANDS.map(([name, f]) => (
               <button key={name} type="button" className="small" aria-pressed={Math.abs(trap.fMHz - f) < 0.01} onClick={() => onChange({ fMHz: f })}>
@@ -539,6 +541,12 @@ export function filterNotes(filter: FilterDesign, ladder: Ladder): Note[] {
       message: `An even-order Chebyshev wants unequal terminations: this one is designed for a ${ladder.loadOhms.toFixed(1)} Ω load. With ${filter.z0} Ω at both ends the passband is not the textbook ripple; the dashed curve shows it with the load it wants. An odd order avoids the problem.`,
     });
   }
+  if (filter.kind === 'bandpass' && (filter.bandwidthMHz ?? 0) / filter.cutoffMHz < 0.05) {
+    notes.push({
+      severity: 'warning',
+      message: `A band-pass this narrow (${(((filter.bandwidthMHz ?? 0) / filter.cutoffMHz) * 100).toFixed(1)} % of the centre) in lumped parts wants big series coils and tiny shunt ones, and their loss eats the passband: the figures above are what the parts would have to be, and the loss card says what it costs. At a few percent the coupled-resonator band-pass on the Stubs & cavities tab, or a cavity, is the practical way.`,
+    });
+  }
   if (filter.qInductor < 30) notes.push({ severity: 'warning', message: `Coils of Q ${filter.qInductor} make a lossy filter; the passband loss shows it. Thicker wire on a bigger former helps, and so does spacing the turns.` });
   if (filter.cutoffMHz > 300) notes.push({ severity: 'warning', message: 'Above VHF a coil is a length of wire and a capacitor has leads: lumped-part designs stop meaning what they say. This method is for HF and low VHF.' });
   return notes;
@@ -557,19 +565,40 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
   const unequal = Math.abs(ladder.loadOhms - filter.z0) > 0.01 * filter.z0;
   const asDesigned = unequal ? sweepResponse(ladder, { z0: filter.z0, loadOhms: ladder.loadOhms }, freqs, q) : undefined;
   const low = filter.kind === 'lowpass';
-  const inBand = respond(ladder, ends, low ? fc * 0.8 : fc / 0.8, q);
-  const harmonics = [2, 3].map((n) => ({ n, fMHz: low ? fc * n : fc / n, lossDb: respond(ladder, ends, low ? fc * n : fc / n, q).lossDb }));
+  const band = filter.kind === 'bandpass';
+  const edges = bandEdgesMHz(fc, filter.bandwidthMHz ?? 0);
+  // Where the passband is read: a little inside a cutoff, or the centre of a band-pass.
+  const inBand = respond(ladder, ends, band ? fc : low ? fc * 0.8 : fc / 0.8, q);
+  const harmonics = band
+    ? [
+        { n: 2, label: `Second harmonic, ${(fc * 2).toFixed(1)} MHz`, lossDb: respond(ladder, ends, fc * 2, q).lossDb },
+        { n: 3, label: `An octave below, ${(fc / 2).toFixed(2)} MHz`, lossDb: respond(ladder, ends, fc / 2, q).lossDb },
+      ]
+    : [2, 3].map((n) => ({
+        n,
+        label: low ? `${n === 2 ? 'Second' : 'Third'} harmonic, ${(fc * n).toFixed(1)} MHz` : `At a ${n === 2 ? 'half' : 'third'} of cutoff, ${(fc / n).toFixed(2)} MHz`,
+        lossDb: respond(ladder, ends, low ? fc * n : fc / n, q).lossDb,
+      }));
+  const atEdges = band ? [edges.lowMHz, edges.highMHz].map((f) => respond(ladder, ends, f, q).lossDb) : [];
   const notes = filterNotes(filter, ladder);
-  const title = `${ordinal(filter.order)}-order ${filter.family === 'butterworth' ? 'Butterworth' : `Chebyshev, ${filter.rippleDb} dB ripple,`} ${low ? 'low-pass' : 'high-pass'}, ${fc} MHz cutoff`;
+  const shape = filter.family === 'butterworth' ? 'Butterworth' : `Chebyshev, ${filter.rippleDb} dB ripple,`;
+  const title = band
+    ? `${ordinal(filter.order)}-order ${shape} band-pass, ${round(edges.lowMHz, 3)} to ${round(edges.highMHz, 3)} MHz`
+    : `${ordinal(filter.order)}-order ${shape} ${low ? 'low-pass' : 'high-pass'}, ${fc} MHz cutoff`;
 
-  const build = (part: LadderElement) => {
-    if (part.kind === 'inductor') {
-      const turns = halfTurns(turnsFor(part.value, coil));
-      return `${turns} turns on the coil tab's ${coil.formerMm} mm former`;
-    }
-    const standard = nearestStandard(part.value);
-    return Math.abs(standard - part.value) / part.value < 1e-9 ? 'a standard value' : `nearest E24: ${formatSi(standard, 'F', 3)}`;
+  const coilText = (henries: number) => `${halfTurns(turnsFor(henries, coil))} turns on the coil tab's ${coil.formerMm} mm former`;
+  const capacitorText = (farads: number) => {
+    const standard = nearestStandard(farads);
+    return Math.abs(standard - farads) / farads < 1e-9 ? 'a standard value' : `nearest E24: ${formatSi(standard, 'F', 3)}`;
   };
+  const build = (part: LadderElement) => {
+    if (part.kind === 'resonator') return `coil: ${coilText(part.henries)}; capacitor: ${capacitorText(part.farads)}`;
+    return part.kind === 'inductor' ? coilText(part.value) : capacitorText(part.value);
+  };
+  const partName = (part: LadderElement) =>
+    part.kind === 'resonator' ? `${part.position} resonator (${part.position === 'series' ? 'L and C in series' : 'L across C'})` : `${part.position} ${part.kind === 'inductor' ? 'coil' : 'capacitor'}`;
+  const partValue = (part: LadderElement) =>
+    part.kind === 'resonator' ? `${formatSi(part.henries, 'H', 3)} with ${formatSi(part.farads, 'F', 3)}` : formatSi(part.value, part.kind === 'inductor' ? 'H' : 'F', 3);
 
   return (
     <div className="modeler">
@@ -579,9 +608,10 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
           <div className="field-row">
             <label className="field">
               <span className="field-label">Kind</span>
-              <select value={filter.kind} onChange={(e) => onChange({ kind: e.target.value === 'highpass' ? 'highpass' : 'lowpass' })}>
+              <select value={filter.kind} onChange={(e) => onChange({ kind: e.target.value === 'highpass' ? 'highpass' : e.target.value === 'bandpass' ? 'bandpass' : 'lowpass' })}>
                 <option value="lowpass">Low-pass</option>
                 <option value="highpass">High-pass</option>
+                <option value="bandpass">Band-pass</option>
               </select>
             </label>
             <label className="field">
@@ -594,8 +624,14 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
           </div>
           <div className="field-row">
             <NumberField label="Order" value={filter.order} min={MIN_ORDER} integer onCommit={(v) => onChange({ order: Math.max(MIN_ORDER, Math.min(MAX_ORDER, Math.round(v))) })} />
-            <NumberField label="Cutoff" value={fc} above={0} unit="MHz" onCommit={(v) => onChange({ cutoffMHz: v })} />
+            <NumberField label={band ? 'Centre' : 'Cutoff'} value={fc} above={0} unit="MHz" onCommit={(v) => onChange({ cutoffMHz: v })} />
+            {band && <NumberField label="Bandwidth" value={filter.bandwidthMHz ?? 0} above={0} unit="MHz" hint="Between the two edges: the 3 dB points of a Butterworth, the ripple edges of a Chebyshev. The centre is their geometric mean." onCommit={(v) => onChange({ bandwidthMHz: v })} />}
           </div>
+          {band && (
+            <p className="muted">
+              Edges {round(edges.lowMHz, 3)} and {round(edges.highMHz, 3)} MHz. The order is the number of resonators; each is a coil and a capacitor.
+            </p>
+          )}
           {filter.family === 'chebyshev' && (
             <label className="field">
               <span className="field-label">Passband ripple</span>
@@ -613,8 +649,8 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
             <label className="field">
               <span className="field-label">Nearest the source</span>
               <select value={filter.first} onChange={(e) => onChange({ first: e.target.value === 'series' ? 'series' : 'shunt' })}>
-                <option value="shunt">{low ? 'a shunt capacitor' : 'a shunt coil'}</option>
-                <option value="series">{low ? 'a series coil' : 'a series capacitor'}</option>
+                <option value="shunt">{band ? 'a shunt resonator' : low ? 'a shunt capacitor' : 'a shunt coil'}</option>
+                <option value="series">{band ? 'a series resonator' : low ? 'a series coil' : 'a series capacitor'}</option>
               </select>
             </label>
           </div>
@@ -652,10 +688,8 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
               {ladder.elements.map((part, i) => (
                 <tr key={i}>
                   <th scope="row">{i + 1}</th>
-                  <td>
-                    {part.position} {part.kind === 'inductor' ? 'coil' : 'capacitor'}
-                  </td>
-                  <td>{formatSi(part.value, part.kind === 'inductor' ? 'H' : 'F', 3)}</td>
+                  <td>{partName(part)}</td>
+                  <td>{partValue(part)}</td>
                   <td>{build(part)}</td>
                 </tr>
               ))}
@@ -670,16 +704,22 @@ function FilterSection({ filter, coil, onChange, goTo }: { filter: FilterDesign;
           </p>
           <dl className="summary">
             <div>
-              <dt>In the passband, at {inBand.fMHz.toFixed(2)} MHz</dt>
+              <dt>{band ? `At the centre, ${inBand.fMHz.toFixed(3)} MHz` : `In the passband, at ${inBand.fMHz.toFixed(2)} MHz`}</dt>
               <dd>
                 {inBand.lossDb.toFixed(2)} dB loss<small>SWR {Number.isFinite(inBand.swr) ? inBand.swr.toFixed(2) : '∞'}</small>
               </dd>
             </div>
+            {band && (
+              <div>
+                <dt>At the edges</dt>
+                <dd>
+                  {atEdges.map((v) => v.toFixed(2)).join(' and ')} dB<small>{filter.family === 'butterworth' ? '3 dB by definition, plus the parts\' loss' : 'the ripple, plus the parts\' loss'}</small>
+                </dd>
+              </div>
+            )}
             {harmonics.map((h) => (
               <div key={h.n}>
-                <dt>
-                  {low ? `${h.n === 2 ? 'Second' : 'Third'} harmonic, ${h.fMHz.toFixed(1)} MHz` : `At a ${h.n === 2 ? 'half' : 'third'} of cutoff, ${h.fMHz.toFixed(2)} MHz`}
-                </dt>
+                <dt>{h.label}</dt>
                 <dd>{h.lossDb.toFixed(1)} dB down</dd>
               </div>
             ))}

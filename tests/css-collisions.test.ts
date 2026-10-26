@@ -22,7 +22,7 @@ const SHARED = new Set([
   'issue-mark', 'issue-text', 'issues', 'lede', 'link', 'modeler', 'muted', 'page-header', 'panel', 'parts-table',
   'peak-line', 'plot', 'plot-label', 'plot-note', 'primary', 'prose', 'results-title', 'section-head', 'segmented',
   'side-panel', 'small', 'small-segmented', 'summary', 'tab-body', 'tab-link', 'table-wrap', 'tabs', 'visually-hidden',
-  'workspace',
+  'vna', 'workspace',
 ]);
 
 function tsxFiles(dir: string): string[] {

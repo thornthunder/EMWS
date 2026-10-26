@@ -136,6 +136,31 @@ async function runSmithTest({ evaluate, send, log, screenshot }) {
     await sleep(250);
     return clicked;
   };
+  const until = async (expr, ms = 10_000) => {
+    const deadline = Date.now() + ms;
+    while (Date.now() < deadline) {
+      if (await evaluate(expr)) return true;
+      await sleep(150);
+    }
+    return false;
+  };
+  /** Types into a labelled number field and presses Enter, as a person does. */
+  const typeNumberIn = async (label, text) => {
+    const focused = await evaluate(`(() => {
+      const input = [...document.querySelectorAll('label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === ${JSON.stringify(label)})?.querySelector('input');
+      if (!input) return false;
+      input.focus();
+      input.select();
+      return true;
+    })()`);
+    if (!focused) return false;
+    await send('Input.insertText', { text: String(text) });
+    for (const type of ['keyDown', 'keyUp']) {
+      await send('Input.dispatchKeyEvent', { type, key: 'Enter', code: 'Enter', windowsVirtualKeyCode: 13, nativeVirtualKeyCode: 13 });
+    }
+    await sleep(250);
+    return true;
+  };
 
   let now = await state();
   const startSwr = now.summary.SWR;
@@ -169,11 +194,54 @@ async function runSmithTest({ evaluate, send, log, screenshot }) {
   check(now.components === 2, `which replaces the two components rather than adding two more (${now.components} in the chain)`);
   check(Number.parseFloat(now.summary.SWR) < 1.02, `and the radio still sees ${now.summary.SWR}`);
 
+  // ---- Pi and T with a chosen Q, and Adjust what I have (2026-10-25) ----
+  // With the two-part match in place, the "start again" offers now also list Pi and T
+  // shapes at the Q typed. The default load (100 - j40 at 14.2) has L-network floors of
+  // 1.15 (Pi) and 1.00 (T); at Q 3 both shapes exist, below the floor the note says so.
+  const matchNames = async () => evaluate(`[...document.querySelectorAll('.match-list strong')].map((e) => e.textContent.trim())`);
+  let names = await matchNames();
+  check(names.some((n) => n.startsWith('Pi:')) && names.some((n) => n.startsWith('T:')), `Pi and T shapes are offered beside the L networks: ${names.filter((n) => /^(Pi|T):/.test(n)).join(' | ')}`);
+  check(await evaluate(`document.body.textContent.includes("The L network's own Q here is 1.15 for a Pi and 1.00 for a T")`), 'and the floor is stated: 1.15 for a Pi, 1.00 for a T');
+  const piButtons = await evaluate(`[...document.querySelectorAll('.match-list li')].filter((li) => li.querySelector('strong')?.textContent.startsWith('Pi:') && li.textContent.includes('low-pass')).length`);
+  check(piButtons >= 1, 'a low-pass Pi (shunt C, series L, shunt C) among them');
+  await evaluate(`[...document.querySelectorAll('.match-list li')].find((li) => li.querySelector('strong')?.textContent.startsWith('Pi:') && li.textContent.includes('low-pass')).querySelector('button').click()`);
+  await sleep(300);
+  now = await state();
+  check(now.components === 3 && Number.parseFloat(now.summary.SWR) < 1.02, `Replace mine with the Pi: three parts, and the radio sees ${now.summary.SWR}`);
+  check(await typeNumberIn('Loaded Q', '1'), 'ask for Q 1');
+  check(await until(`document.body.textContent.includes('needs a Q above 1.00')`), 'below the floor there is no Pi or T, and the page says what the floor is');
+  check(await typeNumberIn('Loaded Q', '3'), 'back to Q 3');
+
+  // Adjust what I have: the Pi is exact at 14.175; flattening across 14.0-14.35 trades a
+  // little at the centre for a lower worst case, and Put the values back undoes it.
+  const adjustSection = `[...document.querySelectorAll('.adjust-section')][0]`;
+  check(await evaluate(`${adjustSection}?.querySelectorAll('.adjust-list input[type="checkbox"]').length === 3`), 'Adjust what I have lists the three parts, all ticked');
+  const valuesBefore = await evaluate(`[...document.querySelectorAll('.chain-table tbody td:nth-child(3)')].map((td) => td.textContent.trim()).join('|')`);
+  await evaluate(`[...${adjustSection}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Adjust the values').click()`);
+  check(await until(`document.querySelector('.adjust-report') !== null`, 20_000), 'it runs');
+  const reportText = await evaluate(`document.querySelector('.adjust-report').textContent`);
+  const flattened = /Worst SWR across the sweep ([\d.]+) → ([\d.]+)/.exec(reportText);
+  check(flattened !== null && Number(flattened[2]) <= Number(flattened[1]), `and reports the worst SWR across the sweep going down: ${reportText.trim().slice(0, 120)}`);
+  const valuesAfter = await evaluate(`[...document.querySelectorAll('.chain-table tbody td:nth-child(3)')].map((td) => td.textContent.trim()).join('|')`);
+  check(valuesAfter !== valuesBefore, `the chain's values moved: ${valuesBefore} -> ${valuesAfter}`);
+  await evaluate(`[...${adjustSection}.querySelectorAll('button')].find((b) => b.textContent.trim() === 'Put the values back').click()`);
+  await sleep(300);
+  const valuesBack = await evaluate(`[...document.querySelectorAll('.chain-table tbody td:nth-child(3)')].map((td) => td.textContent.trim()).join('|')`);
+  check(valuesBack === valuesBefore, 'and Put the values back restores them exactly');
+  check(await clickText('.match-list button', 'Replace mine'), 'back to a two-part L match for the wheel steps');
+  now = await state();
+  check(now.components === 2, 'two parts again');
+
   // Fine adjustment with the wheel: click a component's Value box, roll a notch, then spin.
   const valueBox = `[...document.querySelectorAll('.element-card label.field')].find((l) => l.querySelector('.field-label')?.textContent.trim() === 'Value')?.querySelector('input')`;
   const readValue = async () => Number(await evaluate(`${valueBox}?.value`));
-  const boxRect = JSON.parse(await evaluate(`(window.scrollTo(0, 0), JSON.stringify(${valueBox}.getBoundingClientRect()))`));
-  const over = { x: boxRect.left + boxRect.width / 2, y: boxRect.top + boxRect.height / 2 };
+  // The panel scrolls inside itself at this width, and the Q field just typed into sits far
+  // below the first card: bring the box back into view before measuring where it is.
+  const locate = async () => {
+    const r = JSON.parse(await evaluate(`(window.scrollTo(0, 0), ${valueBox}.scrollIntoView({ block: 'center' }), JSON.stringify(${valueBox}.getBoundingClientRect()))`));
+    return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+  };
+  let over = await locate();
   /** Wheel clicks sent back to back, as a spinning wheel delivers them - not one per round trip. */
   const roll = (clicks) =>
     Promise.all(Array.from({ length: clicks }, () => send('Input.dispatchMouseEvent', { type: 'mouseWheel', x: over.x, y: over.y, deltaX: 0, deltaY: -100 })));
@@ -189,9 +257,13 @@ async function runSmithTest({ evaluate, send, log, screenshot }) {
   await roll(1);
   await sleep(200);
   check((await readValue()) === untouched, 'the wheel over an unfocused box changes nothing');
+  // That roll scrolled the panel instead (the page lets it, as it should), so the box has
+  // moved: find it again before clicking it.
+  over = await locate();
   await send('Input.dispatchMouseEvent', { type: 'mousePressed', x: over.x, y: over.y, button: 'left', clickCount: 1 });
   await send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: over.x, y: over.y, button: 'left', clickCount: 1 });
   await sleep(200);
+  check(await evaluate(`document.activeElement === ${valueBox}`), `clicking the Value box at (${over.x.toFixed(0)}, ${over.y.toFixed(0)}) focuses it`);
   const tableValue = () => evaluate(`document.querySelector('.chain-table tbody tr:nth-child(2) td:nth-child(3)')?.textContent ?? ''`);
   const before = await readValue();
   const tableBefore = await tableValue();
@@ -432,6 +504,20 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   check(now.issues.some((i) => i.includes('ONE core')), 'one core with an earthed load is refused, and the reason given');
   check(now.title === null, 'and nothing is analysed while the design cannot work');
 
+  // Ruthroff: one line, the load's voltage is the input's plus the line's output - so the
+  // match falls off as the line's phase shift grows, where the Guanella's did not.
+  check(await click('.segmented button', '1:4 Ruthroff'), 'switching to a 1:4 Ruthroff');
+  now = await state();
+  check(now.title?.startsWith('1:4 Ruthroff unun') && now.issues.length === 0, `a working unun on one core: ${now.title}`);
+  check('Across the radio' in now.summary, `the core sits across the radio, as on a tapped winding: ${now.summary['Across the radio']}`);
+  const ruthroffSwr = JSON.parse(await evaluate(`JSON.stringify([...document.querySelectorAll('.band-table tbody tr')].map((r) => parseFloat(r.cells[1].textContent)))`));
+  // Measured: 1.05 on 160 m (the core's 1.8 kohm across 50), best mid-band, 1.07 on 10 m (26 degrees of line).
+  const ruthroffBest = Math.min(...ruthroffSwr);
+  check(ruthroffSwr.length > 2 && ruthroffSwr.every((s) => s < 1.2) && ruthroffBest < ruthroffSwr[0] && ruthroffBest < ruthroffSwr.at(-1), `under 1.2 on every band and best mid-band (${ruthroffBest}): the core costs the bottom (160 m ${ruthroffSwr[0]}), the line's length the top (10 m ${ruthroffSwr.at(-1)})`);
+  await click('label.check input');
+  now = await state();
+  check(now.title?.startsWith('1:4 Ruthroff balun'), `unticking the earthed load names the balun wiring: ${now.title}`);
+
   check(await click('.segmented button', '1:1 current'), 'switching to a 1:1 current balun');
   now = await state();
   check('Chokes with' in now.summary, `reports what matters for a choke: ${now.summary['Chokes with']}`);
@@ -458,7 +544,7 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
       sweep, curve: [], sourceFile: 'smoke.s1p', notes: 'planted by the smoke test',
     };
     // A second reading of the same core, for the chips' menu to forget.
-    const extra = { ...profile, id: 'core-smoke-2', name: 'Smoke extra reading' };
+    const extra = { ...profile, id: 'core-smoke-2', name: 'Smoke extra reading', mix: 'unknown' };
     localStorage.setItem('emws.balun.cores.v1', JSON.stringify([profile, extra]));
     localStorage.removeItem('emws.balun.v1');
     location.reload();
@@ -491,6 +577,22 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   check(/8 turns/.test(facts) && /40 points/.test(facts), `the library shows how it was measured: ${facts.trim().slice(0, 70)}...`);
   await snap('library');
 
+  // ---- what is this core? The planted sweep IS the #43 picture, so the guess must say so ----
+  await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('What is this core'))?.setAttribute('open', '')`);
+  await sleep(300);
+  check((await evaluate(`[...document.querySelectorAll('.core-guess button')].map((b) => b.textContent.trim())`)).includes('Guess what this core is'), 'it starts from one button: Guess what this core is');
+  check(await choose('Guess a saved core', 'Smoke-test FT240'), 'or a saved core: the one in use');
+  let verdict = await evaluate(`document.querySelector('.core-guess-verdict')?.textContent ?? ''`);
+  // The two planted readings share one sweep, so each is the other's twin first, #43 second.
+  check(/^Looks like your core "Smoke extra reading" \(nickel-zinc\), or #43/.test(verdict), `recognised: its twin reading first, then the #43 picture: ${verdict}`);
+  check((await evaluate(`[...document.querySelectorAll('.core-guess button')].some((b) => b.textContent.startsWith('Call it'))`)) === false, 'and, already labelled #43, there is nothing to call it');
+  check(await choose('Guess a saved core', 'Smoke extra reading'), 'the extra reading, planted as "unknown"');
+  verdict = await evaluate(`document.querySelector('.core-guess-verdict')?.textContent ?? ''`);
+  check(/^Looks like your core "Smoke-test FT240" \(nickel-zinc\), or #43/.test(verdict), `is recognised the same way: ${verdict}`);
+  check(await click('.core-guess button', 'Call it #43'), 'Call it #43 (NiZn)');
+  const extraFacts = await evaluate(`document.querySelector('#core-profile-core-smoke-2 .profile-facts')?.textContent ?? ''`);
+  check(/#43 \(NiZn\)/.test(extraFacts), `and its card now says so: ${extraFacts.trim().slice(0, 60)}...`);
+
   // ---- the chips' right-click menu: forget a reading where it crowds the bin ----
   await evaluate(`document.querySelector('.bin').scrollIntoView({ block: 'center' })`);
   await sleep(300);
@@ -522,6 +624,20 @@ async function runBalunTest({ evaluate, send, log, screenshot }) {
   check(await click('.core-chip[aria-label="FT240 in #43"]'), 'a catalogue core leaves the profile behind');
   now = await state();
   check(/built-in estimate/.test(now.note), 'and the results say so');
+
+  // ---- the measured cores shipped with EMWS: ZR1JT's, on a shelf, one added to mine ----
+  await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('Your core library'))?.setAttribute('open', '')`);
+  await evaluate(`document.querySelector('details.reference-cores')?.setAttribute('open', '')`);
+  await sleep(200);
+  const shelf = await evaluate(`[...document.querySelectorAll('.reference-facts')].map((e) => e.textContent)`);
+  check(shelf.length >= 4 && shelf.every((t) => /ZR1JT/.test(t)), `${shelf.length} measured cores shipped with EMWS, all credited`);
+  check(shelf.some((t) => /#77/.test(t) && /own crossing at 1\.54 MHz/.test(t)), 'the #77 carries the core\'s own crossing');
+  const chipsBeforeShelf = await evaluate(`document.querySelectorAll('.bin .core-chip').length`);
+  check(await click('.reference-cores button', 'Add to my cores'), 'Add to my cores');
+  await sleep(400);
+  check((await evaluate(`document.querySelectorAll('.bin .core-chip').length`)) === chipsBeforeShelf + 1, 'and it is in the bin as one of mine');
+  const added = await evaluate(`[...document.querySelectorAll('.bin .core-chip-name')].map((e) => e.textContent)`);
+  check(added.some((n) => /ZR1JT/.test(n)), `named after its measurer: ${added.find((n) => /ZR1JT/.test(n))}`);
 
   // ---- keep the design, and look through it from the Antenna Modeler ----
   const waitFor = async (expr, ms = 10_000) => {
@@ -735,6 +851,19 @@ async function runLcTest({ evaluate, send, log, screenshot }) {
   now = await state();
   check(now.tab === 'A coil' && trapTurns.startsWith(`${now.turns} turns`), `lands on the coil tab with those turns: ${now.turns}`);
 
+  // ---- the trap made of coax ----
+  check(await click('.lc-tab', 'A trap'), 'back to the trap');
+  check(await choose('Built from', 'coax'), 'built from a coil of coax');
+  now = await state();
+  check((now.title ?? '').includes('MHz coax trap:') && now.title.includes('turns of RG-58 on a 50 mm former'), `nine turns of RG-58 on a 50 mm pipe: ${now.title}`);
+  check(await click('.form-section button', 'Turns for 7.1 MHz'), 'Turns for 7.1 MHz');
+  now = await state();
+  const coaxF0 = parseFloat(now.summary['Resonates at'] ?? 'NaN');
+  check(Math.abs(coaxF0 - 7.1) < 0.02 && (now.title ?? '').startsWith('7.1') && now.title.includes('MHz coax trap'), `lands on 7.1 MHz: ${now.title}`);
+  check(/^[0-9.]+ m/.test(now.summary['Cable to wind'] ?? '') && /across/.test(now.summary['As a trap'] ?? ''), `says how much cable to cut (${now.summary['Cable to wind']}) and what trap it amounts to (${now.summary['As a trap']})`);
+  check(now.charts === 1 && now.bands >= 5 && (await evaluate(`[...document.querySelectorAll('.button-row button')].some((b) => b.textContent.includes('Put this trap in an antenna'))`)), 'with the impedance chart, the band table and the handoff button');
+  check(await choose('Built from', 'a coil and a capacitor'), 'back to a coil and a capacitor');
+
   // ---- the filter ----
   check(await click('.lc-tab', 'A filter'), 'A filter');
   now = await state();
@@ -751,6 +880,30 @@ async function runLcTest({ evaluate, send, log, screenshot }) {
   now = await state();
   check(now.issues.length === 0 && now.parts === 7, `an odd order clears it: ${now.parts} parts`);
   check(await evaluate(`document.querySelector('.measure-filter summary')?.textContent === 'Measure the filter you built'`), 'and offers to measure the filter you built, port 1 to port 2');
+
+  // ---- a band-pass (2026-10-25): the low-pass prototype wrapped round a centre ----
+  check(await choose('Kind', 'Band-pass'), 'Band-pass');
+  check(await choose('Shape', 'Butterworth'), 'Butterworth');
+  check(await typeNumber('Order', '5'), 'order 5');
+  check(await typeNumber('Centre', '14.175'), 'centred on 14.175 MHz');
+  check(await typeNumber('Bandwidth', '2'), '2 MHz wide');
+  now = await state();
+  // Edges at f0 (sqrt(1 + (1/14.175)^2) -/+ 1/14.175): 13.210 and 15.210 MHz.
+  check(now.title === '5th-order Butterworth band-pass, 13.21 to 15.21 MHz', `the band-pass by its edges: ${now.title}`);
+  check(now.parts === 5 && (await evaluate(`[...document.querySelectorAll('.parts-table tbody td:nth-child(2)')].every((td) => td.textContent.includes('resonator'))`)), 'five resonators, each a coil with a capacitor');
+  const centre = now.summary['At the centre, 14.175 MHz'] ?? '';
+  const edgesCard = now.summary['At the edges'] ?? '';
+  // Q 100 coils in five resonators: a band-pass costs the coils' loss times centre over
+  // bandwidth. Cohn's estimate 4.343 sum(g) / (Q x fractional bandwidth) = 4.343 x 6.472 /
+  // (100 x 0.1411) = 1.99 dB; the exact chain reads 2.19 (tests/lc.test.ts holds the two together).
+  const centreDb = parseFloat(centre);
+  check(/ dB loss/.test(centre) && centreDb > 1.9 && centreDb < 2.5, `about 2 dB at the centre from Q 100 coils - the coils' loss times centre over bandwidth: ${centre}`);
+  const edgeDb = (edgesCard.match(/[0-9]+[.][0-9]+/g) ?? []).map(Number);
+  check(edgeDb.length === 2 && edgeDb.every((v) => v > 3.5 && v < 9) && Math.abs(edgeDb[0] - edgeDb[1]) < 0.5, `3 dB at both edges by definition, plus the parts' loss: ${edgesCard}`);
+  check(await typeNumber('Bandwidth', '0.3'), 'then 300 kHz wide');
+  now = await state();
+  check(now.issues.some((t) => t.includes('A band-pass this narrow')), 'which is too narrow for lumped parts, and the page says so');
+  check(await choose('Kind', 'Low-pass'), 'back to a low-pass');
 
   // ---- stubs and cavities ----
   check(await click('.lc-tab', 'Stubs & cavities'), 'Stubs & cavities');
@@ -1987,6 +2140,47 @@ async function runVnaTest({ evaluate, send, log }) {
   await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('Your core library'))?.setAttribute('open', '')`);
   const cards = await evaluate(`[...document.querySelectorAll('.profile-facts')].map((e) => e.textContent).join(' || ')`);
   check(/trust it up to/.test(cards), 'and its library card carries the same limit');
+
+  // ---- What is this core? The step-by-step guess, end to end through the simulated V2 ----
+  check(await clickText('.vna button', 'Disconnect'), 'disconnect the panel above, so the guess has the port');
+  const chipsBefore = await evaluate(`document.querySelectorAll('.bin .core-chip').length`);
+  await evaluate(`[...document.querySelectorAll('details')].find((d) => d.textContent.includes('What is this core'))?.setAttribute('open', '')`);
+  const stepText = () => evaluate(`document.querySelector('.core-guess-step')?.textContent ?? ''`);
+  check(await clickText('.core-guess button', 'Guess what this core is'), 'Guess what this core is');
+  check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').startsWith('Step 1 - connect')`), 'step 1: connect');
+  await evaluate(`window.__emwsVnaPick = 'v2'`);
+  check(await clickText('.core-guess .vna button', 'Connect a NanoVNA'), 'Connect a NanoVNA');
+  check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').includes('Put the short on the port')`), `step 2: calibrate, one standard at a time: ${(await stepText()).slice(0, 60)}...`);
+  for (const standard of ['short', 'open', 'load']) {
+    await evaluate(`window.__emwsVnaAttach(${JSON.stringify(standard)})`);
+    check(await clickText('.core-guess button', `Measure the ${standard}`), `Measure the ${standard}`);
+    const next = standard === 'short' ? 'Put the open' : standard === 'open' ? 'Put the load' : 'Wind 3 turns';
+    check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').includes(${JSON.stringify(next)})`), `then: ${next}`);
+  }
+  // Wound too far: the 7 MHz resonant winding. It must ask for fewer turns.
+  await evaluate(`window.__emwsVnaAttach('resonant')`);
+  check(await clickText('.core-guess button', 'Measure the 3-turn winding'), 'Measure the 3-turn winding: one that resonates at 7 MHz');
+  check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').includes('Wind 2 turns and measure again')`), `judged: ${(await stepText()).slice(0, 90)}...`);
+  await evaluate(`window.__emwsVnaAttach('core43:2')`);
+  check(await clickText('.core-guess button', 'Measure the 2-turn winding'), 'Measure the 2-turn winding: the #43 core');
+  // Three turns were found wanting, so the confirming count is the other neighbour, one.
+  check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').includes('One more winding, to confirm it: wind 1 turn')`), `good, and it asks for a confirming winding with the count not yet found wanting: ${(await stepText()).slice(0, 80)}...`);
+  await evaluate(`window.__emwsVnaAttach('core43:1')`);
+  check(await clickText('.core-guess button', 'Measure the 1-turn winding'), 'Measure the 1-turn winding: too small to read');
+  // One turn is too small and would ask for three again - which was tried: the loop-breaker uses the two-turn reading alone.
+  check(await until(`(document.querySelector('.core-guess-verdict')?.textContent ?? '').startsWith('Looks like #43 (nickel-zinc)')`), `the estimate: ${await evaluate(`document.querySelector('.core-guess-verdict')?.textContent`)}`);
+  check(/from the 2-turn winding \(used alone: .*3 turns were tried already/.test(await stepText()), `from the two-turn reading, alone, and it says why: ${(await stepText()).slice(0, 120)}...`);
+  check(await clickText('.core-guess button', 'Save this core'), 'Save this core…');
+  check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').startsWith('Keep it')`), 'the save step, with the name, size and mix prefilled');
+  const prefilled = await evaluate(`[...document.querySelectorAll('.core-guess input[type="text"]')].map((i) => i.value || i.placeholder).join(' | ')`);
+  check(/#43/.test(prefilled), `prefilled: ${prefilled}`);
+  check(await clickText('.core-guess button', 'Keep it'), 'Keep it');
+  check(await until(`document.querySelectorAll('.bin .core-chip').length === ${chipsBefore} + 1`), 'and the core is in the bin');
+  // The panel's own reading earlier in this run is also labelled #43: the wizard's is the one measured with 3 turns.
+  const keptCard = await evaluate(`[...document.querySelectorAll('.profile-facts')].map((e) => e.textContent).find((t) => t.includes('#43 (NiZn)') && t.includes('with 2 turns')) ?? ''`);
+  check(/2 turns/.test(keptCard) && /#43 \(NiZn\)/.test(keptCard), `its card: #43 (NiZn), measured with 2 turns: ${keptCard.trim().slice(0, 70)}...`);
+  check(await clickText('.core-guess button', 'Measure another core'), 'Measure another core');
+  check(await until(`(document.querySelector('.core-guess-step')?.textContent ?? '').includes('Wind 3 turns')`), 'goes straight to winding: the instrument stays connected and calibrated');
   await evaluate(`localStorage.removeItem('emws.balun.cores.v1')`);
 
   // ---- Port 2: measure a filter through the V2, thru + isolation calibrated in the page ----
@@ -2664,7 +2858,7 @@ try {
     // Both are connected to the same "antenna": 75 ohms with half a microhenry in series,
     // so the tools should read 75 + j(2 pi f L) back from either. The page picks the port
     // with window.__emwsVnaPick ('v2' for the V2), and what is on the V2's connector with
-    // window.__emwsVnaAttach('short' | 'open' | 'load' | 'antenna' | 'resonant').
+    // window.__emwsVnaAttach('short' | 'open' | 'load' | 'antenna' | 'resonant' | 'core43:N').
     await send('Page.addScriptToEvaluateOnNewDocument', {
       source: `(() => { try {
         if (!window.isSecureContext) return;
@@ -2716,7 +2910,16 @@ try {
             const z = div(mul(zl, zc), [zl[0] + zc[0], zl[1] + zc[1]]);
             return div([z[0] - 50, z[1]], [z[0] + 50, z[1]]);
           };
-          const actual = (fMHz) => attached === 'short' ? [-1, 0] : attached === 'open' ? [1, 0] : attached === 'load' ? [0, 0] : attached === 'resonant' ? resonant(fMHz) : gamma(fMHz);
+          // 'core43:N' is an FT240 wound with N turns on the built-in picture of #43 (mu_i 800
+          // relaxing at 7.01 MHz), as the balun tool's own tests make one: what the step-by-step
+          // guess must recognise, and what two windings of must agree on.
+          const core43 = (fMHz, turns) => {
+            const mu0 = 4e-7 * Math.PI, c1 = (2 * Math.PI) / (0.0127 * Math.log(60.96 / 35.56));
+            const x = fMHz / 7.009, real = 1 + 799 / (1 + x * x), loss = (799 * x) / (1 + x * x);
+            const wL0 = 2 * Math.PI * fMHz * 1e6 * mu0 * turns * turns / c1;
+            return div([wL0 * loss - 50, wL0 * real], [wL0 * loss + 50, wL0 * real]);
+          };
+          const actual = (fMHz) => attached === 'short' ? [-1, 0] : attached === 'open' ? [1, 0] : attached === 'load' ? [0, 0] : attached === 'resonant' ? resonant(fMHz) : attached.startsWith('core43:') ? core43(fMHz, Number(attached.slice(7))) : gamma(fMHz);
           // Gm = e00 + e10e01 * Ga / (1 - e11 * Ga): what an uncorrected instrument reads.
           const raw = (fMHz) => { const g = actual(fMHz); const eg = mul(E.e11, g); const q = div(mul(E.e10e01, g), [1 - eg[0], -eg[1]]); return [E.e00[0] + q[0], E.e00[1] + q[1]]; };
           // Port 2, raw as the V2 sends it: S21m = e30 + e10e32 * S21a, leakage and tracking

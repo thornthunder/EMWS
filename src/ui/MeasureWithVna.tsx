@@ -8,12 +8,13 @@
 // A NanoVNA-V2 sends raw readings, so for one of these the component insists on a
 // short-open-load calibration before it will hand anything on. The classic NanoVNA
 // applies its own calibration on the instrument and its readings go straight through.
+// The logic lives in useVna.ts (the balun tool's step-by-step guess drives it too);
+// this is the panel.
 
-import { useEffect, useRef, useState } from 'react';
 import type { MeasuredPoint } from '../lib/touchstone';
-import { type BridgeInstrument, type Instrument, VnaError } from '../lib/vna';
-import { type Calibration, applyCalibration, calibrationCovers, makeCalibration, sameFrequencies } from '../lib/vna/calibration';
+import type { BridgeInstrument } from '../lib/vna';
 import { NumberField } from './NumberField';
+import { STANDARDS, useVna } from './useVna';
 import { VnaSources } from './VnaSources';
 
 export interface MeasureWithVnaProps {
@@ -27,121 +28,19 @@ export interface MeasureWithVnaProps {
   onMeasured: (points: MeasuredPoint[], source: string) => void;
 }
 
-type Standard = 'short' | 'open' | 'load';
-const STANDARDS: { id: Standard; label: string; hint: string }[] = [
-  { id: 'short', label: 'Short', hint: 'the short from the calibration kit on the port' },
-  { id: 'open', label: 'Open', hint: 'the open standard on the port (not just nothing)' },
-  { id: 'load', label: 'Load', hint: 'the 50 Ω load on the port' },
-];
-
 export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeasured }: MeasureWithVnaProps) {
-  const [instrument, setInstrument] = useState<Instrument | undefined>();
-  const [range, setRange] = useState({ startMHz, stopMHz, points });
-  const [busy, setBusy] = useState<string | undefined>();
-  const [progress, setProgress] = useState<[number, number] | undefined>();
-  const [error, setError] = useState<string | undefined>();
-  const [standards, setStandards] = useState<Partial<Record<Standard, MeasuredPoint[]>>>({});
-  const [calibration, setCalibration] = useState<Calibration | undefined>();
-  const [lastSweep, setLastSweep] = useState<{ points: number; at: string } | undefined>();
-  const live = useRef<Instrument | undefined>(undefined);
-
-  // When the tool's own sweep changes - a different model, a different band, more points -
-  // measure that, not whatever was there when this first appeared. Points too: a tester
-  // set 201 points in the tool, measured, and watched the tool snap back to the 101 this
-  // panel had measured, because the two did not follow each other.
-  useEffect(() => setRange((r) => ({ ...r, startMHz, stopMHz, points })), [startMHz, stopMHz, points]);
-
-  /** The instrument's own front-panel sweep, where it can be asked for (a FieldFox through the bridge). */
-  const followInstrument = async () => {
-    const vna = live.current;
-    if (!vna?.readRange) return;
-    setError(undefined);
-    setBusy('Asking the instrument…');
-    try {
-      const own = await vna.readRange();
-      setRange({ startMHz: own.startMHz, stopMHz: own.stopMHz, points: Math.min(own.points, vna.maxPoints) });
-    } catch (e) {
-      say(e);
-    } finally {
-      setBusy(undefined);
-    }
-  };
-
-  // Standards taken so far belong to the range they were swept over. Change the range and
-  // they cannot be combined with what comes next, so their ticks are cleared rather than
-  // mixed into a calibration that means nothing. A COMPLETED calibration stays: it still
-  // covers whatever part of its range you sweep (calibrationCovers guards the rest).
-  useEffect(() => setStandards({}), [range.startMHz, range.stopMHz, range.points]);
-
-  // Let go of the port when the tool goes away.
-  useEffect(() => () => void live.current?.close().catch(() => {}), []);
-
-  const say = (e: unknown) => setError(e === undefined ? undefined : e instanceof VnaError ? e.message : e instanceof Error ? `${e.name}: ${e.message}` : String(e));
-
-  const connected = (found: Instrument) => {
-    live.current = found;
-    setInstrument(found);
-  };
-
-  const close = async () => {
-    await live.current?.close().catch(() => {});
-    live.current = undefined;
-    setInstrument(undefined);
-    setStandards({});
-    setCalibration(undefined);
-    setLastSweep(undefined);
-  };
-
-  const sweepRaw = async (what: string): Promise<MeasuredPoint[] | undefined> => {
-    const vna = live.current;
-    if (!vna) return undefined;
-    setError(undefined);
-    setBusy(what);
-    setProgress(undefined);
-    try {
-      return await vna.sweep({ ...range, onProgress: (done, total) => setProgress([done, total]) });
-    } catch (e) {
-      say(e);
-      return undefined;
-    } finally {
-      setBusy(undefined);
-      setProgress(undefined);
-    }
-  };
-
-  const needsCalibration = instrument?.kind === 'nanovna-v2';
-  const calibrated = !needsCalibration || calibration !== undefined;
-  const coverage = calibration ? calibrationCovers(calibration, range.startMHz, range.stopMHz) : true;
-
-  const measureStandard = async (id: Standard) => {
-    const raw = await sweepRaw(`Measuring the ${id}…`);
-    if (!raw) return;
-    // Belt and braces: keep only standards the instrument swept over these same
-    // frequencies, whatever changed in between. A dropped one loses its tick.
-    const compatible = Object.fromEntries(Object.entries(standards).filter(([, points]) => points && sameFrequencies(points, raw)));
-    const next = { ...compatible, [id]: raw };
-    setStandards(next);
-    if (next.short && next.open && next.load) {
-      try {
-        setCalibration(makeCalibration(next.short, next.open, next.load));
-      } catch (e) {
-        say(e);
-      }
-    }
-  };
+  const vna = useVna({ startMHz, stopMHz, points });
+  const { instrument, range, setRange, busy, progress, error, standards, calibration, needsCalibration, calibrated, coverage, lastSweep } = vna;
 
   const measure = async () => {
-    const raw = await sweepRaw('Sweeping…');
-    if (!raw) return;
-    const points = needsCalibration && calibration ? applyCalibration(raw, calibration) : raw;
-    setLastSweep({ points: points.length, at: new Date().toLocaleTimeString() });
-    onMeasured(points, `${instrument?.name ?? 'VNA'}, ${range.startMHz}–${range.stopMHz} MHz`);
+    const measured = await vna.sweep('Sweeping…');
+    if (measured) onMeasured(measured, `${instrument?.name ?? 'VNA'}, ${range.startMHz}–${range.stopMHz} MHz`);
   };
 
   if (!instrument) {
     return (
       <div className="vna">
-        <VnaSources onConnected={connected} busy={busy} setBusy={setBusy} onError={say} />
+        <VnaSources onConnected={vna.connected} busy={busy} setBusy={vna.setBusy} onError={vna.say} />
         {error && <p className="alert-inline">{error}</p>}
       </div>
     );
@@ -153,7 +52,7 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
     <div className="vna">
       <p className="vna-status">
         <strong>{instrument.name}</strong> connected.{' '}
-        <button type="button" className="link" onClick={close}>
+        <button type="button" className="link" onClick={vna.close}>
           Disconnect
         </button>
       </p>
@@ -165,7 +64,7 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
       {instrument.readRange && (
         <p className="muted vna-follow">
           The sweep above is what the bridge asks the instrument for.{' '}
-          <button type="button" className="link" onClick={followInstrument} disabled={busy !== undefined}>
+          <button type="button" className="link" onClick={vna.followInstrument} disabled={busy !== undefined}>
             Use the instrument's own range
           </button>{' '}
           instead, as set on its front panel.
@@ -181,7 +80,7 @@ export function MeasureWithVna({ startMHz, stopMHz, points = 101, action, onMeas
           </p>
           <div className="button-row">
             {STANDARDS.map((s) => (
-              <button key={s.id} type="button" className="small" title={s.hint} aria-pressed={standards[s.id] !== undefined} disabled={busy !== undefined} onClick={() => measureStandard(s.id)}>
+              <button key={s.id} type="button" className="small" title={s.hint} aria-pressed={standards[s.id] !== undefined} disabled={busy !== undefined} onClick={() => vna.measureStandard(s.id)}>
                 {standards[s.id] ? '✓ ' : ''}
                 {s.label}
               </button>

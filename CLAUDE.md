@@ -349,10 +349,33 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
   `--smith` smoke loads that exact network in that window and in 1600 × 900, drags the thumb
   ±30 px a pixel at a time with real mouse events, and fails if the slider's x changes or the
   value ever moves against the pointer (before the fix: x 658.8 → 671.3).
+- **Pi and T with a chosen Q** (`match.ts` `piTeeSolutions`/`leastQ`, 2026-10-25): two L
+  sections back to back through a virtual resistance Rv - below both ends for a Pi
+  (Rv = Rhigh/(1+Q²), load side shunt-then-series, radio side series-then-shunt, the two
+  series parts ADD), above both for a T (Rv = Rlow(1+Q²), the two shunt SUSCEPTANCES add).
+  Exact at the design frequency by construction (test: six loads × four Qs, Zin = 50 to 6
+  places). The floor is the L network's own Q, sqrt(Rhigh/Rlow − 1) - with the load's
+  PARALLEL resistance for a Pi and its SERIES resistance for a T, so a reactive load has two
+  floors; at or below the floor the page says "needs a Q above X". Higher Q = narrower
+  2:1 band (test holds Q 2 > 4 > 8 widths, all under the L's). Low-pass shapes listed first.
+- **Adjust what I have** (`smith-chart/optimise.ts`, 2026-10-25): Nelder-Mead (now
+  `src/lib/simplex.ts`, shared with the modeler, which re-exports it) over the chain's
+  adjustable parts (L, C by reactance 1-2000 Ω, line/stub by length 1 cm-λ, all log-scaled:
+  the SAME range as the sliders, `positionOf`/`atPosition`), goal = worst SWR over the
+  sweep or SWR at the design frequency; two passes (restart from the first result with a
+  smaller step), up to 4000 closed-form trials, instant. Starts from the values as they are
+  and only improves (`improved: false` leaves the network object identical); `atEdge` names
+  parts within 2 % of a range end - the page says that means a different KIND of part. One
+  step of undo ("Put the values back") lives in the section's state, and a report is dropped
+  when the chain's part list changes. MEASURED in the smoke: the exact Pi for 100 − j40 at
+  14.175 has worst SWR 1.10 over 14.0-14.35; adjusted, 1.02 in ~2500 trials.
 - `npm run smoke -- --smith` builds a match in the browser and checks the numbers, including
   the Antenna Modeler handoff, the two-mode matcher (already matched -> "Replace mine" only,
-  replacing not adding) and the wheel; `--vna` checks 201 points in Radio and sweep measure
-  201 through the bridge and "Use the instrument's own range".
+  replacing not adding), the Pi/T offers and floor note, Adjust what I have (worst SWR down,
+  values moved, Put back restores them exactly) and the wheel (the box is scrolled into view
+  first: the panel scrolls inside itself at 1400 px and the Q field typed into sits below it);
+  `--vna` checks 201 points in Radio and sweep measure 201 through the bridge and "Use the
+  instrument's own range".
 
 ### Baluns and ununs (`src/tools/balun/`, `src/lib/ferrite.ts`)
 
@@ -384,9 +407,74 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
   validated on real hardware - ZR1JT measured a Fair-Rite 2631828302 (#31, 61 mm) at 1/2/3
   turns on their V2_2; the windings scale as N² within ~4 % and agree on μ′/μ″ within ~5 %.
   The same data measured the Debye limit above: the built-in #31 estimate is 1.7-7× LOW on
-  that core's 1-turn |Z| over 1-52 MHz (estimate plateaus at 26 Ω; the core reaches 190 Ω).
+  that core's 1-turn |Z| over 1-52 MHz (estimate plateaus at 26 Ω; the core reaches 190 Ω) - but the
+  core is 20 mm high, not the 12.7 that estimate assumed (learned 2026-10-25), so the low-end factor is
+  ~1.1 and only the high-end shortfall, the loss shape above the knee, stands.
   The simulator's PREDICTIONS (balun loss, SWR, strain) still have no bench check - do not
   claim otherwise; a measured 49:1 against the tool remains the acceptance test.
+- **What is this core?** (`identify.ts`, `guess-plan.ts`, `GuessSection.tsx`, 2026-10-25, ZR1JT asked, then
+  asked for it as a STEP-BY-STEP run from one button): connect → (V2) short/open/load one at a time → "wind N
+  turns, measure" → each reading judged by `judgeReading` (|Z| < 5 Ω at the bottom → more turns, ∝ N²; a
+  resonance leaving trust < 3 MHz → fewer, ∝ N^-1.5) → a confirming winding with a different count must
+  `agreement` within 10 % on X/N² over the range both are the core (a miscounted turn reads as (N'/N)²) →
+  the estimate (shape-based, so BEFORE the size is asked) → save with name/size/mix prefilled, or measure
+  another with the instrument still connected. The VNA logic moved out of `MeasureWithVna` into
+  `src/ui/useVna.ts` for this; the panel is a view over it, unchanged (the --vna smoke guards both). The
+  simulated V2 learned `core43:N` (an FT240 with N turns on the #43 picture) and the --vna smoke runs the
+  whole flow: resonant winding → "Wind 2 turns", core43:2 → confirm with 3, core43:3 → "Looks like #43",
+  agreed within 0 %, Keep it → in the bin. **ZR1JT's real #77 (FT240 size) through the wizard, same day:**
+  "Looks like #43, or #52 or #61" - WRONG, and instructive: the 1-turn reading went capacitive at 1.7 MHz
+  (BOTH windings did, at the same frequency: a large MnZn core's own crossing - it conducts and resonates
+  on its dimensions - which measure.ts's "a bare core never goes capacitive" rule reads as the winding),
+  the trust rule cut the comparison to 0.50-0.58 MHz, and over that sliver the loss angle looks NiZn,
+  while "μ′ halves by 1.49 MHz" IS the #77 picture (f_r 1.5). Fixes: the sweep is 0.2-30 MHz × 401
+  (0.5-50 × 201 left five points under 1.7 MHz); `commonCrossing` (two windings capacitive within 15 %
+  of each other = the core's crossing → the hint `coreCrossingMHz` lifts the trust to it and is a
+  stated MnZn clue); the score is now sqrt(angle² + fall-off²) with the fall-off = ln μ′/μ′(bottom)
+  (MEASURED on the #31 exports: 3-turn #31 0.14 fits, #77 0.36; 2-turn #31 0.33 roughly; the wide
+  1-turn 1-13.9 MHz reading scores #43 0.49 = none, because real MnZn μ′ falls far slower above its
+  knee than a single relaxation - 534 vs the picture's 58 at 10 MHz); and under an octave of usable
+  sweep → `undecidable`, no verdict. The saved profile keeps the confirming winding (`confirmed`).
+  **Second real run, same core: an endless 1 → 2 → 1 → 2** (one turn 3 Ω = "more turns"; two turns
+  capacitive at the core's 1.7 MHz = "fewer turns"). `judgeNext(reading, history)` breaks it: a
+  capacitive point an EARLIER winding of another count also hit is the core's → the reading is good
+  (`coreCrossingMHz`); and a next count already tried and judged the other way → `bestSoFar` is used
+  alone. `confirmingTurns` skips counts found wanting. The comparison now also STOPS where μ′ has
+  halved (`cutAtHalf`): the pictures are one relaxation each and describe the knee, not the tail -
+  compared up to the #77's zero-crossing every score was ~0.95. The --vna smoke's flow became
+  resonant 3 → "Wind 2" → core43:2 good → confirm with 1 (3 found wanting) → 1 too small, 3 tried →
+  "used alone", "Looks like #43". **ZR1JT's three further scans (2026-10-25, 0.2-30 × 401, 2 turns):**
+  2631828302 (#31) → #31 fits 0.14, μ′ 1598 at 0.2 MHz = the maker's 1500. **The core is 61 × 35.55 ×
+  20 mm** (ZR1JT, 10-25): the 10-05 profiles were typed 12.7 mm high, so their "μ′ 2100 at 1 MHz, 1.7×
+  the picture" was that typo (ratio 1.57) - the shape ranking was immune, the level was not. 2643251002
+  (#43, a round-cable SLEEVE: tube, 39.1 × 16.75 × 22.2 mm as typed) → #43 fits 0.13, μ′ 936; the #77
+  again → recognised as "your core FT240 #77" by its twin in the library, otherwise no fit. Two more
+  rules from it: a window below every knee is `undecidable` ("Flat so far": μ′ not down a fifth nor the
+  angle up to 15° - all three NiZn pictures "fitted" 0.2-0.51 MHz at 0.05), and the core's crossing is
+  a PROFILE FIELD (`coreCrossingMHz`; `makeProfile` takes it as the trust limit) because the limit is
+  re-derived from the sweep on every load and a mutated value was lost. `CoreSize.shape` ('ring' |
+  'sleeve') is a word and a label ("Length"), not different maths; `describeSize()` prints it.
+- **Measured cores shipped with EMWS** (`measured-cores.json` + `reference-cores.ts`, 2026-10-25;
+  ZR1JT donated their data, CC0): the four readings above in the export format, sweeps thinned to
+  ≤ 201 log-spaced points (44 kB, bundled into the balun chunk via `resolveJsonModule`), provenance
+  in the file and each core's notes, ids `ref:n`, the #31s at their true 20 mm. `identifyCore` takes
+  them as `others` (kind 'reference'; `callIt` = a mix label like "#43" when the core has one, so
+  "Call it" works from a measured core too) and the library shows them on a shelf with "Add to my
+  cores" (`copyOfReference`). `tests/reference-cores.test.ts`: the two #31 readings recognise each
+  other, and each fixture of ZR1JT's cores matches its shipped twin (fit, callIt) - the #77 included,
+  which no picture fits. Regenerate with the scratch `build-measured-cores.py` from the exports in
+  `D:\Code\Sample Data` (not in the repo). The identification itself ranks the six
+  built-in pictures and the user's other profiles by the RMS difference of LOSS ANGLE atan(μ″/μ′) over 40
+  log-spaced points of the trustworthy sweep - a ratio, so independent of turns, size and a picture's
+  absolute level; the level (geometric-mean μ′ ratio) is reported, never ranked on. MEASURED on ZR1JT's #31
+  (3 windings): μ′ 2100 at 1 MHz vs the picture's 1200 (1.7×) and a Snoek product ~6200 (nearer the NiZn
+  constant than the MnZn one!), so level and product both mislead; the loss angle gives #31 at 0.17/0.10
+  rad RMS for 2/3 turns, the noisy 1-turn reading sits between #31 and #43 (0.24 vs 0.36). The six
+  pictures fed back with 3 % noise find themselves at 0.01-0.02, nearest other 0.07 (MnZn trio) / 0.18+.
+  Thresholds, EMWS's own: fits ≤ 0.2 rad, roughly ≤ 0.4, runner-up named within 0.1; size = nearest
+  catalogue size within 10 %. 40 points of the 3-turn sweep are a fixture (`tests/fixtures/
+  zr1jt-mix31-3turns.ts`, CC0 like all data). The --balun smoke reads the verdict on the planted #43 and
+  presses "Call it #43" on the reading planted as "unknown".
 - **Component library, first shelf** (`library.ts`): a `SavedBalun` is a name + summary + the
   whole `Design`, in `emws.balun.designs.v1`. A design on a measured core carries only the
   `profileId`; `materialFor(design, profiles)` resolves it at use time (so a corrected
@@ -403,6 +491,18 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
   `--strain-{ok,hot,burn}-{bg,edge}`, light and dark; the card always carries a mark and a word,
   and the words claim no more than the estimate can: "Within expected range", "Risk of thermal
   runaway", "Likely to burn out", with the small print saying "estimated at N W".
+- **1:4 Ruthroff** (`ruthroff-1-4`, 2026-10-25): one line, the load gets the input voltage PLUS the
+  line's output. Unun (cold conductor's far end tied to the input) and balun (the line as a phase
+  inverter, load between input and far end) trace to the SAME two-port, so one topology and
+  `loadGrounded` chooses the word. `circuit.ts` `ruthroff(m)` = [A B; C A+D+2]/(1+A) (det 1; nothing
+  out at a half wave); the core is magnetised like a tapped winding's and sits across the LOAD port
+  as 4·Zc with `fluxTurns = 2N` (= Zc across the radio: the "Across the radio" readout, as tapped).
+  MEASURED (tests): 25 + j25 Ω from 200 through 100 Ω line at λ/4, |Γ|² = 0.2 (0.97 dB turned back,
+  1.03 total with the pair's copper), nothing out at λ/2; swapping the core for a perfect one changes
+  Yin by exactly the core's admittance (1 % at 0.2 MHz, 5 % at 1.8 - the line's few ohms of series
+  reactance ahead of the load). The shipped 9-turn pair on FT240-43: 1.83 kΩ across the radio, SWR
+  1.05 on 160 m (the core), 1.02 mid-band, 1.07 on 10 m (26° of line) - the --balun smoke holds that
+  shape. The output's BALANCE (equal and opposite only while the line is short) is not modelled.
 - `npm run smoke -- --balun` winds with real mouse input, checks single-step undo, comparison
   and the refused design, then saves the design and looks through it from the modeler.
 
@@ -426,7 +526,7 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
   nearest half turn). State persists as `emws.lc.v1`. `src/ui/LineChart.tsx` is the shared log-axis
   chart (moved out of the balun tool; `marks` draws vertical guides such as the cutoff and 2×, 3×).
 - The guide is `src/guides/CoilsGuide.tsx`; it states no regulatory or voltage figures, on
-  purpose. `npm run smoke -- --lc` drives all four tabs and checks the numbers.
+  purpose. `npm run smoke -- --lc` drives all four tabs (band-pass and coax trap included) and checks the numbers.
 - **Stubs & cavities tab** (`stub.ts`, `StubSection.tsx`, 2026-10-05): stub Zin with cosh/sinh
   written out (never tanh/coth), loss from the toolbox cable model (`savedDatasheetCable()`
   now lives in toolbox/model.ts; the modeller's feedline delegates to it); shunt S21 =
@@ -450,8 +550,26 @@ command line holds `emws-smoke`), or the next run finds the profile in use.
   series take their own x (`fMHz` / `x`) and draw dashed; XYChart got `floor` (a notch's -∞)
   and round-number ticks for dense traces. `--vna` smoke: the simulated V2's port 2 is raw
   through known leakage + tracking, and the page must read a 145 MHz low-pass at -3.0 dB.
-- Not yet: coax traps. (Tuning a coil to resonance and load ratings at a power now live in
-  the Antenna Modeler.)
+- **Band-pass filters** (`filter.ts` `kind: 'bandpass'`, 2026-10-25): the standard low-pass → band-pass
+  transformation of the same prototypes (series arm → series LC, shunt arm → parallel LC, each resonant
+  at the centre, δ = bandwidth/centre); `LadderElement` is a union now - a resonator carries henries
+  AND farads, so narrow on `kind === 'resonator'` first. Response = the low-pass's at (f/f0 − f0/f)/δ,
+  symmetric in RATIO (test). MEASURED: a 5th-order Butterworth 2 MHz wide at 14.175 MHz with Q 100
+  coils loses 2.19 dB at its centre (edges 6.14/6.17) - Cohn's 4.343 Σg/(Q δ) says 1.99; the test
+  holds them within 15 % and halving when the band doubles. The --lc smoke once expected "a fraction
+  of a dB" there and was wrong: a band-pass multiplies the coils' loss by centre ÷ bandwidth. Under
+  5 % of the centre the page points at the stubs tab.
+- **Coax traps** (`coaxtrap.ts`, `CoaxTrapSection.tsx`, the trap tab's "Built from", 2026-10-25): a coil
+  of coax with the inner's near end joined to the shield's far end is the Ruthroff wiring with its
+  input OPEN, so Z = (A + D + 2 + B/Zc)/(C + A/Zc) with the cable's lossy ABCD (toolbox cable model via
+  `gammaL`) and Zc the braid's coil (Wheeler; conductor = shield ID, pitch = jacket). Short-cable
+  limit = 4L ∥ C/4 → the classic f0 = 1/2π√(L·C_cable), exact to 1e-3 on a 5 Ω test line; the full
+  form keeps the cable's inductance (f0 lower by θ²/6 - both held by tests) and its losses. The lumped
+  equivalent comes from the susceptance slope (2C at resonance) and is what the modeler's LD 1 gets.
+  `Geometry.outerMm` (nominal jacket, the figure the names already carried) was added to the cable
+  catalogue for the coil's pitch. NO bench measurement yet - the guide says so.
+- Not yet: multi-layer and toroidal air coils. (Tuning a coil to resonance and load ratings at a power
+  now live in the Antenna Modeler.)
 
 ### RF toolbox (`src/tools/toolbox/`)
 

@@ -62,6 +62,21 @@ function line(z0: number, lengthM: number, velocityFactor: number, ohmsPerM: num
  */
 const parallelInSeriesOut = (m: Abcd): Abcd => ({ a: cScale(m.a, 0.5), b: m.b, c: m.c, d: cScale(m.d, 2) });
 
+/**
+ * One line connected Ruthroff's way: the load gets the input voltage PLUS what comes out of
+ * the line. As a unun the far end of the cold conductor is tied back to the input; as a balun
+ * the line is a phase inverter and the load sits between the input and its far end. Writing
+ * the end voltages and currents out gives the same two-port for both: with the line
+ * [A B; C D], the arrangement is [A B; C A+D+2] / (1+A) - 1:2 in voltage while the line is
+ * short, nothing at all when it is a half wave long (1 + A = 0: the output cancels the
+ * input), and still of determinant 1. tests/balun.test.ts holds it to the closed form at a
+ * quarter wave: 25 + j25 ohms from 200 through 100-ohm line, a fifth of the power turned back.
+ */
+const ruthroff = (m: Abcd): Abcd => {
+  const k = cInv(cAdd(ONE, m.a));
+  return { a: cMul(m.a, k), b: cMul(m.b, k), c: cMul(m.c, k), d: cMul(cAdd(cAdd(m.a, m.d), complex(2)), k) };
+};
+
 type Where = 'core' | 'copper' | 'line' | 'lossless';
 
 interface Stage {
@@ -94,7 +109,7 @@ export interface Point {
   /** Rise of the hottest core in still air at the average power, deg C. A rough guide. */
   tempRiseC: number;
   mu: Permeability;
-  /** The core's impedance: magnetising (tapped) or common-mode choking (current balun). */
+  /** The core's impedance: magnetising (tapped, Ruthroff) or common-mode choking (Guanella). */
   zCore: Complex;
 }
 
@@ -143,7 +158,7 @@ export function analyse(design: Design, material: Material, loadAt?: (fMHz: numb
   const tapped = design.topology === 'autotransformer';
   const { primary, total } = tappedTurns(design);
   const stepUp = tapped && primary > 0 ? total / primary : 1;
-  const ratio = tapped ? stepUp ** 2 : design.topology === 'guanella-1-4' ? 4 : 1;
+  const ratio = tapped ? stepUp ** 2 : design.topology === 'guanella-1-4' || design.topology === 'ruthroff-1-4' ? 4 : 1;
   const leakageH = tapped ? leakageInductanceH(design, primary, total) : 0;
   const lineSpec = tapped ? undefined : lineProperties(design);
   const lengthM = tapped ? undefined : lineLengthM(design);
@@ -192,6 +207,14 @@ export function analyse(design: Design, material: Material, loadAt?: (fMHz: numb
         // is no common-mode voltage for the core to work against: it costs nothing, and
         // what it is worth is the choking impedance reported alongside.
         stages.push({ where: 'line', m: one });
+      } else if (design.topology === 'ruthroff-1-4') {
+        // Both conductors have the input voltage - half the load's - from end to end, so the
+        // core is magnetised like a tapped winding's, not merely choking. Tracing the currents
+        // round, the magnetising current adds to the line's output current: the core sits
+        // across the LOAD port as 4 Zc (the 1:2 brings it to the radio as Zc), and its own
+        // voltage is that node's spread over twice the turns.
+        stages.push({ where: 'line', m: ruthroff(one) }, { where: 'core', m: shunt(cInv(cScale(choke, 4))) });
+        fluxTurns = 2 * turns;
       } else {
         // Inputs in parallel, outputs in series. Tracing the conductors round shows what
         // common-mode voltage each winding carries, and so what loads the source:

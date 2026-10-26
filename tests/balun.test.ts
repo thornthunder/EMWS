@@ -7,7 +7,7 @@
 // with a measurement the disagreement is about ferrite and strays, not arithmetic.
 
 import { describe, expect, it } from 'vitest';
-import { cAbs } from '../src/lib/complex';
+import { cAbs, cAdd, cInv, cScale } from '../src/lib/complex';
 import {
   MU0,
   coreImpedance,
@@ -29,13 +29,14 @@ import {
   crossover,
   efhwDesign,
   guanella4Design,
+  ruthroff4Design,
   summarise,
   tap,
   tappedTurns,
   turnsThatFit,
   wind,
 } from '../src/tools/balun/model';
-import { copperOhmsPerM, windingCapacitanceF } from '../src/tools/balun/strays';
+import { copperOhmsPerM, lineLengthM, windingCapacitanceF } from '../src/tools/balun/strays';
 
 const ft240 = CORES.find((c) => c.id === 'FT240')!;
 const mix43 = MATERIALS.find((m) => m.id === '43')!;
@@ -187,7 +188,7 @@ describe('a tapped transformer', () => {
   });
 
   it('accounts for every watt, at every frequency', () => {
-    for (const design of [efhwDesign(), { ...efhwDesign(), compensationPf: 120 }, guanella4Design(), chokeDesign()]) {
+    for (const design of [efhwDesign(), { ...efhwDesign(), compensationPf: 120 }, guanella4Design(), chokeDesign(), ruthroff4Design()]) {
       for (const p of analyse(design, mix43).points) {
         expect(p.loadW + p.coreW + p.copperW).toBeCloseTo(p.acceptedW, 9);
         expect(p.coreW).toBeGreaterThanOrEqual(-1e-12);
@@ -294,6 +295,69 @@ describe('a 1:4 Guanella', () => {
     // Floating: the two chokes are in series across the input. Earthed: one does it all.
     expect(earthed.coreW).toBeGreaterThan(floating.coreW);
     expect(earthed.fluxMt).toBeGreaterThan(floating.fluxMt);
+  });
+});
+
+describe('a 1:4 Ruthroff', () => {
+  const matched: Design = { ...ruthroff4Design(), overrides: { lineZ0: 100, windingPf: 0 } };
+
+  it('quarters the load while its line is short, wired as a unun or as a balun alike', () => {
+    const unun = analyse(matched, perfect);
+    const balun = analyse({ ...matched, loadGrounded: false }, perfect);
+    expect(unun.ratio).toBe(4);
+    expect(unun.points[0]!.zIn.re).toBeCloseTo(50, 0);
+    expect(unun.points[0]!.swr).toBeLessThan(1.01);
+    // Ruthroff's two wirings move the ground, not the currents: one two-port.
+    unun.points.forEach((p, i) => {
+      expect(balun.points[i]!.zIn.re).toBeCloseTo(p.zIn.re, 9);
+      expect(balun.points[i]!.zIn.im).toBeCloseTo(p.zIn.im, 9);
+    });
+  });
+
+  it('loses its match as the line grows electrically long, where a Guanella on the same line does not', () => {
+    const top = (d: Design) => analyse(d, perfect).points.at(-1)!.swr;
+    const guanella: Design = { ...guanella4Design(), overrides: { lineZ0: 100, windingPf: 0 } };
+    expect(top(matched)).toBeGreaterThan(top(guanella));
+    const swr = analyse(matched, perfect).points.map((p) => p.swr);
+    expect(swr.at(-1)!).toBeGreaterThan(swr[0]! + 0.02);
+  });
+
+  it('reads 25 + j25 ohms from 200 where its 100-ohm line is a quarter wave, and nothing at all at a half wave', () => {
+    // The closed form: the line's output lags its input by 90 degrees, so what the load gets
+    // is sqrt(2) V at 45 degrees. A fifth of the power turns back - about 1 dB - and little
+    // is lost inside; at a half wave the output cancels the input.
+    const d: Design = { ...matched, overrides: { ...matched.overrides, velocityFactor: 1 } };
+    const quarterWaveMHz = 299.792458 / (4 * lineLengthM(d));
+    const [quarter, half] = analyse(d, perfect, undefined, [quarterWaveMHz, 2 * quarterWaveMHz]).points;
+    expect(quarter!.zIn.re).toBeCloseTo(25, 0);
+    expect(quarter!.zIn.im).toBeCloseTo(25, 0);
+    const rho = (quarter!.swr - 1) / (quarter!.swr + 1);
+    expect(rho * rho).toBeCloseTo(0.2, 2); // a fifth of the power turned back: 0.97 dB
+    expect(quarter!.lossDb).toBeLessThan(0.15); // inside, only the pair's copper - with a standing wave on the line, which is not matched here
+    expect(quarter!.totalLossDb).toBeGreaterThan(0.95);
+    expect(quarter!.totalLossDb).toBeLessThan(1.1);
+    expect(half!.swr).toBeGreaterThan(100);
+    expect(half!.loadW).toBeLessThan(0.01 * d.powerW);
+  });
+
+  it('puts the core straight across the radio, as a tapped winding does', () => {
+    // Both conductors carry the input voltage end to end, so the magnetising current comes
+    // from the radio: Yin = 4 / Zload + 1 / Zcore while the line is short. Swapping the core
+    // for a perfect one leaves the copper and the line's few degrees the same, so what
+    // changes at the radio is the core's own admittance and nothing else.
+    const design: Design = { ...ruthroff4Design(), overrides: { lineZ0: 100 } };
+    const seenAgainstCore = (fMHz: number) => {
+      const real = analyse(design, mix43, undefined, [fMHz]).points[0]!;
+      const ideal = analyse(design, perfect, undefined, [fMHz]).points[0]!;
+      const seen = cAdd(cInv(real.zIn), cScale(cInv(ideal.zIn), -1));
+      const core = cAdd(cInv(real.zCore), cScale(cInv(ideal.zCore), -1));
+      return cAbs(cAdd(seen, cScale(core, -1))) / cAbs(core);
+    };
+    // What remains is the line's own series reactance ahead of the load - a few ohms against
+    // 200 at 1.8 MHz, first order in its electrical length - and it shrinks with frequency.
+    expect(seenAgainstCore(1.8)).toBeLessThan(0.05);
+    expect(seenAgainstCore(0.2)).toBeLessThan(0.01);
+    expect(seenAgainstCore(0.2)).toBeLessThan(seenAgainstCore(1.8));
   });
 });
 

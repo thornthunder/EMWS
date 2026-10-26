@@ -104,6 +104,28 @@ export function CoilsGuide() {
         honest cost of the traps.
       </p>
 
+      <h3>A trap made of coax</h3>
+      <p>
+        Set <em>Built from</em> to <strong>a coil of coax</strong> and the capacitor is the cable itself: wind a length of coax
+        into a coil and join the inner conductor at one end to the shield at the other, and the cable's own capacitance,
+        inner to shield, resonates the coil. Choose the cable, the pipe it is wound on and the turns — or press{' '}
+        <em>Turns for</em> the frequency — and the page gives the resonance, the length of cable to cut, and the trap it
+        amounts to, so many microhenries across so many picofarads, which is what <em>Put this trap in an antenna</em>{' '}
+        hands to the modeller.
+      </p>
+      <p>
+        The working is the usual rule and a little more. Outside, the shield is a wire wound into a coil of inductance L;
+        inside, the cable is a transmission line of capacitance C. The inner winding and the shield winding carry the
+        current in series, so the flux links twice and the trap sees 4L (plus the cable's own inductance), while the cable's capacitance sees only half the
+        trap voltage and counts as C/4 — hence the resonance is 1 / (2π√(LC)) with L the single coil and C the whole
+        cable's, the figure every coax-trap table is built on. EMWS solves the cable as the line it is rather than as a
+        capacitor, which keeps the cable's own inductance (the resonance sits a few percent lower when the cable is
+        electrically long, and the page says by how much) and both of its losses, inner conductor and dielectric. The
+        coil's Q is the braid's, estimated as the coil tab estimates any coil's and just as uncertain, and the cable's
+        losses come on top of it, which is why the Q the page reports is below the braid's own. None of this has met a
+        bench yet: build it a little high in frequency and trim with the NanoVNA on it, as with any trap.
+      </p>
+
       <h2>A low-pass filter after a transmitter</h2>
       <p>
         A home-built transmitter puts out harmonics, and your licence conditions say how far below the carrier they must
@@ -151,6 +173,26 @@ export function CoilsGuide() {
         The same tab, set to <em>High-pass</em>, designs the classic broadcast-band filter: a cutoff around 1.7 MHz keeps
         medium-wave broadcasters out of an HF receiver's front end while letting 160 m through. Read the figures at a half
         and a third of cutoff to see how much rejection the broadcast band gets.
+      </p>
+
+      <h2>A band-pass for one band</h2>
+      <p>
+        Set to <em>Band-pass</em>, the tab takes a <strong>centre</strong> and a <strong>bandwidth</strong> and turns the same
+        prototype into resonators: every series arm becomes a coil and capacitor in series, every shunt arm a coil across a
+        capacitor, each pair resonant at the centre. The order is the number of resonators. The response is the low-pass's
+        own shape wrapped round the centre — the edges sit where the low-pass had its cutoff, 3 dB down for a Butterworth,
+        the ripple for a Chebyshev — and it is symmetric in <em>ratio</em>, so an octave above the centre attenuates like an
+        octave below. The cards give the centre, the edges, the second harmonic and the octave below.
+      </p>
+      <p>
+        What to expect of the parts: the series coils come out large and the shunt coils tiny, and the narrower the band
+        the more so. A 2 MHz band-pass for 20 m is buildable; a 200 kHz one in lumped parts is not, and the page says so
+        below about 5 % of the centre — that is where the coupled-resonator band-pass on the <em>Stubs &amp; cavities</em>
+        tab, or a cavity, takes over. The coils' Q matters more here than in a low-pass, because every resonator's loss
+        lands in the passband: press <em>From the coil tab</em> and read the centre loss with the coil you will really wind.
+        The coils' loss is multiplied by centre ÷ bandwidth: a 5th-order Butterworth 2 MHz wide at 14.175 MHz with Q 100
+        coils loses 2.2 dB at its centre (Cohn's rule of thumb — 4.343 × the sum of the prototype's g values ÷ (Q ×
+        fractional bandwidth) — says 2.0), and the same filter 4 MHz wide about half of that.
       </p>
 
       <h2>Measure the filter you built</h2>
@@ -254,7 +296,7 @@ export function CoilsGuide() {
           instead, which any resonator can use.
         </li>
         <li>
-          <strong>Not yet here:</strong> traps made from coax, and multi-layer or toroidal air coils.
+          <strong>Not yet here:</strong> multi-layer or toroidal air coils.
         </li>
       </ul>
     </>

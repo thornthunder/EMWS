@@ -1,11 +1,20 @@
-// Ladder filters: low-pass and high-pass, Butterworth and Chebyshev.
+// Ladder filters: low-pass, high-pass and band-pass, Butterworth and Chebyshev.
 //
 // The classic method. A normalised low-pass prototype - a ladder of unit-frequency,
 // one-ohm elements g1..gn - is scaled to the cutoff frequency and the system impedance
 // (low-pass), or transformed first (high-pass: every inductor becomes a capacitor of
-// reciprocal value and vice versa). The prototype values come from closed forms, not
-// tables: Butterworth's g_k = 2 sin((2k-1) pi / 2n), and for Chebyshev the recurrence in
-// terms of the ripple. Both are exact.
+// reciprocal value and vice versa; band-pass: every series element becomes a series LC
+// and every shunt one a parallel LC, each resonant at the centre, with the fractional
+// bandwidth setting how far apart their values sit). The prototype values come from
+// closed forms, not tables: Butterworth's g_k = 2 sin((2k-1) pi / 2n), and for Chebyshev
+// the recurrence in terms of the ripple. Both are exact.
+//
+// The band-pass is exact too, in the sense that matters: its response at f is the
+// low-pass prototype's at (f/f0 - f0/f) / delta, so the edges are where the low-pass had
+// its cutoff and the shape between them is the same shape. Its weakness is practical,
+// not mathematical - at a few percent bandwidth the series coils come out huge and the
+// shunt ones tiny, and the page says so; that is where the coupled-resonator band-pass on
+// the stubs tab, or a cavity, takes over.
 //
 // The response is then worked out honestly, with the parts as they will be built: the
 // ladder is chained as ABCD matrices between the real source and load impedances, and
@@ -18,7 +27,7 @@
 import { type Complex, cAbs, cAdd, cDiv, cMul, cScale, cSub, complex } from '../../lib/complex';
 
 export type FilterFamily = 'butterworth' | 'chebyshev';
-export type FilterKind = 'lowpass' | 'highpass';
+export type FilterKind = 'lowpass' | 'highpass' | 'bandpass';
 export type Position = 'series' | 'shunt';
 
 export interface FilterSpec {
@@ -26,8 +35,10 @@ export interface FilterSpec {
   family: FilterFamily;
   /** Number of reactive elements, 2 to 9. */
   order: number;
-  /** Butterworth: the 3 dB point. Chebyshev: the edge of the ripple band. */
+  /** Butterworth: the 3 dB point. Chebyshev: the edge of the ripple band. For a band-pass, the centre. */
   cutoffMHz: number;
+  /** Band-pass only: the width between the two edges, MHz. */
+  bandwidthMHz?: number;
   /** Source and load impedance, ohms. */
   z0: number;
   /** Chebyshev passband ripple, dB. Ignored for Butterworth. */
@@ -36,13 +47,29 @@ export interface FilterSpec {
   first: Position;
 }
 
-export interface LadderElement {
-  position: Position;
-  kind: 'inductor' | 'capacitor';
-  /** Henries or farads. */
-  value: number;
-  /** The prototype value it came from. */
-  g: number;
+export type LadderElement =
+  | {
+      position: Position;
+      kind: 'inductor' | 'capacitor';
+      /** Henries or farads. */
+      value: number;
+      /** The prototype value it came from. */
+      g: number;
+    }
+  | {
+      position: Position;
+      /** A band-pass arm: L and C in series (a series arm) or in parallel (a shunt arm), resonant at the centre. */
+      kind: 'resonator';
+      henries: number;
+      farads: number;
+      g: number;
+    };
+
+/** The two edges of a band-pass whose centre (geometric) and width are given. */
+export function bandEdgesMHz(centreMHz: number, bandwidthMHz: number): { lowMHz: number; highMHz: number } {
+  const half = bandwidthMHz / 2;
+  const low = Math.sqrt(centreMHz * centreMHz + half * half) - half;
+  return { lowMHz: low, highMHz: low + bandwidthMHz };
 }
 
 export interface Ladder {
@@ -79,12 +106,21 @@ export function synthesise(spec: FilterSpec): Ladder {
   const { g, load } = prototype(spec.family, spec.order, spec.rippleDb);
   const wc = 2 * Math.PI * spec.cutoffMHz * 1e6;
   const z0 = spec.z0;
+  // Band-pass: delta is the fractional bandwidth about the geometric centre w0.
+  const delta = spec.kind === 'bandpass' ? Math.max(1e-6, spec.bandwidthMHz ?? 0) / spec.cutoffMHz : 0;
   const elements: LadderElement[] = g.map((gk, i) => {
     const position: Position = (i % 2 === 0) === (spec.first === 'shunt') ? 'shunt' : 'series';
     if (spec.kind === 'lowpass') {
       return position === 'shunt'
         ? { position, kind: 'capacitor', value: gk / (z0 * wc), g: gk }
         : { position, kind: 'inductor', value: (gk * z0) / wc, g: gk };
+    }
+    if (spec.kind === 'bandpass') {
+      // A series element g becomes L = g z0 / (w0 delta) in series with C = delta / (w0 g z0);
+      // a shunt one C = g / (w0 delta z0) across L = delta z0 / (w0 g). Each pair resonates at w0.
+      return position === 'shunt'
+        ? { position, kind: 'resonator', henries: (delta * z0) / (wc * gk), farads: gk / (wc * delta * z0), g: gk }
+        : { position, kind: 'resonator', henries: (gk * z0) / (wc * delta), farads: delta / (wc * gk * z0), g: gk };
     }
     return position === 'shunt'
       ? { position, kind: 'inductor', value: z0 / (gk * wc), g: gk }
@@ -102,15 +138,27 @@ export interface PartQuality {
   capacitor: number;
 }
 
-/** A part's own impedance, loss included. */
+/** A coil's impedance with its loss: R = wL / Q in series. */
+function coilZ(henries: number, w: number, q: number): Complex {
+  const x = w * henries;
+  return complex(q > 0 ? x / q : 0, x);
+}
+
+/** A capacitor's impedance with its loss: an ESR of |X| / Q. */
+function capacitorZ(farads: number, w: number, q: number): Complex {
+  const x = farads > 0 ? -1 / (w * farads) : -Infinity;
+  return complex(q > 0 ? Math.abs(x) / q : 0, x);
+}
+
+/** A part's own impedance, loss included. A resonator is its L and C in series (a series arm) or in parallel (a shunt arm). */
 export function partImpedance(part: LadderElement, fMHz: number, q: PartQuality): Complex {
   const w = 2 * Math.PI * fMHz * 1e6;
-  if (part.kind === 'inductor') {
-    const x = w * part.value;
-    return complex(q.inductor > 0 ? x / q.inductor : 0, x);
+  if (part.kind === 'resonator') {
+    const l = coilZ(part.henries, w, q.inductor);
+    const c = capacitorZ(part.farads, w, q.capacitor);
+    return part.position === 'series' ? cAdd(l, c) : cDiv(cMul(l, c), cAdd(l, c));
   }
-  const x = part.value > 0 ? -1 / (w * part.value) : -Infinity;
-  return complex(q.capacitor > 0 ? Math.abs(x) / q.capacitor : 0, x);
+  return part.kind === 'inductor' ? coilZ(part.value, w, q.inductor) : capacitorZ(part.value, w, q.capacitor);
 }
 
 export interface ResponsePoint {
@@ -215,6 +263,10 @@ export function nearestStandard(value: number, series: readonly number[] = E24):
 export function withStandardCapacitors(ladder: Ladder, series: readonly number[] = E24): Ladder {
   return {
     ...ladder,
-    elements: ladder.elements.map((e) => (e.kind === 'capacitor' ? { ...e, value: nearestStandard(e.value, series) } : e)),
+    elements: ladder.elements.map((e) =>
+      e.kind === 'capacitor' ? { ...e, value: nearestStandard(e.value, series) }
+      : e.kind === 'resonator' ? { ...e, farads: nearestStandard(e.farads, series) }
+      : e,
+    ),
   };
 }
